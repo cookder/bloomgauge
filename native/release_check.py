@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.request
 from distribution import installer_readme
+from personal_data import personal_pattern
 
 SOURCE = Path(__file__).resolve().parent.parent
 NATIVE = SOURCE / 'native'
@@ -112,16 +113,7 @@ def artifact(app):
             assert hashlib.sha256(p.read_bytes()).hexdigest() == entry['sha256'], (
                 'Static resource hash mismatch'
             )
-    # The builder's home folder and git email, read here so the email never appears in the source.
-    owner = subprocess.run(
-        ['git', '-C', str(SOURCE), 'config', 'user.email'], capture_output=True, text=True
-    ).stdout.strip()
-    personal = (
-        re.escape(str(Path.home()))
-        + r'\b'
-        + ('|' + re.escape(owner) if owner else '')
-        + r'|https://[^\s\"\']+\.ts\.net'
-    )
+    personal = personal_pattern(SOURCE)
     blocked = re.compile(
         '(^|/)(auth_token|daemon-state\\.json|remote-access\\.json|community-insights\\.json|web-push\\.json|usage-reporting\\.json|\\.usage-reporting\\.lock|\\.usage-reporting-[^/]+\\.tmp|\\.env|\\.DS_Store)$|\\.(sqlite3?|db|key)(-|$)'
     )
@@ -137,7 +129,7 @@ def artifact(app):
             and p.stat().st_size < 8 * 1024 * 1024
         ):
             text = p.read_text(errors='replace')
-            assert not re.search(personal, text), 'Personal data in distributable text'
+            assert not personal.search(text), 'Personal data in distributable text'
     return {
         'version': info['CFBundleShortVersionString'],
         'pythonSourcesMatch': checked,
@@ -722,6 +714,12 @@ def finish(checks, app, dmg):
     return 1 if not local else 0 if signed and notarized else 2
 
 
+def release_image():
+    """The current beta's disk image name, from release-notes.json (as package-beta.sh)."""
+    notes = json.loads((NATIVE / 'release-notes.json').read_text())
+    return f"Bloomkeeper-{notes['version']}-{notes['id'].rsplit('-', 1)[1]}-Apple-Silicon.dmg"
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -739,7 +737,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--dmg',
         type=Path,
-        default=SOURCE / '.build/releases/Bloomkeeper-1.36.57-beta38-Apple-Silicon.dmg',
+        default=SOURCE / '.build/releases' / release_image(),
     )
     parser.add_argument('--build', action='store_true')
     sys.exit(main(parser.parse_args()))

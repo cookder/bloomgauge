@@ -79,10 +79,11 @@ class EvidenceQueryTests(unittest.TestCase):
             credits,
             delta=credits // 10,
         )
-        # Nothing changed tenfold since, so a second refresh leaves the statistics alone.
-        changes = self.h.db.total_changes
+        # Nothing changed tenfold since, so a second refresh leaves the statistics alone:
+        # a marker count that re-analysis would overwrite must survive.
+        self.h.db.execute("UPDATE sqlite_stat1 SET stat='250 1 1' WHERE tbl='opt_identity'")
         self.store.refresh_statistics()
-        self.assertEqual(self.h.db.total_changes, changes)
+        self.assertEqual(self.h.db.execute(stat, ('opt_identity',)).fetchone()[0], '250 1 1')
 
 
 if __name__ == '__main__':

@@ -1,15 +1,11 @@
 """Allowlisted release metadata and privacy checks (build-time only)."""
 
-import base64, hashlib, json, plistlib, re, subprocess, sys
+import base64, hashlib, json, plistlib, re, sys
 from pathlib import Path
+from personal_data import personal_pattern
 
-# The builder's own home folder and git email must never reach a shipped UI asset.
-# The email is read at build time so it never appears in the source itself.
-HOME = re.escape(str(Path.home()))
-OWNER = subprocess.run(
-    ['git', '-C', str(Path(__file__).parent), 'config', 'user.email'], capture_output=True, text=True
-).stdout.strip()
-PERSONAL = HOME + r'\b' + ('|' + re.escape(OWNER) if OWNER else '') + r'|https://[^\s\"\']+\.ts\.net'
+# The builder's own home folder and email must never reach a shipped UI asset.
+PERSONAL = personal_pattern(Path(__file__).parent)
 
 app = Path(sys.argv[1])
 channel = sys.argv[2]
@@ -48,8 +44,10 @@ for metadata in sorted(
 )
 name = 'Bloomkeeper Beta' if beta else 'Bloomkeeper'
 # Personal builds share the current release version so the installed app never looks older.
-version = '1.36.58'
-build = '13658'
+# Both come from release-notes.json, the one place a release's version is set.
+version = json.loads((Path(__file__).parent / 'release-notes.json').read_text())['version']
+major, minor, patch = map(int, version.split('.'))
+build = str(major * 10000 + minor * 100 + patch)
 # The personal edition adds the forecast lab (installation.personal_edition).
 (resources / 'product-config.json').write_text(
     json.dumps({'edition': 'free' if beta else 'personal'}, indent=2) + '\n'
@@ -105,7 +103,7 @@ for p in sorted(app.rglob('*')):
     # CA roots are intentionally bundled; no customer certificate or key is.
     if '/web/' in rel and p.suffix in ('.js', '.html', '.css'):
         body = p.read_text()
-        if re.search(PERSONAL, body):
+        if PERSONAL.search(body):
             raise SystemExit('Personal data found in UI asset')
     files.append(
         {

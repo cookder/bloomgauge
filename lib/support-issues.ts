@@ -150,9 +150,15 @@ export function clearSupportPrompt() {
   emit();
 }
 /** After an automatic report, the same kind of problem waits six hours before sending again. */
-export function clearAutoSentPrompt() {
-  if (state.prompt) mute(state.prompt, 6 * 3600000);
-  clearSupportPrompt();
+export function clearAutoSentPrompt(issue = state.prompt) {
+  if (!issue) return;
+  mute(issue, 6 * 3600000);
+  // Only the prompt that was sent; a newer one stays for the user.
+  if (
+    state.prompt?.category === issue.category &&
+    state.prompt.context === issue.context
+  )
+    clearSupportPrompt();
 }
 export function openSupportReport(
   category: SupportCategory = 'manual',

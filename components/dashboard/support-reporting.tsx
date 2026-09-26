@@ -225,13 +225,15 @@ function SupportReportHost() {
   useEffect(() => {
     const issue = notifications.prompt;
     if (!issue || !autoSend || open) return;
-    clearAutoSentPrompt();
+    // The prompt stays until the Mac app confirms delivery: if it holds the report
+    // back (its shared limit) or sending fails, the user can still report it.
     quickSupportReport(
       { ...issue, description: '', contact: '' },
       AbortSignal.timeout(30000),
       true,
     )
       .then(() => {
+        clearAutoSentPrompt(issue);
         setAutoNotice(true);
         setTimeout(() => setAutoNotice(false), 10000);
       })

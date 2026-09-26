@@ -2,7 +2,8 @@
 set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 app="$project_dir/.build/beta/Bloomkeeper Beta.app"
-image="$project_dir/.build/releases/Bloomkeeper-1.36.57-beta38-Apple-Silicon.dmg"
+# The image name comes from release-notes.json, as in release_check.py.
+image="$project_dir/.build/releases/$(/usr/bin/python3 -c 'import json, sys; n = json.load(open(sys.argv[1])); print("Bloomkeeper-%s-%s-Apple-Silicon.dmg" % (n["version"], n["id"].rsplit("-", 1)[1]))' "$project_dir/native/release-notes.json")"
 identity="${BLOOM_SIGN_IDENTITY:--}"
 if [[ -e "${image%.dmg}.notarization.json" || -L "${image%.dmg}.notarization.json" ]]; then
     echo 'This artifact has a notarization receipt. Finish that submission; do not overwrite its bytes.' >&2; exit 1

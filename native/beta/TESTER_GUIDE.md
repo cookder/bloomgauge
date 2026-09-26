@@ -1,10 +1,14 @@
-# Beta38 tester guide: new name, now open source
+# Beta39 tester guide: fewer repeat problem reports
 
-**1.36.57 beta38/build13657 · candidate tester guide · Apple Silicon/macOS 14+**
+**1.36.58 beta39/build13658 · candidate tester guide · Apple Silicon/macOS 14+**
 
-This guide targets beta38 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
+This guide targets beta39 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
 
-## New in beta38
+## New in beta39
+
+- **Automatic reports.** With "Send these automatically" on, the same problem should send at most once a day, the same kind of problem at most every six hours, and no more than three reports a day, even with the phone view open or after a restart. Reports you send yourself should always go through.
+
+## Carried forward from beta38
 
 - **New name.** After updating, the window, menu bar and About should say Bloomkeeper Beta. History, settings, the optimizer plan and the phone link should carry over. The app file in Applications may keep its old name; that is expected.
 - **Pace units.** The Pulse meter should show cents per hour. Tap the number to switch to dollars; the choice should survive a restart.
@@ -28,7 +32,7 @@ This guide targets beta38 and does not certify implementation, signing, notariza
 ## Carried forward from beta34
 
 - **What’s included.** When a problem-report prompt appears, click "What’s included": a short list of what the report contains should open inside the prompt.
-- **Automatic reports.** With "Send these automatically" on, the same problem should not send again within six hours.
+- **Automatic reports.** Replaced by the beta39 limit above.
 
 ## Carried forward from beta33
 
@@ -222,7 +226,7 @@ Before updating an older beta, let any model switch or warm-up finish. Beta5/6/7
 
 Use the [support page](https://bloomformac.com/support), the [Bloomkeeper Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN), or [email support](mailto:support@bloomkeeper.io). Opening a contact sends nothing automatically. Read the [privacy notice](https://bloomformac.com/privacy) for the organizer-confirmed release. Local diagnostic export, optional earnings and optional usage sharing remain separate choices.
 
-## Baseline guide carried forward for beta38 verification
+## Baseline guide carried forward for beta39 verification
 
 # Bloomkeeper beta checklist
 

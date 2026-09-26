@@ -351,7 +351,8 @@ class SupportTests(unittest.TestCase):
         self.reporter.set_auto({'autoSend': True})
         self.automatic(context='models')
         # Another page, a phone view or a reloaded window: still the same problem.
-        self.error('rate_limited', lambda: self.automatic(context='overview'))
+        refused = self.error('rate_limited', lambda: self.automatic(context='overview'))
+        self.assertEqual(refused.response['error'], reports.AUTO_LIMITED)
         self.now += reports.AUTO_SAME_CATEGORY_SECONDS
         self.error('rate_limited', lambda: self.automatic(context='earnings'))
         self.now += reports.AUTO_SAME_PROBLEM_SECONDS
@@ -372,6 +373,30 @@ class SupportTests(unittest.TestCase):
         self.now += reports.AUTO_SAME_CATEGORY_SECONDS
         self.error('rate_limited', self.automatic)
         self.assertEqual(len(self.calls), 3)
+
+    def test_a_failed_automatic_send_does_not_use_up_the_limit(self):
+        self.reporter.set_auto({'autoSend': True})
+        ok = self.transport
+        self.reporter.transport = lambda *args: (self.calls.append(args), (503, None))[1]
+        data = {**INPUT, 'category': 'connection', 'context': 'models', 'automatic': True}
+        failed = self.reporter.preview(data)
+        self.error('unconfirmed', lambda: self.reporter.send(self.consent(failed)))
+        self.assertEqual(self.reporter._auto_sent(), [])
+        # Delivery works again: the same problem is still sent, and only once.
+        self.reporter.transport = ok
+        self.assertEqual(self.reporter.send(self.consent(failed))['status'], 'sent')
+        self.error('rate_limited', self.automatic)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(len(self.reporter._auto_sent()), 1)
+
+    def test_automatic_reports_leave_the_manual_hourly_limit_alone(self):
+        self.reporter.set_auto({'autoSend': True})
+        for category in ('connection', 'model', 'setup'):
+            self.automatic(category=category)
+        for _ in range(reports.MAX_NEW_PER_HOUR):
+            self.assertEqual(self.reporter.send(self.consent(self.preview()))['status'], 'sent')
+        self.error('rate_limited', lambda: self.reporter.send(self.consent(self.preview())))
+        self.assertEqual(len(self.calls), 3 + reports.MAX_NEW_PER_HOUR)
 
     def test_the_limit_survives_a_restart_and_two_windows_at_once(self):
         store = reports._MemoryStore()

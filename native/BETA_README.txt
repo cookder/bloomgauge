@@ -1,7 +1,7 @@
-Bloomkeeper — 1.36.57 beta38 · New name, now open source
+Bloomkeeper — 1.36.58 beta39 · Fewer repeat problem reports
 
 CHANGES IN THIS UPDATE
-Bloom is now Bloomkeeper, and its source is public under the MIT license at github.com/cookder/bloomkeeper. History, settings, the optimizer plan and the phone link carry over. The Pulse meter shows pace in cents per hour by default; tap it to switch to dollars. The phone view now answers only requests that come through Tailscale, and existing phone access updates itself. Help & feedback offers support@bloomkeeper.io and the Bloomkeeper Slack channel. Previous beta37 change: stall recovery waits up to 20 minutes for the optimizer to switch models, and dashboard settings are kept across restarts.
+With "Send these automatically" on, Bloomkeeper sends the same problem at most once a day, the same kind of problem at most every six hours, and no more than three reports a day. The limit holds across the Mac window, your phone and restarts. Reports you send yourself are never held back. Previous beta38 change: Bloom is now Bloomkeeper, and its source is public under the MIT license at github.com/cookder/bloomkeeper.
 
 FEATURES RETAINED
 Arrange the Earnings dashboard with separate phone and desktop layouts saved in each browser. Compare experimental one-hour earnings baselines with clearer evidence, saved forecast windows and local accuracy tracking. Optimizer trial reviews now close unresolvable comparisons at their deadline, require a supported paid benchmark and explain the paid alternative; confirmation can pause through a brief data gap without counting unseen time.

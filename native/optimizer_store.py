@@ -6,19 +6,6 @@ from history import epoch
 from model_combinations import members
 
 
-OPTIMIZER_TABLES = (
-    'opt_identity',
-    'opt_credits',
-    'workload_tokens',
-    'opt_coverage',
-    'opt_minutes',
-    'opt_ready_minutes',
-    'opt_residency',
-    'opt_network',
-    'opt_events',
-)
-
-
 def device_id(state):
     value = state.get('attestation_public_key')
     return hashlib.sha256(value.encode()).hexdigest() if isinstance(value, str) and value else ''
@@ -65,10 +52,33 @@ class OptimizerStore:
                 self.h.db.execute('PRAGMA optimize=0x10002').fetchall()
             else:
                 # Older SQLite (a system Python when running from source) ignores
-                # 0x10000 and skips tables this connection hasn't queried yet.
-                for table in OPTIMIZER_TABLES:
-                    self.h.db.execute('ANALYZE ' + table)
+                # 0x10000 and skips tables this connection hasn't queried yet, so
+                # apply the same rule here: every table whose size changed tenfold.
+                for table in self._stale_tables():
+                    self.h.db.execute('ANALYZE "%s"' % table.replace('"', '""'))
             self.h.db.commit()
+
+    def _stale_tables(self):
+        db = self.h.db
+        tables = [
+            name
+            for (name,) in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ]
+        analyzed = {}
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'").fetchone():
+            for table, stat in db.execute('SELECT tbl, stat FROM sqlite_stat1'):
+                rows = int(str(stat).split()[0]) if str(stat).split() else 0
+                analyzed[table] = max(analyzed.get(table, 0), rows)
+        for table in tables:
+            rows = db.execute('SELECT count(*) FROM "%s"' % table.replace('"', '""')).fetchone()[0]
+            before = analyzed.get(table)
+            if before is None:
+                if rows:
+                    yield table
+            elif max(rows, 1) >= 10 * max(before, 1) or max(before, 1) >= 10 * max(rows, 1):
+                yield table
 
     def identity(self, device, provider):
         if not device or not provider:

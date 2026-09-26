@@ -12,7 +12,7 @@
  "models": {
   "EigenLabs/Qwen3.8-27B-4bit-mtp": {
    "level": 0.07536,
-   "exponent": 0.8293,
+   "exponent": 0.8291,
    "range": [
     0.0,
     0.977
@@ -25,8 +25,8 @@
    ]
   },
   "Qwen3.5-9B": {
-   "level": 0.05302,
-   "exponent": 0.4626,
+   "level": 0.05301,
+   "exponent": 0.4627,
    "range": [
     0.64,
     1.055
@@ -53,25 +53,25 @@
    ]
   },
   "gpt-oss-20b": {
-   "level": 0.0316,
-   "exponent": 0.4871,
+   "level": 0.03174,
+   "exponent": 0.4872,
    "range": [
-    0.592,
-    1.254
+    0.589,
+    1.249
    ],
-   "hours": 33.2,
-   "periods": 86,
+   "hours": 33.4,
+   "periods": 87,
    "macs": 1,
    "hardware": [
     "M5 Pro|33-64"
    ]
   },
   "nvidia-nemotron-3.5-lightning": {
-   "level": 0.07899,
-   "exponent": 0.7185,
+   "level": 0.07897,
+   "exponent": 0.7184,
    "range": [
     0.691,
-    0.914
+    0.915
    ],
    "hours": 5.5,
    "periods": 15,
@@ -81,7 +81,7 @@
    ]
   },
   "qwen3.5-35b-a3b": {
-   "level": 0.21531,
+   "level": 0.21526,
    "exponent": 0.5662,
    "range": [
     0.644,
@@ -95,11 +95,11 @@
    ]
   },
   "qwen3.6-35b-a3b-vl-mtp-mxfp8": {
-   "level": 0.08981,
+   "level": 0.08978,
    "exponent": 0.5815,
    "range": [
-    0.48,
-    1.455
+    0.478,
+    1.453
    ],
    "hours": 2.2,
    "periods": 5,
@@ -113,7 +113,7 @@
   "M5 Pro|33-64": {
    "EigenLabs/Qwen3.8-27B-4bit-mtp": {
     "level": 0.07536,
-    "exponent": 0.8293,
+    "exponent": 0.8291,
     "range": [
      0.0,
      0.977
@@ -126,8 +126,8 @@
     ]
    },
    "Qwen3.5-9B": {
-    "level": 0.05302,
-    "exponent": 0.4626,
+    "level": 0.05301,
+    "exponent": 0.4627,
     "range": [
      0.64,
      1.055
@@ -154,25 +154,25 @@
     ]
    },
    "gpt-oss-20b": {
-    "level": 0.0316,
-    "exponent": 0.4871,
+    "level": 0.03174,
+    "exponent": 0.4872,
     "range": [
-     0.592,
-     1.254
+     0.589,
+     1.249
     ],
-    "hours": 33.2,
-    "periods": 86,
+    "hours": 33.4,
+    "periods": 87,
     "macs": 1,
     "hardware": [
      "M5 Pro|33-64"
     ]
    },
    "nvidia-nemotron-3.5-lightning": {
-    "level": 0.07899,
-    "exponent": 0.7185,
+    "level": 0.07897,
+    "exponent": 0.7184,
     "range": [
      0.691,
-     0.914
+     0.915
     ],
     "hours": 5.5,
     "periods": 15,
@@ -182,7 +182,7 @@
     ]
    },
    "qwen3.5-35b-a3b": {
-    "level": 0.21531,
+    "level": 0.21526,
     "exponent": 0.5662,
     "range": [
      0.644,
@@ -196,11 +196,11 @@
     ]
    },
    "qwen3.6-35b-a3b-vl-mtp-mxfp8": {
-    "level": 0.08981,
+    "level": 0.08978,
     "exponent": 0.5815,
     "range": [
-     0.48,
-     1.455
+     0.478,
+     1.453
     ],
     "hours": 2.2,
     "periods": 5,

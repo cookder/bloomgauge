@@ -37,6 +37,10 @@ MAX_NEW_PER_HOUR = 5
 AUTO_SAME_PROBLEM_SECONDS = 86400
 AUTO_SAME_CATEGORY_SECONDS = 6 * 3600
 AUTO_MAX_PER_DAY = 3
+AUTO_LIMITED = (
+    'Automatic reports are limited to one per problem a day, one per kind of problem '
+    'every six hours and three a day. You can still send this report yourself.'
+)
 TIMEOUT = 15
 CATEGORIES = {'manual', 'ui', 'connection', 'setup', 'model', 'action'}
 CONTEXTS = {
@@ -87,9 +91,10 @@ class SupportError(Exception):
         ),
     }
 
-    def __init__(self, status, report_id=None):
+    def __init__(self, status, report_id=None, message=None):
         self.status = status
-        self.http_status, message = self.MESSAGES[status]
+        self.http_status, default = self.MESSAGES[status]
+        message = message or default
         self.response = {'status': status, 'error': message}
         if report_id:
             self.response['reportId'] = report_id
@@ -350,6 +355,10 @@ class SupportReports:
             )
         )
 
+    def _release_auto(self, report_id):
+        kept = [item for item in self._auto_sent() if item.get('report') != report_id]
+        self.store(self.AUTO_SENT_KEY, kept)
+
     def _prune(self):
         now = self.clock()
         self.previews = {
@@ -390,7 +399,7 @@ class SupportReports:
                 safe, version = summary({}, available=False), _version(diagnostics.app_version())
             problem = self._problem(category, safe, version) if automatic else None
             if automatic and not self._auto_allowed(category, problem):
-                raise SupportError('rate_limited')
+                raise SupportError('rate_limited', message=AUTO_LIMITED)
             report_id, review_token = secrets.token_hex(16), secrets.token_hex(32)
             report = {
                 'schema': 1,
@@ -456,17 +465,29 @@ class SupportReports:
                 return {'status': 'sent', 'reportId': report_id}
             if self.inflight is not None:
                 raise SupportError('busy', report_id)
-            if not entry['attempted'] and len(self.submissions) >= MAX_NEW_PER_HOUR:
+            # Automatic reports have their own limit and never use up the manual one.
+            if (
+                not entry['attempted']
+                and not entry['automatic']
+                and len(self.submissions) >= MAX_NEW_PER_HOUR
+            ):
                 raise SupportError('rate_limited', report_id)
             if not entry['attempted'] and entry['automatic']:
                 # Checked again here: two windows can preview the same problem at once.
+                # Reserved before sending so they can't both send; released below
+                # if delivery isn't confirmed, so a failed send doesn't use up the limit.
                 if not self._auto_allowed(entry['category'], entry['problem']):
-                    raise SupportError('rate_limited', report_id)
-                sent = {'at': self.now(), 'category': entry['category'], 'problem': entry['problem']}
+                    raise SupportError('rate_limited', report_id, AUTO_LIMITED)
+                sent = {
+                    'at': self.now(),
+                    'category': entry['category'],
+                    'problem': entry['problem'],
+                    'report': report_id,
+                }
                 self.store(self.AUTO_SENT_KEY, self._auto_sent() + [sent])
-            if not entry['attempted']:
+            elif not entry['attempted']:
                 self.submissions.append(self.clock())
-                entry['attempted'] = True
+            entry['attempted'] = True
             self.inflight = report_id
             finished = threading.Event()
 
@@ -496,6 +517,10 @@ class SupportReports:
                     with self.lock:
                         entry['sent'] = accepted
                         self.inflight = None
+                        if entry['automatic'] and not accepted:
+                            # A retry is checked against the limit and reserved again.
+                            self._release_auto(report_id)
+                            entry['attempted'] = False
                     finished.set()
 
             # At most one worker exists, only after explicit confirmation. The
