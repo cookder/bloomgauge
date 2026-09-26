@@ -1,4 +1,4 @@
-// Shared by the in-app Guide and bloomformac.com/guide. Plain data only, so the
+// Shared by the in-app Guide and bloomkeeper.io/guide. Plain data only, so the
 // website can copy this file unchanged. Keep labels matching the app's UI text.
 
 export type GuideStep = { title?: string; text: string };
@@ -28,7 +28,7 @@ export const guideSections: GuideSection[] = [
       },
       {
         title: 'Install',
-        text: 'Download Bloomkeeper from bloomformac.com, drag it into Applications and open it.',
+        text: 'Download Bloomkeeper from bloomkeeper.io, drag it into Applications and open it.',
       },
       {
         title: 'Finish setup',

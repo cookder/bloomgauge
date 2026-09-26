@@ -334,6 +334,65 @@ class SupportTests(unittest.TestCase):
         self.error('unconfirmed', lambda: self.reporter.send(self.consent(self.preview())))
         self.assertEqual(len(self.reporter.submissions), 1)
 
+    def automatic(self, category='connection', context='models'):
+        data = {**INPUT, 'category': category, 'context': context, 'automatic': True}
+        return self.reporter.send(self.consent(self.reporter.preview(data)))
+
+    def test_automatic_reports_need_the_opt_in_and_carry_no_user_text(self):
+        self.error('rate_limited', self.automatic)
+        self.reporter.set_auto({'autoSend': True})
+        for extra in ({'description': 'hi'}, {'contact': '@me'}, {'automatic': 1}):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                self.reporter.preview({**INPUT, 'automatic': True, **extra})
+        self.assertEqual(self.automatic()['status'], 'sent')
+        self.assertEqual(len(self.calls), 1)
+
+    def test_same_problem_sends_once_a_day_whatever_the_page_or_window(self):
+        self.reporter.set_auto({'autoSend': True})
+        self.automatic(context='models')
+        # Another page, a phone view or a reloaded window: still the same problem.
+        self.error('rate_limited', lambda: self.automatic(context='overview'))
+        self.now += reports.AUTO_SAME_CATEGORY_SECONDS
+        self.error('rate_limited', lambda: self.automatic(context='earnings'))
+        self.now += reports.AUTO_SAME_PROBLEM_SECONDS
+        self.assertEqual(self.automatic()['status'], 'sent')
+        self.assertEqual(len(self.calls), 2)
+        # A manual report is never held back by automatic ones.
+        self.assertEqual(self.reporter.send(self.consent(self.preview()))['status'], 'sent')
+
+    def test_a_changed_problem_waits_six_hours_and_three_a_day_at_most(self):
+        self.reporter.set_auto({'autoSend': True})
+        self.automatic()
+        self.source['optimizer']['lastSwitchFailure']['code'] = 'startup-timeout'
+        self.error('rate_limited', self.automatic)
+        self.automatic(category='model')
+        self.now += reports.AUTO_SAME_CATEGORY_SECONDS
+        self.automatic()
+        self.source['provider']['online'] = False
+        self.now += reports.AUTO_SAME_CATEGORY_SECONDS
+        self.error('rate_limited', self.automatic)
+        self.assertEqual(len(self.calls), 3)
+
+    def test_the_limit_survives_a_restart_and_two_windows_at_once(self):
+        store = reports._MemoryStore()
+        self.reporter.store = store
+        self.reporter.set_auto({'autoSend': True})
+        data = {**INPUT, 'category': 'connection', 'context': 'models', 'automatic': True}
+        first, second = self.reporter.preview(data), self.reporter.preview(data)
+        self.reporter.send(self.consent(first))
+        self.error('rate_limited', lambda: self.reporter.send(self.consent(second)))
+        restarted = reports.SupportReports(
+            None,
+            transport=self.transport,
+            now=lambda: self.now,
+            monotonic=lambda: self.clock,
+            capture=self.capture,
+            store=store,
+        )
+        with self.assertRaises(reports.SupportError):
+            restarted.preview(data)
+        self.assertEqual(len(self.calls), 1)
+
     def test_disabled_and_setup_preview_and_closed_never_contact_service(self):
         consent = self.consent(self.preview())
         self.error('unavailable', lambda: self.reporter.send(consent, preview_only=True))

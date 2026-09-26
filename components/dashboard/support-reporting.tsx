@@ -229,6 +229,7 @@ function SupportReportHost() {
     quickSupportReport(
       { ...issue, description: '', contact: '' },
       AbortSignal.timeout(30000),
+      true,
     )
       .then(() => {
         setAutoNotice(true);

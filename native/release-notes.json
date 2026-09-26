@@ -1,23 +1,11 @@
 {
-  "id": "bloom-1.36.57-beta38",
-  "version": "1.36.57",
-  "title": "Bloomkeeper: new name, now open source",
+  "id": "bloom-1.36.58-beta39",
+  "version": "1.36.58",
+  "title": "Fewer repeat problem reports",
   "highlights": [
     {
-      "title": "Bloom is now Bloomkeeper, and open source",
-      "detail": "Same app, new name, and its source is now public under the MIT license at github.com/cookder/bloomkeeper. Your history, settings, optimizer plan and phone link carry over unchanged, and updates keep arriving as before. If you installed from the website, the app in your Applications folder may keep its old name until you reinstall; that's fine."
-    },
-    {
-      "title": "Pace in cents or dollars",
-      "detail": "The Pulse meter now shows your pace in cents per hour (20.53¢) by default. Tap the number, or use the meter's settings, to switch to dollars ($0.21); Bloomkeeper remembers your choice."
-    },
-    {
-      "title": "Only Tailscale can reach the phone view",
-      "detail": "Bloomkeeper's phone connection now answers only requests that come through Tailscale, so other programs and other accounts on your Mac can't reach it directly. If phone access is already on, Bloomkeeper updates its Tailscale setting by itself and your phone link stays the same."
-    },
-    {
-      "title": "New support address",
-      "detail": "Help & feedback now offers support@bloomkeeper.io and the Bloomkeeper Slack channel. Problem reports work as before."
+      "title": "Automatic reports send once per problem",
+      "detail": "With \"Send these automatically\" on, Bloomkeeper sends the same problem at most once a day, the same kind of problem at most every six hours, and no more than three reports a day. The limit now holds across the Mac window, your phone and restarts, so one ongoing problem no longer sends a report every hour. Reports you send yourself are never held back."
     }
   ]
 }

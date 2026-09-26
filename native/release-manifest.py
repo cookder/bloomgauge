@@ -48,8 +48,8 @@ for metadata in sorted(
 )
 name = 'Bloomkeeper Beta' if beta else 'Bloomkeeper'
 # Personal builds share the current release version so the installed app never looks older.
-version = '1.36.57'
-build = '13657'
+version = '1.36.58'
+build = '13658'
 # The personal edition adds the forecast lab (installation.personal_edition).
 (resources / 'product-config.json').write_text(
     json.dumps({'edition': 'free' if beta else 'personal'}, indent=2) + '\n'

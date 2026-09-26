@@ -1,7 +1,9 @@
 """Explicit problem reports. No telemetry or persistent queue.
 
 Automatic sending happens only after the user opts in (auto_send), and then uses
-the same allowlisted preview and single bounded send as a manual report.
+the same allowlisted preview and single bounded send as a manual report. Automatic
+reports are limited here, not in each browser window, so every window, the phone
+view and app restarts share one record of what was already sent.
 
 Preview freezes a tiny allowlisted JSON document in memory. Only a confirmed Send
 with that preview's secret starts one bounded transport attempt. Retrying uses the
@@ -10,6 +12,7 @@ same bytes and per-report credential; nothing here runs on a collection tick.
 
 import copy
 from datetime import datetime, timezone
+import hashlib
 import hmac
 import json
 import math
@@ -29,6 +32,11 @@ MAX_ACK_BYTES = 1024
 MAX_PREVIEWS = 12
 PREVIEW_SECONDS = 10 * 60
 MAX_NEW_PER_HOUR = 5
+# Automatic reports: the same problem at most once a day, the same kind of problem
+# at most every six hours, and at most three a day in total.
+AUTO_SAME_PROBLEM_SECONDS = 86400
+AUTO_SAME_CATEGORY_SECONDS = 6 * 3600
+AUTO_MAX_PER_DAY = 3
 TIMEOUT = 15
 CATEGORIES = {'manual', 'ui', 'connection', 'setup', 'model', 'action'}
 CONTEXTS = {
@@ -215,6 +223,19 @@ def summary(value, available=True):
     }
 
 
+class _MemoryStore:
+    """history.cache's interface, for a reporter without a collector (tests)."""
+
+    def __init__(self):
+        self.data = {}
+
+    def __call__(self, key, data=None):
+        if data is None:
+            return self.data.get(key)
+        self.data[key] = data
+        return data
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -252,8 +273,11 @@ class SupportReports:
         now=None,
         monotonic=None,
         capture=None,
+        store=None,
     ):
         self.collector = collector
+        # Small persistent records: the opt-in and what was sent automatically.
+        self.store = store or (collector.history.cache if collector is not None else _MemoryStore())
         self.network_enabled = network_enabled
         self.transport = transport or _transport
         self.now = now or time.time
@@ -270,9 +294,10 @@ class SupportReports:
         self.closed = False
 
     AUTO_KEY = 'support-auto-send-v1'
+    AUTO_SENT_KEY = 'support-auto-sent-v1'
 
     def auto_status(self):
-        saved = self.collector.history.cache(self.AUTO_KEY)
+        saved = self.store(self.AUTO_KEY)
         enabled = isinstance(saved, dict) and saved.get('enabled') is True
         return {'autoSend': enabled and self.network_enabled}
 
@@ -284,10 +309,46 @@ class SupportReports:
             or type(data['autoSend']) is not bool
         ):
             raise ValueError('Choose whether to send reports automatically.')
-        self.collector.history.cache(
-            self.AUTO_KEY, {'enabled': data['autoSend'], 'changedAt': self.now()}
-        )
+        self.store(self.AUTO_KEY, {'enabled': data['autoSend'], 'changedAt': self.now()})
         return self.auto_status()
+
+    @staticmethod
+    def _problem(category, safe, version):
+        # The page the user happened to be on and moment-to-moment status are left
+        # out, so the same underlying problem counts once.
+        key = [
+            category,
+            version,
+            safe['providerOnline'],
+            safe['failureCode'],
+            safe['recoveryCode'],
+            [(s['name'], s['error']) for s in safe['sources']],
+        ]
+        return hashlib.sha256(json.dumps(key).encode()).hexdigest()[:16]
+
+    def _auto_sent(self):
+        saved = self.store(self.AUTO_SENT_KEY)
+        now = self.now()
+        return [
+            item
+            for item in (saved if isinstance(saved, list) else [])[-50:]
+            if isinstance(item, dict)
+            and type(item.get('at')) in (int, float)
+            and 0 <= now - item['at'] < AUTO_SAME_PROBLEM_SECONDS
+            and type(item.get('category')) is str
+            and type(item.get('problem')) is str
+        ]
+
+    def _auto_allowed(self, category, problem):
+        sent, now = self._auto_sent(), self.now()
+        return self.auto_status()['autoSend'] and not (
+            len(sent) >= AUTO_MAX_PER_DAY
+            or any(item['problem'] == problem for item in sent)
+            or any(
+                item['category'] == category and now - item['at'] < AUTO_SAME_CATEGORY_SECONDS
+                for item in sent
+            )
+        )
 
     def _prune(self):
         now = self.clock()
@@ -299,7 +360,11 @@ class SupportReports:
         self.submissions = [at for at in self.submissions if now - at < 3600]
 
     def preview(self, data, remote=False):
-        if type(data) is not dict or set(data) != {'category', 'context', 'description', 'contact'}:
+        fields = {'category', 'context', 'description', 'contact'}
+        if type(data) is not dict or set(data) not in (fields, fields | {'automatic'}):
+            raise ValueError('Invalid support preview.')
+        automatic = data.get('automatic', False)
+        if type(automatic) is not bool or (automatic and (data['description'] or data['contact'])):
             raise ValueError('Invalid support preview.')
         category, context = data['category'], data['context']
         if (
@@ -323,6 +388,9 @@ class SupportReports:
                 version = _version(_dict(_dict(captured).get('app')).get('version'))
             except Exception:
                 safe, version = summary({}, available=False), _version(diagnostics.app_version())
+            problem = self._problem(category, safe, version) if automatic else None
+            if automatic and not self._auto_allowed(category, problem):
+                raise SupportError('rate_limited')
             report_id, review_token = secrets.token_hex(16), secrets.token_hex(32)
             report = {
                 'schema': 1,
@@ -351,6 +419,9 @@ class SupportReports:
                 'expires': self.clock() + PREVIEW_SECONDS,
                 'attempted': False,
                 'sent': False,
+                'automatic': automatic,
+                'category': category,
+                'problem': problem,
             }
             return {'report': copy.deepcopy(report), 'reviewToken': review_token}
 
@@ -387,6 +458,12 @@ class SupportReports:
                 raise SupportError('busy', report_id)
             if not entry['attempted'] and len(self.submissions) >= MAX_NEW_PER_HOUR:
                 raise SupportError('rate_limited', report_id)
+            if not entry['attempted'] and entry['automatic']:
+                # Checked again here: two windows can preview the same problem at once.
+                if not self._auto_allowed(entry['category'], entry['problem']):
+                    raise SupportError('rate_limited', report_id)
+                sent = {'at': self.now(), 'category': entry['category'], 'problem': entry['problem']}
+                self.store(self.AUTO_SENT_KEY, self._auto_sent() + [sent])
             if not entry['attempted']:
                 self.submissions.append(self.clock())
                 entry['attempted'] = True

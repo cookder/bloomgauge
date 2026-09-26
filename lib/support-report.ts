@@ -328,8 +328,14 @@ export async function supportRequest(
 export async function quickSupportReport(
   fields: SupportFields,
   signal: AbortSignal,
+  automatic = false,
 ): Promise<string> {
-  const preview = await supportRequest('preview', fields, signal);
+  // Automatic reports are limited by the Mac app, shared across every window.
+  const preview = await supportRequest(
+    'preview',
+    automatic ? { ...fields, automatic: true } : fields,
+    signal,
+  );
   if (!validSupportPreview(preview, fields))
     throw new SupportRequestError('unconfirmed');
   const result = await supportRequest(
