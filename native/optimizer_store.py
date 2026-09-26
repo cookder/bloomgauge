@@ -1,9 +1,22 @@
 """Device-scoped evidence for model selection. Never backfills invented run time."""
 
-import hashlib, math, statistics
+import hashlib, math, sqlite3, statistics
 from datetime import datetime
 from history import epoch
 from model_combinations import members
+
+
+OPTIMIZER_TABLES = (
+    'opt_identity',
+    'opt_credits',
+    'workload_tokens',
+    'opt_coverage',
+    'opt_minutes',
+    'opt_ready_minutes',
+    'opt_residency',
+    'opt_network',
+    'opt_events',
+)
 
 
 def device_id(state):
@@ -48,7 +61,13 @@ class OptimizerStore:
         # only tables whose size changed about tenfold; the limit bounds each scan.
         with self.h.lock:
             self.h.db.execute('PRAGMA analysis_limit=1000')
-            self.h.db.execute('PRAGMA optimize=0x10002').fetchall()
+            if sqlite3.sqlite_version_info >= (3, 46):
+                self.h.db.execute('PRAGMA optimize=0x10002').fetchall()
+            else:
+                # Older SQLite (a system Python when running from source) ignores
+                # 0x10000 and skips tables this connection hasn't queried yet.
+                for table in OPTIMIZER_TABLES:
+                    self.h.db.execute('ANALYZE ' + table)
             self.h.db.commit()
 
     def identity(self, device, provider):

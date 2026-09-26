@@ -1,6 +1,7 @@
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 from history import History
 from optimizer_store import OptimizerStore
 
@@ -58,6 +59,13 @@ class EvidenceQueryTests(unittest.TestCase):
             self.assertFalse([p for p in plan if p.startswith(('SCAN i', 'SEARCH i'))], plan)
 
     def test_statistics_refresh_replaces_counts_taken_while_tables_were_small(self):
+        self.assert_statistics_refresh()
+
+    def test_statistics_refresh_on_sqlite_without_optimize_all_tables(self):
+        with mock.patch('optimizer_store.sqlite3.sqlite_version_info', (3, 43, 2)):
+            self.assert_statistics_refresh()
+
+    def assert_statistics_refresh(self):
         stat = "SELECT stat FROM sqlite_stat1 WHERE tbl=? AND idx LIKE 'sqlite_autoindex_%'"
         self.assertEqual(self.h.db.execute(stat, ('opt_identity',)).fetchone()[0], '1 1 1')
         self.store.refresh_statistics()
