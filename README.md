@@ -32,7 +32,7 @@ All features are free. Earnings vary with hardware and demand, and Bloomkeeper d
 
 ## Install
 
-Download the signed, notarized build from [bloomformac.com](https://bloomformac.com), drag it into Applications, and open it. Setup takes three steps, and Bloomkeeper starts in observe mode, so it changes nothing until you turn the optimizer on.
+Download the signed, notarized build from [bloomkeeper.io](https://bloomkeeper.io), drag it into Applications, and open it. Setup takes three steps, and Bloomkeeper starts in observe mode, so it changes nothing until you turn the optimizer on.
 
 ## How it works
 
@@ -82,15 +82,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## Support
 
+[Darkbloom help for Mac providers](https://bloomkeeper.io/help): no jobs while online, stuck draining, which model to run.
+
 In the app, use More → Help & feedback to send a problem report. You can also email [support@bloomkeeper.io](mailto:support@bloomkeeper.io), join the [Bloomkeeper Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN) on the Darkbloom Slack, or open an issue on [GitHub](https://github.com/cookder/bloomkeeper/issues). Report security problems privately, as described in [SECURITY.md](SECURITY.md).
 
 ## Privacy
 
-Bloomkeeper runs locally. Usage sharing is optional and off by default. If you turn it on, Bloomkeeper sends only coarse daily flags, never earnings, credentials, prompts or identifiers. Problem reports are sent only when you tap Send or turn on automatic sending, and never include earnings, account IDs or logs. Diagnostics reports are saved only where you choose. See [bloomformac.com/privacy](https://bloomformac.com/privacy).
+Bloomkeeper runs locally. Usage sharing is optional and off by default. If you turn it on, Bloomkeeper sends only coarse daily flags, never earnings, credentials, prompts or identifiers. Problem reports are sent only when you tap Send or turn on automatic sending, and never include earnings, account IDs or logs. Diagnostics reports are saved only where you choose. See [bloomkeeper.io/privacy](https://bloomkeeper.io/privacy).
 
 ## Name and official builds
 
-Official builds of Bloomkeeper come only from [bloomformac.com](https://bloomformac.com), signed, notarized and updated by the maintainer. If you publish a fork, please give it a different name and icon, and change its bundle identifier and the update feed and key in `native/update-public.json`, so its users don't receive official updates.
+Official builds of Bloomkeeper come only from [bloomkeeper.io](https://bloomkeeper.io), signed, notarized and updated by the maintainer. If you publish a fork, please give it a different name and icon, and change its bundle identifier and the update feed and key in `native/update-public.json`, so its users don't receive official updates.
 
 ## License
 
