@@ -112,6 +112,16 @@ def artifact(app):
             assert hashlib.sha256(p.read_bytes()).hexdigest() == entry['sha256'], (
                 'Static resource hash mismatch'
             )
+    # The builder's home folder and git email, read here so the email never appears in the source.
+    owner = subprocess.run(
+        ['git', '-C', str(SOURCE), 'config', 'user.email'], capture_output=True, text=True
+    ).stdout.strip()
+    personal = (
+        re.escape(str(Path.home()))
+        + r'\b'
+        + ('|' + re.escape(owner) if owner else '')
+        + r'|https://[^\s\"\']+\.ts\.net'
+    )
     blocked = re.compile(
         '(^|/)(auth_token|daemon-state\\.json|remote-access\\.json|community-insights\\.json|web-push\\.json|usage-reporting\\.json|\\.usage-reporting\\.lock|\\.usage-reporting-[^/]+\\.tmp|\\.env|\\.DS_Store)$|\\.(sqlite3?|db|key)(-|$)'
     )
@@ -127,11 +137,7 @@ def artifact(app):
             and p.stat().st_size < 8 * 1024 * 1024
         ):
             text = p.read_text(errors='replace')
-            text = text.replace('mailto:support@bloomkeeper.io', '')
-            assert not re.search(
-                re.escape(str(Path.home())) + r'\b|[A-Za-z0-9._%+-]+@gmail\.com|https://[^\s\"\']+\.ts\.net',
-                text,
-            ), 'Personal data in distributable text'
+            assert not re.search(personal, text), 'Personal data in distributable text'
     return {
         'version': info['CFBundleShortVersionString'],
         'pythonSourcesMatch': checked,

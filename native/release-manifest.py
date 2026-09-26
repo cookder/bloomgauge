@@ -1,10 +1,15 @@
 """Allowlisted release metadata and privacy checks (build-time only)."""
 
-import base64, hashlib, json, plistlib, re, sys
+import base64, hashlib, json, plistlib, re, subprocess, sys
 from pathlib import Path
 
-# The builder's own home folder must never reach a shipped UI asset.
+# The builder's own home folder and git email must never reach a shipped UI asset.
+# The email is read at build time so it never appears in the source itself.
 HOME = re.escape(str(Path.home()))
+OWNER = subprocess.run(
+    ['git', '-C', str(Path(__file__).parent), 'config', 'user.email'], capture_output=True, text=True
+).stdout.strip()
+PERSONAL = HOME + r'\b' + ('|' + re.escape(OWNER) if OWNER else '') + r'|https://[^\s\"\']+\.ts\.net'
 
 app = Path(sys.argv[1])
 channel = sys.argv[2]
@@ -100,9 +105,7 @@ for p in sorted(app.rglob('*')):
     # CA roots are intentionally bundled; no customer certificate or key is.
     if '/web/' in rel and p.suffix in ('.js', '.html', '.css'):
         body = p.read_text()
-        # This exact contact link was explicitly approved for public support.
-        body = body.replace('mailto:support@bloomkeeper.io', '')
-        if re.search(HOME + r'\b|[A-Za-z0-9._%+-]+@gmail\.com|https://[^\s\"\']+\.ts\.net', body):
+        if re.search(PERSONAL, body):
             raise SystemExit('Personal data found in UI asset')
     files.append(
         {
