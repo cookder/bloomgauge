@@ -1,10 +1,17 @@
-# Beta37 tester guide: steadier recovery, settings that stick
+# Beta38 tester guide: new name, now open source
 
-**1.36.53 beta37/build13653 · candidate tester guide · Apple Silicon/macOS 14+**
+**1.36.57 beta38/build13657 · candidate tester guide · Apple Silicon/macOS 14+**
 
-This guide targets beta37 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
+This guide targets beta38 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
 
-## New in beta37
+## New in beta38
+
+- **New name.** After updating, the window, menu bar and About should say Bloomkeeper Beta. History, settings, the optimizer plan and the phone link should carry over. The app file in Applications may keep its old name; that is expected.
+- **Pace units.** The Pulse meter should show cents per hour. Tap the number to switch to dollars; the choice should survive a restart.
+- **Phone view.** With phone access on, your phone link should keep working after the update.
+- **Help & feedback.** It should offer the support page, the Bloomkeeper Slack channel and Email support (support@bloomkeeper.io).
+
+## Carried forward from beta37
 
 - **Settings that stick.** Change the dashboard layout or dismiss the What’s new banner, quit Bloomkeeper and reopen it: the change should still be there.
 - **Model names.** With more than one Gemma 4 26B variant downloaded, model lists should show which is which (8-bit, QAT 4-bit).
@@ -215,7 +222,7 @@ Before updating an older beta, let any model switch or warm-up finish. Beta5/6/7
 
 Use the [support page](https://bloomformac.com/support), the [Bloomkeeper Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN), or [email support](mailto:support@bloomkeeper.io). Opening a contact sends nothing automatically. Read the [privacy notice](https://bloomformac.com/privacy) for the organizer-confirmed release. Local diagnostic export, optional earnings and optional usage sharing remain separate choices.
 
-## Baseline guide carried forward for beta37 verification
+## Baseline guide carried forward for beta38 verification
 
 # Bloomkeeper beta checklist
 

@@ -733,7 +733,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--dmg',
         type=Path,
-        default=SOURCE / '.build/releases/Bloom-1.36.53-beta37-Apple-Silicon.dmg',
+        default=SOURCE / '.build/releases/Bloomkeeper-1.36.57-beta38-Apple-Silicon.dmg',
     )
     parser.add_argument('--build', action='store_true')
     sys.exit(main(parser.parse_args()))

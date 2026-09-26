@@ -2,7 +2,7 @@
 set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 app="$project_dir/.build/beta/Bloomkeeper Beta.app"
-image="$project_dir/.build/releases/Bloom-1.36.53-beta37-Apple-Silicon.dmg"
+image="$project_dir/.build/releases/Bloomkeeper-1.36.57-beta38-Apple-Silicon.dmg"
 identity="${BLOOM_SIGN_IDENTITY:--}"
 if [[ -e "${image%.dmg}.notarization.json" || -L "${image%.dmg}.notarization.json" ]]; then
     echo 'This artifact has a notarization receipt. Finish that submission; do not overwrite its bytes.' >&2; exit 1

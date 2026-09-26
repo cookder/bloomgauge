@@ -72,9 +72,12 @@ class EvidenceQueryTests(unittest.TestCase):
         self.assertEqual(
             int(self.h.db.execute(stat, ('opt_identity',)).fetchone()[0].split()[0]), 251
         )
-        self.assertEqual(
+        # With analysis_limit, SQLite before 3.46 estimates large tables instead of counting.
+        credits = 2 * (3 * 1440 - 3)
+        self.assertAlmostEqual(
             int(self.h.db.execute(stat, ('opt_credits',)).fetchone()[0].split()[0]),
-            2 * (3 * 1440 - 3),
+            credits,
+            delta=credits // 10,
         )
         # Nothing changed tenfold since, so a second refresh leaves the statistics alone.
         changes = self.h.db.total_changes

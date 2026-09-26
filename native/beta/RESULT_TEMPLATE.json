@@ -1,8 +1,8 @@
 {
   "schema": "bloom-beta-result-v3",
   "testerAlias": "beta-REPLACE",
-  "candidateVersion": "1.36.53-beta37",
-  "kitRevision": "beta37-recovery-settings-2026-09-26",
+  "candidateVersion": "1.36.57-beta38",
+  "kitRevision": "beta38-bloomkeeper-open-source-2026-09-26",
   "artifactSha256": null,
   "distributionRoute": "not_run",
   "sessionStartedAtUtc": null,

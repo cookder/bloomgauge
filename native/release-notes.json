@@ -1,11 +1,11 @@
 {
-  "id": "bloom-1.36.56-beta38",
-  "version": "1.36.56",
-  "title": "Bloom is now Bloomkeeper",
+  "id": "bloom-1.36.57-beta38",
+  "version": "1.36.57",
+  "title": "Bloomkeeper: new name, now open source",
   "highlights": [
     {
-      "title": "Bloom is now Bloomkeeper",
-      "detail": "Same app, new name, ahead of the source going public: Bloomkeeper is an independent companion for Darkbloom. Your history, settings, optimizer plan and phone link carry over unchanged, and updates keep arriving as before. If you installed from the website, the app in your Applications folder may keep its old name until you reinstall; that's fine."
+      "title": "Bloom is now Bloomkeeper, and open source",
+      "detail": "Same app, new name, and its source is now public under the MIT license at github.com/cookder/bloomkeeper. Your history, settings, optimizer plan and phone link carry over unchanged, and updates keep arriving as before. If you installed from the website, the app in your Applications folder may keep its old name until you reinstall; that's fine."
     },
     {
       "title": "Pace in cents or dollars",
@@ -14,6 +14,10 @@
     {
       "title": "Only Tailscale can reach the phone view",
       "detail": "Bloomkeeper's phone connection now answers only requests that come through Tailscale, so other programs and other accounts on your Mac can't reach it directly. If phone access is already on, Bloomkeeper updates its Tailscale setting by itself and your phone link stays the same."
+    },
+    {
+      "title": "New support address",
+      "detail": "Help & feedback now offers support@bloomkeeper.io and the Bloomkeeper Slack channel. Problem reports work as before."
     }
   ]
 }

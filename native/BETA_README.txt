@@ -1,7 +1,7 @@
-Bloomkeeper — 1.36.53 beta37 · Steadier recovery, settings that stick
+Bloomkeeper — 1.36.57 beta38 · New name, now open source
 
 CHANGES IN THIS UPDATE
-Stall recovery now waits up to 20 minutes for the optimizer to switch models before giving up. Dashboard layout, graph style and dismissed notices are kept when Bloomkeeper restarts. Same-named model variants show their quantization in model lists. One odd history record no longer blanks the optimizer page. In half-hour time zones, earnings line up with Darkbloom Monitor’s hours. Switching text reflects Darkbloom 0.9.9, and problem reports leave out switch failures older than a day. Previous beta36 change: automatic switching counts the file cache Bloomkeeper clears before switching when checking whether a larger model fits.
+Bloom is now Bloomkeeper, and its source is public under the MIT license at github.com/cookder/bloomkeeper. History, settings, the optimizer plan and the phone link carry over. The Pulse meter shows pace in cents per hour by default; tap it to switch to dollars. The phone view now answers only requests that come through Tailscale, and existing phone access updates itself. Help & feedback offers support@bloomkeeper.io and the Bloomkeeper Slack channel. Previous beta37 change: stall recovery waits up to 20 minutes for the optimizer to switch models, and dashboard settings are kept across restarts.
 
 FEATURES RETAINED
 Arrange the Earnings dashboard with separate phone and desktop layouts saved in each browser. Compare experimental one-hour earnings baselines with clearer evidence, saved forecast windows and local accuracy tracking. Optimizer trial reviews now close unresolvable comparisons at their deadline, require a supported paid benchmark and explain the paid alternative; confirmation can pause through a brief data gap without counting unseen time.
