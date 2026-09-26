@@ -1,0 +1,222 @@
+[
+  {
+    "methodVersion": "paid-hour-baselines-v1",
+    "state": "estimate",
+    "issuedAt": 1800000001,
+    "origin": 1800000060,
+    "targetEnd": 1800003660,
+    "validUntil": 1800003660,
+    "refreshAfter": 1800000301,
+    "horizonSeconds": 3600,
+    "target": "inference_usd_next_hour_if_already_warm_and_stays_selected_ready",
+    "condition": "already_warm_and_same_model_selected_ready_for_entire_hour",
+    "assumption": "Assumes this model is already warm and stays selected and ready for the full hour. Loading, switching, base rewards, and unknown exposure are excluded.",
+    "usd": 0.060000000000000026,
+    "usdPerHour": 0.060000000000000026,
+    "basis": "recent_paid_persistence",
+    "reason": "The latest 15 complete settled warm minutes, extended over one hour. Demand may change; this baseline does not predict those changes.",
+    "reasonCodes": [],
+    "demandAsOf": 1799999991,
+    "paidEvidenceThrough": 1799999880,
+    "inputStatus": "fresh",
+    "lookbackSeconds": 2592000,
+    "support": {
+      "completedHours": 0,
+      "distinctDates": 0,
+      "recentCompleteMinutes": 15,
+      "recentRequiredMinutes": 15,
+      "lastOutcomeAt": null,
+      "lastPaidMinuteEnd": 1799999880,
+      "demandAdjusted": false
+    },
+    "uncertainty": {
+      "kind": "unavailable",
+      "lower": null,
+      "upper": null,
+      "nominalCoverage": null,
+      "validationWindows": 0,
+      "empiricalCoverage": null,
+      "label": "Middle half of completed historical warm-hour outcomes; not a prediction interval."
+    },
+    "historicalFallback": {
+      "basis": "completed_warm_hours",
+      "usdPerWarmHour": null,
+      "observedHours": 0,
+      "asOf": null,
+      "isForecast": false
+    },
+    "validation": {
+      "status": "experimental_baseline",
+      "prospectiveValidated": false,
+      "retrospectiveEvidence": "Chronological diagnostic comparisons were too sparse to establish general forecasting skill.",
+      "creditAvailability": "A settlement lag is applied; historical first-seen and correction times are unavailable."
+    }
+  },
+  {
+    "methodVersion": "paid-hour-baselines-v1",
+    "state": "held",
+    "issuedAt": 1800000001,
+    "origin": 1800000060,
+    "targetEnd": 1800003660,
+    "validUntil": 1800003660,
+    "refreshAfter": 1800000301,
+    "horizonSeconds": 3600,
+    "target": "inference_usd_next_hour_if_already_warm_and_stays_selected_ready",
+    "condition": "already_warm_and_same_model_selected_ready_for_entire_hour",
+    "assumption": "Assumes this model is already warm and stays selected and ready for the full hour. Loading, switching, base rewards, and unknown exposure are excluded.",
+    "usd": 0.060000000000000026,
+    "usdPerHour": 0.060000000000000026,
+    "basis": "recent_paid_persistence",
+    "reason": "Showing the last complete forecast for its original time window. The latest 15 complete settled warm minutes, extended over one hour. Demand may change; this baseline does not predict those changes.",
+    "reasonCodes": [
+      "last_complete_report"
+    ],
+    "demandAsOf": 1799999991,
+    "paidEvidenceThrough": 1799999880,
+    "inputStatus": "held",
+    "lookbackSeconds": 2592000,
+    "support": {
+      "completedHours": 0,
+      "distinctDates": 0,
+      "recentCompleteMinutes": 15,
+      "recentRequiredMinutes": 15,
+      "lastOutcomeAt": null,
+      "lastPaidMinuteEnd": 1799999880,
+      "demandAdjusted": false
+    },
+    "uncertainty": {
+      "kind": "unavailable",
+      "lower": null,
+      "upper": null,
+      "nominalCoverage": null,
+      "validationWindows": 0,
+      "empiricalCoverage": null,
+      "label": "Middle half of completed historical warm-hour outcomes; not a prediction interval."
+    },
+    "historicalFallback": {
+      "basis": "completed_warm_hours",
+      "usdPerWarmHour": null,
+      "observedHours": 0,
+      "asOf": null,
+      "isForecast": false
+    },
+    "validation": {
+      "status": "experimental_baseline",
+      "prospectiveValidated": false,
+      "retrospectiveEvidence": "Chronological diagnostic comparisons were too sparse to establish general forecasting skill.",
+      "creditAvailability": "A settlement lag is applied; historical first-seen and correction times are unavailable."
+    }
+  },
+  {
+    "methodVersion": "paid-hour-baselines-v1",
+    "state": "expired",
+    "issuedAt": 1800000001,
+    "origin": 1800000060,
+    "targetEnd": 1800003660,
+    "validUntil": 1800003660,
+    "refreshAfter": 1800000301,
+    "horizonSeconds": 3600,
+    "target": "inference_usd_next_hour_if_already_warm_and_stays_selected_ready",
+    "condition": "already_warm_and_same_model_selected_ready_for_entire_hour",
+    "assumption": "Assumes this model is already warm and stays selected and ready for the full hour. Loading, switching, base rewards, and unknown exposure are excluded.",
+    "usd": null,
+    "usdPerHour": null,
+    "basis": "recent_paid_persistence",
+    "reason": "This forecast window has ended. Waiting for a new complete report.",
+    "reasonCodes": [
+      "forecast_window_expired"
+    ],
+    "demandAsOf": 1799999991,
+    "paidEvidenceThrough": 1799999880,
+    "inputStatus": "fresh",
+    "lookbackSeconds": 2592000,
+    "support": {
+      "completedHours": 0,
+      "distinctDates": 0,
+      "recentCompleteMinutes": 15,
+      "recentRequiredMinutes": 15,
+      "lastOutcomeAt": null,
+      "lastPaidMinuteEnd": 1799999880,
+      "demandAdjusted": false
+    },
+    "uncertainty": {
+      "kind": "unavailable",
+      "lower": null,
+      "upper": null,
+      "nominalCoverage": null,
+      "validationWindows": 0,
+      "empiricalCoverage": null,
+      "label": "Middle half of completed historical warm-hour outcomes; not a prediction interval."
+    },
+    "historicalFallback": {
+      "basis": "completed_warm_hours",
+      "usdPerWarmHour": null,
+      "observedHours": 0,
+      "asOf": null,
+      "isForecast": false
+    },
+    "validation": {
+      "status": "experimental_baseline",
+      "prospectiveValidated": false,
+      "retrospectiveEvidence": "Chronological diagnostic comparisons were too sparse to establish general forecasting skill.",
+      "creditAvailability": "A settlement lag is applied; historical first-seen and correction times are unavailable."
+    }
+  },
+  {
+    "methodVersion": "paid-hour-baselines-v1",
+    "state": "unavailable",
+    "issuedAt": 1800000001,
+    "origin": 1800000060,
+    "targetEnd": 1800003660,
+    "validUntil": 1800003660,
+    "refreshAfter": 1800000301,
+    "horizonSeconds": 3600,
+    "target": "inference_usd_next_hour_if_already_warm_and_stays_selected_ready",
+    "condition": "already_warm_and_same_model_selected_ready_for_entire_hour",
+    "assumption": "Assumes this model is already warm and stays selected and ready for the full hour. Loading, switching, base rewards, and unknown exposure are excluded.",
+    "usd": null,
+    "usdPerHour": null,
+    "basis": "unavailable",
+    "reason": "Not enough recent complete same-model paid history for a next-hour baseline. Historical observations remain available below.",
+    "reasonCodes": [
+      "no_complete_warm_hours",
+      "insufficient_dates",
+      "unavailable_or_stale_demand"
+    ],
+    "demandAsOf": null,
+    "paidEvidenceThrough": 1799999880,
+    "inputStatus": "demand_unavailable",
+    "lookbackSeconds": 2592000,
+    "support": {
+      "completedHours": 0,
+      "distinctDates": 0,
+      "recentCompleteMinutes": 0,
+      "recentRequiredMinutes": 15,
+      "lastOutcomeAt": null,
+      "lastPaidMinuteEnd": null,
+      "demandAdjusted": false
+    },
+    "uncertainty": {
+      "kind": "unavailable",
+      "lower": null,
+      "upper": null,
+      "nominalCoverage": null,
+      "validationWindows": 0,
+      "empiricalCoverage": null,
+      "label": "Middle half of completed historical warm-hour outcomes; not a prediction interval."
+    },
+    "historicalFallback": {
+      "basis": "completed_warm_hours",
+      "usdPerWarmHour": null,
+      "observedHours": 0,
+      "asOf": null,
+      "isForecast": false
+    },
+    "validation": {
+      "status": "experimental_baseline",
+      "prospectiveValidated": false,
+      "retrospectiveEvidence": "Chronological diagnostic comparisons were too sparse to establish general forecasting skill.",
+      "creditAvailability": "A settlement lag is applied; historical first-seen and correction times are unavailable."
+    }
+  }
+]

@@ -1,0 +1,5 @@
+# Formatting-only commits, skipped by git blame (GitHub reads this file;
+# locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+
+# Format only: ruff format (Python) and oxfmt (TypeScript, JavaScript, CSS)
+bfd49f6eb6c6d402ec588816576c1f869bee2d0b

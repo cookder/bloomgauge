@@ -1,0 +1,6 @@
+allowBuilds:
+  # Vite's bundler; needed for the local dashboard build.
+  esbuild: true
+  # Only used by the unused Sites/Cloudflare scaffold, not the Mac app.
+  sharp: false
+  workerd: false

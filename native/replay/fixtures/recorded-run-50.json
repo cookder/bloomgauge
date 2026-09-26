@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "id": "recorded-run-50",
+  "title": "Missing pay is not zero after restart",
+  "kind": "decision",
+  "provenance": {
+    "type": "recorded_partial",
+    "incidentRun": 50,
+    "description": "Run50 exact stale/missing live-pay fields and saved candidate/baseline; old empty-trial context reconstructed. Admission guard replay only, not full historical controller state."
+  },
+  "inputs": {
+    "rows": [
+      {
+        "id": "incumbent",
+        "selected": true,
+        "available": true,
+        "earningsTarget": {
+          "rate": 0.08084756756756753,
+          "fastRate": null,
+          "warmMinutes": 37.0,
+          "asOf": 1789683240,
+          "ready": false,
+          "belowTarget": false,
+          "productiveFloor": 0.09,
+          "status": "stale",
+          "reason": "Waiting for fresh paid evidence.",
+          "livePaid": {
+            "fresh": false,
+            "rate": null,
+            "seconds": 0,
+            "asOf": null
+          },
+          "highEarnings": {
+            "active": false
+          }
+        }
+      },
+      {
+        "id": "candidate",
+        "selected": true,
+        "available": true,
+        "signal": {
+          "load": 200.625,
+          "pressure": 0.6820062125612932,
+          "observedAt": 1789683371,
+          "loadRatio": 0.6362062193061635,
+          "pressureRatio": 0.5831579960460394,
+          "baselineHours": 24.15,
+          "baselineLoad": 315.3458641426022,
+          "baselinePressure": 1.1695050349741754,
+          "status": "normal",
+          "sustained": {
+            "qualified": true,
+            "seconds": 600,
+            "samples": 17,
+            "sourceAt": 1789683371,
+            "pressure": 0.6820062125612932
+          },
+          "coverage": 1
+        },
+        "loadBudget": {
+          "afterUnloadGB": 35.38856636546552,
+          "requiredGB": 22.796213668584826
+        }
+      }
+    ],
+    "current": "incumbent",
+    "estimates": {
+      "incumbent": {
+        "rate": 0.07150800000000002,
+        "lower": 0.046392,
+        "upper": 0.09825600000000001,
+        "hours": 0.4166666666666667,
+        "days": 1,
+        "blocks": 5,
+        "forecastUsable": true,
+        "asOf": 1789683240,
+        "recent": true,
+        "evidenceHours": 117.71666666666667,
+        "established": true,
+        "scope": "recorded"
+      },
+      "candidate": {
+        "rate": 0.022913487109905005,
+        "lower": 0.012664655172413794,
+        "upper": 0.03754239130434783,
+        "hours": 12.283333333333333,
+        "days": 6,
+        "blocks": 30,
+        "forecastUsable": true,
+        "asOf": 1789676820,
+        "recent": false,
+        "evidenceHours": 16.266666666666666,
+        "established": false,
+        "scope": "recorded"
+      }
+    },
+    "events": [],
+    "runs": [],
+    "now": 1789683400.836776,
+    "last_switch": 0,
+    "activity": {
+      "fresh": true,
+      "idleSeconds": 0,
+      "busy": true
+    },
+    "trial": {
+      "current": true,
+      "complete": true,
+      "settled": true,
+      "status": "no_traffic"
+    }
+  },
+  "expected": {
+    "/target": null,
+    "/explorationTrigger": null,
+    "/earningsTarget/livePaid/fresh": false
+  }
+}

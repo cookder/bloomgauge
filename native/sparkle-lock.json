@@ -1,0 +1,8 @@
+{
+  "version": "2.10.0",
+  "url": "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip",
+  "sha256": "17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959",
+  "checksumSource": "https://raw.githubusercontent.com/sparkle-project/Sparkle/2.10.0/Package.swift",
+  "repository": "https://github.com/sparkle-project/Sparkle",
+  "release": "https://github.com/sparkle-project/Sparkle/releases/tag/2.10.0"
+}

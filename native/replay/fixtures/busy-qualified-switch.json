@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "busy-qualified-switch",
+  "title": "Qualified automatic switch does not wait forever for idle",
+  "kind": "controller_test",
+  "provenance": {
+    "type": "isolated_controller",
+    "description": "Real controller with temporary data and mocked provider commands; no live service."
+  },
+  "inputs": {
+    "test": "test_busy_final_recheck_dispatches_qualified_demand_switch"
+  },
+  "expected": {
+    "/successful": true
+  }
+}

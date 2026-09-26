@@ -1,0 +1,39 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    # Private copies of the repository skip automatic runs (macOS minutes cost
+    # more there); start one from the Actions tab when needed.
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+      - name: Install dependencies
+        run: |
+          npm install --global pnpm@12
+          pnpm install --frozen-lockfile
+          ./native/setup-dev.sh
+      - name: Typecheck
+        run: pnpm run check
+      - name: JavaScript tests
+        run: node --test native/test_*.mjs lib/*.test.mjs
+      - name: Backend tests
+        # The system Python, as in native/setup-dev.sh. Release builds bundle their own runtime.
+        run: /usr/bin/python3 -m unittest discover -s native -p 'test_*.py'

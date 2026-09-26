@@ -1,0 +1,6 @@
+# Python formatting: `ruff format` (install with `pip install ruff`).
+target-version = "py39"
+line-length = 100
+
+[format]
+quote-style = "single"

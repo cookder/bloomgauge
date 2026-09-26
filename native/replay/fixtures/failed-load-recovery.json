@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "failed-load-recovery",
+  "title": "Failed warm-up recovers within existing guards then pauses",
+  "kind": "controller_test",
+  "provenance": {
+    "type": "isolated_controller",
+    "description": "Real controller with temporary data and mocked provider commands; no live service."
+  },
+  "inputs": {
+    "test": "test_failed_load_uses_guarded_recovery_then_pauses"
+  },
+  "expected": {
+    "/successful": true
+  }
+}

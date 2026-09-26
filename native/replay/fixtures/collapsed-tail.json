@@ -1,0 +1,243 @@
+{
+  "schema": 1,
+  "id": "collapsed-tail",
+  "title": "A demand spike with a collapsed tail is rejected",
+  "kind": "decision",
+  "provenance": {
+    "type": "synthetic_boundary",
+    "description": "Fixed incident-inspired boundary, not observed earnings."
+  },
+  "inputs": {
+    "rows": [
+      {
+        "id": "gemma",
+        "selected": true,
+        "available": true,
+        "evidence": {
+          "eligible": true
+        },
+        "loadBudget": {
+          "afterUnloadGB": 40,
+          "requiredGB": 30
+        },
+        "signal": {
+          "status": "normal",
+          "load": 10,
+          "pressure": 2,
+          "coverage": 1,
+          "observedAt": 1789405170.0,
+          "loadRatio": 3,
+          "pressureRatio": 3,
+          "sustained": {
+            "qualified": true,
+            "seconds": 600,
+            "samples": 19,
+            "sourceAt": 1789405170.0,
+            "pressure": 3.35,
+            "windows": [
+              {
+                "load": 264,
+                "pressure": 3.35,
+                "coverage": 1,
+                "qualified": true
+              },
+              {
+                "load": 275,
+                "pressure": 3.4,
+                "coverage": 0.9,
+                "qualified": true
+              }
+            ]
+          }
+        },
+        "earningsTarget": {
+          "ready": false,
+          "status": "productive",
+          "reason": "Preserving productive work.",
+          "rate": 0.12,
+          "fastRate": 0.11,
+          "warmMinutes": 39,
+          "usdPerHour": 0.12,
+          "belowTarget": false,
+          "livePaid": {
+            "fresh": true,
+            "rate": 0.115,
+            "seconds": 300,
+            "asOf": 1789405190.0
+          }
+        }
+      },
+      {
+        "id": "nemotron",
+        "selected": true,
+        "available": true,
+        "evidence": {
+          "eligible": true
+        },
+        "loadBudget": {
+          "afterUnloadGB": 40,
+          "requiredGB": 30
+        },
+        "signal": {
+          "status": "spike",
+          "load": 276,
+          "pressure": 3.4,
+          "coverage": 1,
+          "observedAt": 1789405170.0,
+          "loadRatio": 32,
+          "pressureRatio": 19.6,
+          "baselineLoad": 8.6,
+          "baselinePressure": 0.174,
+          "baselineHours": 20,
+          "baselineAsOf": 1789405080.0,
+          "sustained": {
+            "qualified": true,
+            "seconds": 600,
+            "samples": 19,
+            "sourceAt": 1789405170.0,
+            "pressure": 3.35,
+            "windows": [
+              {
+                "load": 264,
+                "pressure": 3.35,
+                "coverage": 1,
+                "qualified": true
+              },
+              {
+                "load": 275,
+                "pressure": 3.4,
+                "coverage": 0.9,
+                "qualified": true
+              }
+            ]
+          },
+          "spikeContext": {
+            "sourceAt": 1789405170,
+            "fresh": true,
+            "recent": {
+              "start": 1789402800,
+              "end": 1789404600,
+              "coverage": 1.0,
+              "qualified": true,
+              "load": 8.0,
+              "pressure": 0.1
+            },
+            "windows": [
+              {
+                "start": 1789404600,
+                "end": 1789404900,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 270.0,
+                "pressure": 3.375
+              },
+              {
+                "start": 1789404900,
+                "end": 1789405200,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 270.0,
+                "pressure": 3.375
+              }
+            ],
+            "persistent": [
+              {
+                "start": 1789403400,
+                "end": 1789403700,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 8.0,
+                "pressure": 0.1
+              },
+              {
+                "start": 1789403700,
+                "end": 1789404000,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 8.0,
+                "pressure": 0.1
+              },
+              {
+                "start": 1789404000,
+                "end": 1789404300,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 8.0,
+                "pressure": 0.1
+              },
+              {
+                "start": 1789404300,
+                "end": 1789404600,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 8.0,
+                "pressure": 0.1
+              },
+              {
+                "start": 1789404600,
+                "end": 1789404900,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 270.0,
+                "pressure": 3.375
+              },
+              {
+                "start": 1789404900,
+                "end": 1789405200,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 270.0,
+                "pressure": 3.375
+              }
+            ],
+            "tails": [
+              {
+                "start": 1789404960,
+                "end": 1789405080,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 270.0,
+                "pressure": 3.375
+              },
+              {
+                "start": 1789405080,
+                "end": 1789405200,
+                "coverage": 1.0,
+                "qualified": true,
+                "load": 20,
+                "pressure": 0.2
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "current": "gemma",
+    "estimates": {
+      "gemma": {
+        "rate": 0.12,
+        "lower": 0.102,
+        "upper": 0.13799999999999998,
+        "hours": 30,
+        "days": 4,
+        "blocks": 30,
+        "scope": "weekday_time",
+        "forecastUsable": true,
+        "recent": true
+      }
+    },
+    "events": [],
+    "runs": [],
+    "now": 1789405200.0,
+    "last_switch": 0,
+    "activity": {
+      "fresh": true,
+      "idleSeconds": 0,
+      "busy": true
+    },
+    "trial": null
+  },
+  "expected": {
+    "/target": null
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "restart-confirmation",
+  "title": "Restart does not reuse stale confirmation",
+  "kind": "controller_test",
+  "provenance": {
+    "type": "isolated_controller",
+    "description": "Real controller with temporary data and mocked provider commands; no live service."
+  },
+  "inputs": {
+    "test": "test_restart_never_reuses_old_confirmation"
+  },
+  "expected": {
+    "/successful": true
+  }
+}

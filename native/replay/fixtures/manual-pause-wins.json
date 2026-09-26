@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "manual-pause-wins",
+  "title": "User pause cancels an outstanding automatic command",
+  "kind": "controller_test",
+  "provenance": {
+    "type": "isolated_controller",
+    "description": "Real controller with temporary data and mocked provider commands; no live service."
+  },
+  "inputs": {
+    "test": "test_user_pause_before_final_command_wins"
+  },
+  "expected": {
+    "/successful": true
+  }
+}

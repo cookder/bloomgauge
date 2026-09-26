@@ -1,0 +1,394 @@
+{
+  "schema": 1,
+  "id": "recorded-run-13",
+  "title": "Productive incumbent is preserved",
+  "kind": "decision",
+  "provenance": {
+    "type": "recorded_partial",
+    "incidentRun": 13,
+    "description": "Run13 saved candidate/baseline, recorded Pulse rate and reconstructed settled warm evidence. Two-model replay under current policy; fresh-window metadata reconstructed, not every historical alternative. Since Sep 25 decisions use the protect level; this incident is replayed at $0.09, the earnings floor that applied then."
+  },
+  "inputs": {
+    "rows": [
+      {
+        "id": "incumbent",
+        "selected": true,
+        "available": true
+      },
+      {
+        "id": "candidate",
+        "selected": true,
+        "available": true,
+        "signal": {
+          "load": 139.0,
+          "pressure": 1.511214288283012,
+          "observedAt": 1789472766,
+          "loadRatio": 3.390758846275058,
+          "pressureRatio": 1.838724545887633,
+          "status": "normal",
+          "sustained": {
+            "qualified": true,
+            "seconds": 600,
+            "samples": 20,
+            "sourceAt": 1789472766,
+            "pressure": 1.511214288283012
+          },
+          "coverage": 1
+        },
+        "loadBudget": {
+          "afterUnloadGB": 38.39294205699116,
+          "requiredGB": 18.102870506048202
+        }
+      }
+    ],
+    "current": "incumbent",
+    "estimates": {
+      "incumbent": {
+        "rate": 0.09536482758620689,
+        "lower": 0.08106010344827586,
+        "upper": 0.11074499999999998,
+        "hours": 0.48333333333333334,
+        "days": 1,
+        "blocks": 6,
+        "forecastUsable": false,
+        "asOf": 1789472640,
+        "recent": true,
+        "recentGuardRate": 0.0963,
+        "evidenceHours": 79.45,
+        "established": true,
+        "scope": "recorded"
+      },
+      "candidate": {
+        "rate": 0.059683157894736875,
+        "lower": 0.050730684210526344,
+        "upper": 0.0747005,
+        "hours": 2.85,
+        "days": 2,
+        "blocks": 7,
+        "forecastUsable": false,
+        "asOf": 1789455120,
+        "recent": false,
+        "evidenceHours": 3.6,
+        "established": false,
+        "scope": "recorded"
+      }
+    },
+    "events": [],
+    "runs": [],
+    "now": 1789472800.2964401,
+    "last_switch": 0,
+    "activity": {
+      "fresh": true,
+      "idleSeconds": 0
+    },
+    "trial": null,
+    "target_context": {
+      "evidence": {
+        "minutes": [
+          {
+            "at": 1789469220,
+            "seconds": 60.0,
+            "usd": 0.001484
+          },
+          {
+            "at": 1789469280,
+            "seconds": 60.0,
+            "usd": 0.000342
+          },
+          {
+            "at": 1789469340,
+            "seconds": 60.0,
+            "usd": 0.002641
+          },
+          {
+            "at": 1789469400,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789469460,
+            "seconds": 60.0,
+            "usd": 0.004237
+          },
+          {
+            "at": 1789469520,
+            "seconds": 60.0,
+            "usd": 0.002911
+          },
+          {
+            "at": 1789469580,
+            "seconds": 60.0,
+            "usd": 0.001541
+          },
+          {
+            "at": 1789469640,
+            "seconds": 60.0,
+            "usd": 0.003647
+          },
+          {
+            "at": 1789469700,
+            "seconds": 60.0,
+            "usd": 0.001663
+          },
+          {
+            "at": 1789469760,
+            "seconds": 60.0,
+            "usd": 0.00258
+          },
+          {
+            "at": 1789469820,
+            "seconds": 60.0,
+            "usd": 0.002104
+          },
+          {
+            "at": 1789469880,
+            "seconds": 60.0,
+            "usd": 0.000762
+          },
+          {
+            "at": 1789469940,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789470000,
+            "seconds": 60.0,
+            "usd": 0.00353
+          },
+          {
+            "at": 1789470060,
+            "seconds": 60.0,
+            "usd": 0.001244
+          },
+          {
+            "at": 1789470120,
+            "seconds": 60.0,
+            "usd": 0.001616
+          },
+          {
+            "at": 1789470180,
+            "seconds": 60.0,
+            "usd": 0.000249
+          },
+          {
+            "at": 1789470240,
+            "seconds": 60.0,
+            "usd": 0.002487
+          },
+          {
+            "at": 1789470300,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789470360,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789470420,
+            "seconds": 60.0,
+            "usd": 0.003153
+          },
+          {
+            "at": 1789470480,
+            "seconds": 60.0,
+            "usd": 0.003991
+          },
+          {
+            "at": 1789470540,
+            "seconds": 60.0,
+            "usd": 0.001286
+          },
+          {
+            "at": 1789470600,
+            "seconds": 60.0,
+            "usd": 0.002034
+          },
+          {
+            "at": 1789470660,
+            "seconds": 60.0,
+            "usd": 0.001767
+          },
+          {
+            "at": 1789470720,
+            "seconds": 60.0,
+            "usd": 0.000726
+          },
+          {
+            "at": 1789470780,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789470840,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789470900,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789470960,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789471020,
+            "seconds": 60.0,
+            "usd": 0.007173
+          },
+          {
+            "at": 1789471080,
+            "seconds": 60.0,
+            "usd": 0.001246
+          },
+          {
+            "at": 1789471140,
+            "seconds": 60.0,
+            "usd": 0.001876
+          },
+          {
+            "at": 1789471200,
+            "seconds": 60.0,
+            "usd": 0.00167
+          },
+          {
+            "at": 1789471260,
+            "seconds": 60.0,
+            "usd": 0.000943
+          },
+          {
+            "at": 1789471320,
+            "seconds": 60.0,
+            "usd": 0.002047
+          },
+          {
+            "at": 1789471380,
+            "seconds": 60.0,
+            "usd": 0.000326
+          },
+          {
+            "at": 1789471440,
+            "seconds": 60.0,
+            "usd": 0.001864
+          },
+          {
+            "at": 1789471500,
+            "seconds": 60.0,
+            "usd": 0.002413
+          },
+          {
+            "at": 1789471560,
+            "seconds": 60.0,
+            "usd": 0.002181
+          },
+          {
+            "at": 1789471620,
+            "seconds": 60.0,
+            "usd": 0.001794
+          },
+          {
+            "at": 1789471680,
+            "seconds": 60.0,
+            "usd": 0.001398
+          },
+          {
+            "at": 1789471740,
+            "seconds": 60.0,
+            "usd": 0.001319
+          },
+          {
+            "at": 1789471800,
+            "seconds": 60.0,
+            "usd": 0.0025
+          },
+          {
+            "at": 1789471860,
+            "seconds": 60.0,
+            "usd": 0.000962
+          },
+          {
+            "at": 1789471920,
+            "seconds": 60.0,
+            "usd": 0.002354
+          },
+          {
+            "at": 1789471980,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789472040,
+            "seconds": 60.0,
+            "usd": 0
+          },
+          {
+            "at": 1789472100,
+            "seconds": 60.0,
+            "usd": 0.000194
+          },
+          {
+            "at": 1789472160,
+            "seconds": 60.0,
+            "usd": 0.000486
+          },
+          {
+            "at": 1789472220,
+            "seconds": 60.0,
+            "usd": 0.001763
+          },
+          {
+            "at": 1789472280,
+            "seconds": 60.0,
+            "usd": 0.002273
+          },
+          {
+            "at": 1789472340,
+            "seconds": 60.0,
+            "usd": 0.002891
+          },
+          {
+            "at": 1789472400,
+            "seconds": 60.0,
+            "usd": 0.001336
+          },
+          {
+            "at": 1789472460,
+            "seconds": 60.0,
+            "usd": 0.001047
+          },
+          {
+            "at": 1789472520,
+            "seconds": 60.0,
+            "usd": 0.002062
+          },
+          {
+            "at": 1789472580,
+            "seconds": 60.0,
+            "usd": 0.001975
+          }
+        ]
+      },
+      "since": 1789457280.044766,
+      "last_switch": 1789457177.1514912,
+      "live_paid": {
+        "fresh": true,
+        "rate": 0.112968,
+        "asOf": 1789472798,
+        "seconds": 300
+      }
+    },
+    "policy": {
+      "protectUsdPerHour": 0.09
+    }
+  },
+  "expected": {
+    "/target": null,
+    "/earningsTarget/status": "productive",
+    "/earningsTarget/livePaid/fresh": true,
+    "/earningsTarget/ready": false
+  }
+}
