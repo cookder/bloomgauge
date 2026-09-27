@@ -698,6 +698,20 @@ export function OptimizerTab({
   const best = [...measured].sort(
     (a, b) => (b.evidence.usdPerHour ?? 0) - (a.evidence.usdPerHour ?? 0),
   )[0];
+  // Models the provider offers that Darkbloom's catalog no longer lists get no
+  // network work; show them (dimmed) so the model list matches the provider.
+  const offeredNotInCatalog = (data?.reporting?.models ?? []).filter(
+    (id) => !(data?.models ?? []).some((m) => m.id === id),
+  );
+  const planModels = [
+    ...(data?.models ?? []),
+    ...offeredNotInCatalog.map((id) => ({
+      id,
+      name: id,
+      available: false,
+      reason: 'Offered by your provider but not in Darkbloom’s catalog',
+    })),
+  ];
   const running = !!data && data.mode !== 'observe';
   const restoring = !!data?.requestedModel;
   const locked =
@@ -1140,15 +1154,28 @@ export function OptimizerTab({
         {data?.reporting && (
           <div className="notice" role="status">
             <strong>
-              {data.reporting.models.length}-model monitoring · managed by
-              Darkbloom
+              Your provider offers {data.reporting.models.length} models ·
+              statistics {data.reporting.counting ? 'on' : 'paused'}
             </strong>
             <p>{data.reporting.detail}</p>
             <p>
-              Earnings and traffic reporting work with this model set. Automatic
-              demand-following currently selects one model; optional combination
-              tests cover pairs. Keep your existing setup to continue monitoring
-              it. Bloomkeeper will not change it just to enable reporting.
+              Statistics count for the models loaded right now, and start fresh
+              whenever Darkbloom loads or unloads one, so numbers from different
+              sets never mix. Earnings, traffic and the dashboards work either
+              way.
+            </p>
+            {offeredNotInCatalog.length > 0 && (
+              <p>
+                {offeredNotInCatalog.join(', ')}{' '}
+                {offeredNotInCatalog.length === 1 ? 'is' : 'are'} no longer in
+                Darkbloom’s catalog, so the network won’t send{' '}
+                {offeredNotInCatalog.length === 1 ? 'it' : 'them'} work. Remove
+                with <code>darkbloom models remove &lt;id&gt;</code>.
+              </p>
+            )}
+            <p>
+              The optimizer switches one model at a time, so it leaves this setup
+              alone and never changes your Darkbloom model list.
             </p>
           </div>
         )}
@@ -1177,7 +1204,7 @@ export function OptimizerTab({
                 )}
                 <OptimizerPlan
                   on={data.mode === 'demand'}
-                  models={data.models}
+                  models={planModels}
                   currentModel={data.currentModel}
                   selected={selected}
                   onSelected={setSelected}

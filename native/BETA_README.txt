@@ -1,7 +1,7 @@
-Bloomkeeper — 1.36.58 beta39 · Fewer repeat problem reports
+Bloomkeeper — 1.36.59 beta40 · Statistics for large model sets
 
 CHANGES IN THIS UPDATE
-With "Send these automatically" on, Bloomkeeper sends the same problem at most once a day, the same kind of problem at most every six hours, and no more than three reports a day. The limit holds across the Mac window, your phone and restarts. Reports you send yourself are never held back. Previous beta38 change: Bloom is now Bloomkeeper, and its source is public under the MIT license at github.com/cookder/bloomkeeper.
+With several models offered in Darkbloom, statistics now count for the models loaded right now instead of waiting for all of them, and start fresh whenever one loads or unloads. The multi-model notice names models that aren't loaded or aren't in Darkbloom's catalog, and the model list shows every model your Mac offers. A held-back or failed automatic problem report can still be sent by hand. Previous beta39 change: automatic problem reports send the same problem at most once a day.
 
 FEATURES RETAINED
 Arrange the Earnings dashboard with separate phone and desktop layouts saved in each browser. Compare experimental one-hour earnings baselines with clearer evidence, saved forecast windows and local accuracy tracking. Optimizer trial reviews now close unresolvable comparisons at their deadline, require a supported paid benchmark and explain the paid alternative; confirmation can pause through a brief data gap without counting unseen time.

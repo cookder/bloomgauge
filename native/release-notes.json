@@ -1,11 +1,19 @@
 {
-  "id": "bloom-1.36.58-beta39",
-  "version": "1.36.58",
-  "title": "Fewer repeat problem reports",
+  "id": "bloom-1.36.59-beta40",
+  "version": "1.36.59",
+  "title": "Statistics for large model sets",
   "highlights": [
     {
-      "title": "Automatic reports send once per problem",
-      "detail": "With \"Send these automatically\" on, Bloomkeeper sends the same problem at most once a day, the same kind of problem at most every six hours, and no more than three reports a day. The limit now holds across the Mac window, your phone and restarts, so one ongoing problem no longer sends a report every hour. Reports you send yourself are never held back."
+      "title": "Statistics count with many models offered",
+      "detail": "If your Darkbloom provider offers several models, statistics used to pause until every one of them was loaded, which rarely happens because Darkbloom loads models as requests arrive. They now count for the models loaded right now and start a fresh measurement whenever one loads or unloads, so numbers from different sets never mix."
+    },
+    {
+      "title": "Clearer multi-model notice",
+      "detail": "The notice names any models that aren't loaded and any your Mac offers that Darkbloom's catalog no longer lists (those get no work; darkbloom models remove clears them). Models Bloomkeeper can use now shows every model your Mac offers, including ones outside the catalog, dimmed."
+    },
+    {
+      "title": "Problem reports you can still send",
+      "detail": "If an automatic report is held back or fails, the report prompt stays so you can send it yourself, and a failed automatic send no longer uses up the daily limit."
     }
   ]
 }

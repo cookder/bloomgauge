@@ -68,7 +68,7 @@ class ReportingRecheckTests(unittest.TestCase):
 
     def test_cold_pending_invalid_and_solo_pair_states_never_request_recheck(self):
         for changes in (
-            {'warm_models': list('ab')},
+            {'warm_models': []},
             {'written_at': T + 40},
             {'advertised_models': ['a']},
             {'advertised_models': ['a', 'b']},

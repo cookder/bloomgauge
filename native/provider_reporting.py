@@ -22,6 +22,14 @@ def observed_models(values):
     return sorted(values)
 
 
+def loaded_models(raw, selected):
+    """Offered models that are loaded now. Darkbloom loads the rest when requests
+    arrive, and most Macs can't hold a large set at once, so the loaded subset is
+    what serves; any change to it starts a new measurement segment."""
+    warm = observed_models(raw.get('warm_models'))
+    return [m for m in selected if m in warm]
+
+
 def reporting_scope(account, raw, now):
     """Fresh local warm identity only; this does not prove serving output."""
     if not isinstance(account, str) or not account or not isinstance(raw, dict) or not finite(now):
@@ -44,14 +52,14 @@ def reporting_scope(account, raw, now):
     trust = raw.get('trust')
     if not isinstance(trust, dict) or trust.get('status') != 'online':
         return None
-    warm = observed_models(raw.get('warm_models'))
-    if not all(model in warm for model in selected):
+    loaded = loaded_models(raw, selected)
+    if not loaded:
         return None
     slots = raw.get('slots')
     if slots is not None:
         if not isinstance(slots, list) or any(not isinstance(slot, dict) for slot in slots):
             return None
-        for model in selected:
+        for model in loaded:
             matches = [slot for slot in slots if slot.get('model') == model]
             if (
                 len(matches) != 1
@@ -67,7 +75,7 @@ def reporting_scope(account, raw, now):
     )
     if len(counters) != 2 or any(not finite(v) or v < 0 or int(v) != v for v in counters):
         return None
-    return account, key, raw['pid'], raw['started_at'], tuple(selected)
+    return account, key, raw['pid'], raw['started_at'], tuple(selected), tuple(loaded)
 
 
 class ReportingIdentity:
@@ -168,16 +176,19 @@ class ProviderReporting:
         trust = raw.get('trust')
         if not isinstance(trust, dict) or trust.get('status') != 'online':
             return pause('Statistics paused · provider is not ready to serve.')
-        warm = observed_models(raw.get('warm_models'))
-        if not all(m in warm for m in selected):
-            return pause('Statistics paused · every selected model must be loaded and warm.')
+        loaded = loaded_models(raw, selected)
+        if not loaded:
+            return pause(
+                f'Statistics paused · none of the {len(selected)} models your provider offers '
+                'are loaded yet.'
+            )
         # Older providers omit slots. If present, an unloaded/failed slot is
         # stronger evidence than an out-of-date warm_models list.
         slots = raw.get('slots')
         if slots is not None:
             if not isinstance(slots, list) or any(not isinstance(s, dict) for s in slots):
                 return pause('Statistics paused · model slot readiness is unavailable.')
-            for model in selected:
+            for model in loaded:
                 matches = [s for s in slots if s.get('model') == model]
                 if (
                     len(matches) != 1
@@ -205,6 +216,7 @@ class ProviderReporting:
             raw['pid'],
             raw['started_at'],
             tuple(selected),
+            tuple(loaded),
             roster_provider,
         )
         previous = self.previous
@@ -237,5 +249,12 @@ class ProviderReporting:
             'counting': True,
             'status': 'counting',
             'verifiedAt': self.verified_at,
-            'detail': f'Counting aggregate work while all {len(selected)} models are loaded and warm. Serving output observed; per-model income comes from confirmed credits.',
+            'detail': (
+                f'Counting aggregate work while all {len(selected)} models are loaded and warm. '
+                if len(loaded) == len(selected)
+                else f'Counting aggregate work from the {len(loaded)} of {len(selected)} models '
+                f'loaded now ({", ".join(loaded)}); a new segment starts when that set changes. '
+            )
+            + 'Serving output observed; per-model income comes from confirmed credits.',
+            'loaded': loaded,
         }

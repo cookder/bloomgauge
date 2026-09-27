@@ -287,13 +287,52 @@ class MultiModelCollectorTests(unittest.TestCase):
         b = self.step(66, warm_models=list('abc'))
         self.assertEqual(b['pulse']['status'], 'unmatched')
         self.assertFalse(b['pulse']['reporting']['counting'])
-        self.assertIn('every selected model', b['pulse']['detail'])
+        # A changed loaded set is a new scope: the old roster proof never bridges it.
+        self.assertIn('provider roster', b['pulse']['detail'])
         self.assertIsNone(self.c.optimizer.reporting_roster.proof)
         c = self.step(69, True, warm_models=list('abcd'))
         self.assertEqual(c['pulse']['status'], 'paused')
         d = self.step(72, stats={'requests_served': 90, 'tokens_generated': 2000})
         self.assertEqual(d['pulse']['status'], 'live')
         self.assertEqual(d['provider']['session']['performance']['segmentStartedAt'], T + 72)
+
+    def test_large_model_set_counts_with_only_some_models_loaded(self):
+        # Customer case (Sep 27): 11 models offered, only a few loaded at a time.
+        offered = [f'm{i:02d}' for i in range(11)]
+        self.raw['advertised_models'] = offered
+        self.raw['warm_models'] = ['m00', 'm03']
+        self.raw['current_model'] = 'm00'
+        self.raw['slots'] = [{'model': m, 'kv_backend': 'paged'} for m in ('m00', 'm03')]
+        self.rows = roster(self.raw)
+        self.paid(0, [])
+        self.step(0, True)
+        for delta in range(3, 64, 3):
+            snap = self.step(
+                delta, stats={'requests_served': 10 + delta, 'tokens_generated': 100 + delta * 20}
+            )
+        reporting = snap['pulse']['reporting']
+        self.assertTrue(reporting['counting'], snap['pulse']['detail'])
+        self.assertEqual(len(reporting['models']), 11)
+        self.assertIn('2 of 11 models loaded now (m00, m03)', reporting['detail'])
+        # Another model loading is a different set: pause, then a fresh segment.
+        paused = self.step(66, warm_models=['m00', 'm03', 'm07'])
+        self.assertFalse(paused['pulse']['reporting']['counting'])
+        self.step(69, True, slots=[{'model': m, 'kv_backend': 'paged'} for m in ('m00', 'm03', 'm07')])
+        resumed = self.step(72, stats={'requests_served': 90, 'tokens_generated': 2000})
+        self.assertTrue(resumed['pulse']['reporting']['counting'], resumed['pulse']['detail'])
+        self.assertEqual(
+            resumed['provider']['session']['performance']['segmentStartedAt'], T + 72
+        )
+
+    def test_large_model_set_with_nothing_loaded_says_so(self):
+        self.raw['advertised_models'] = [f'm{i:02d}' for i in range(11)]
+        self.raw['warm_models'] = []
+        self.raw['slots'] = []
+        self.rows = roster(self.raw)
+        self.paid(0, [])
+        snap = self.step(0, True)
+        self.assertFalse(snap['pulse']['reporting']['counting'])
+        self.assertIn('none of the 11 models your provider offers are loaded yet', snap['pulse']['detail'])
 
     def test_wrong_identity_stale_roster_stopped_process_and_account_never_earn(self):
         self.run_ready()
