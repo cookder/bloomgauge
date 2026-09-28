@@ -39,6 +39,12 @@ CODES = {
 }
 PHASES = {'off', 'waiting', 'confirming', 'watching', 'switching', 'completed', 'failed'}
 MODES = {'observe', 'week', 'combo', 'best', 'demand'}
+# Internal names the report schema (and the support site's fixed lists) spell differently.
+MODE_NAMES = {'optimize': 'best'}
+# 'partial': fresh credits reconciled with a coverage gap (live_earnings). The source is
+# current, and the site's fixed list has no partial state.
+STATUS_NAMES = {'partial': 'ok', 'connecting': 'loading'}
+FAILURE_REPORT_SECONDS = 86400
 STATUSES = {
     'ok',
     'stale',
@@ -116,6 +122,14 @@ def enum(value, allowed):
     return value if isinstance(value, str) and value in allowed else 'unknown'
 
 
+def mode(value):
+    return enum(MODE_NAMES.get(value, value) if isinstance(value, str) else value, MODES)
+
+
+def status(value):
+    return enum(STATUS_NAMES.get(value, value) if isinstance(value, str) else value, STATUSES)
+
+
 def age(value, now):
     at = number(value)
     return number(now - at, maximum=315576000) if at is not None else None
@@ -156,6 +170,11 @@ def switch_failure(value, models, now):
         'recoveryCode': enum(value.get('recoveryCode'), RECOVERY_CODES),
         'elapsedSeconds': number(value.get('elapsedSeconds'), maximum=86400),
     }
+
+
+def recent_failure(value, now):
+    at = value.get('at') if isinstance(value, dict) else None
+    return number(at) is not None and 0 <= now - at < FAILURE_REPORT_SECONDS
 
 
 def cache_recovery(value, raw, now):
@@ -251,7 +270,7 @@ class Models:
 def source(value, now):
     value = value if isinstance(value, dict) else {}
     return {
-        'status': enum(value.get('status'), STATUSES),
+        'status': status(value.get('status')),
         'ageSeconds': age(value.get('updatedAt'), now),
         'errorCategory': error_category(value.get('error')),
     }
@@ -272,7 +291,7 @@ def build_report(collector, include_earnings=False, remote=False, now=None):
         matched = bool(account and account == live.get('account') and live.get('device'))
         device = live.get('device') if matched else ''
         state = copy.deepcopy(collector.optimizer.state)
-        status = collector.optimizer.status
+        optimizer_status = collector.optimizer.status
         warmup = copy.deepcopy(collector.optimizer.warmup)
         raw = (
             copy.deepcopy(collector.optimizer.raw)
@@ -371,15 +390,17 @@ def build_report(collector, include_earnings=False, remote=False, now=None):
             'model': models.describe(provider.get('model')),
         },
         'optimizer': {
-            'mode': enum(state.get('mode'), MODES),
-            'status': enum(status, STATUSES),
+            'mode': mode(state.get('mode')),
+            'status': enum(optimizer_status, STATUSES),
             'identityVerified': identity_ok,
             'scopeMatched': matched,
             'pendingCommand': bool(state.get('pending')),
             'requestedModel': models.describe(state.get('requestedModel')),
             'warmupStatus': enum(warmup.get('status'), STATUSES),
+            # A recent failure is reported even when this account/provider scope doesn't
+            # match now: a new device key or a sign-out must not hide why control stopped.
             'lastSwitchFailure': switch_failure(state.get('lastSwitchFailure'), models, now)
-            if matched
+            if matched or recent_failure(state.get('lastSwitchFailure'), now)
             else None,
             'cacheRecovery': cache_recovery(state.get('cacheRecovery'), raw, now)
             if matched
@@ -466,7 +487,7 @@ def build_report(collector, include_earnings=False, remote=False, now=None):
             {
                 'ageSeconds': age(row['updated'], now),
                 'observedSeconds': number(row['observed_seconds']),
-                'mode': enum(row['mode'], MODES),
+                'mode': mode(row['mode']),
                 'model': models.describe(row['model']),
                 'target': models.describe(row['target']),
                 'phase': enum(row['phase'], PHASES),

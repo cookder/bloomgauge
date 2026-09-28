@@ -17,6 +17,9 @@ class Network:
         self.saved_at = 0
         # Callables (key, data, at) run after each successful fetch, on that fetch's thread.
         self.listeners = []
+        # Callables (key, error, at) run after each failed fetch: error is 'HTTP <code>' for
+        # Darkbloom's own reply, else 'Connection unavailable' (network_health.py).
+        self.error_listeners = []
         self.state = history.cache('network') or {}
         for entry in self.state.values():
             entry['status'] = 'stale'
@@ -70,6 +73,11 @@ class Network:
                         'status': 'stale' if previous.get('data') else 'missing',
                         'error': code,
                     }
+                for listener in list(self.error_listeners):
+                    try:
+                        listener(key, code, time.time())
+                    except Exception:
+                        log.exception('Network error listener failed for %s', key)
             self.stop.wait(interval)
 
     def backfill(self):

@@ -230,8 +230,9 @@ class RestingExcursionTests(tm.Harness):
             for offset in range(0, 601, 60):
                 self.at(offset)
         self.o.command.assert_not_called()
-        self.assertEqual(
-            self.o.detail, 'Waiting for verified warm readiness before following demand.'
+        # The user chose idle unloading: the status says so (test_bug_matrix ChosenIdleUnload).
+        self.assertTrue(
+            self.o.detail.startswith('Darkbloom unloaded a after it sat idle'), self.o.detail
         )
 
 

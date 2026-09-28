@@ -62,7 +62,7 @@ export const guideSections: GuideSection[] = [
     steps: [
       {
         title: 'Holds your best model',
-        text: 'Bloomkeeper keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days. It runs no blind trials of other models.',
+        text: 'Bloomkeeper keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days. Until this Mac has 3 days of its own, it starts from what pays best on Macs with the same chip and memory; before switching away from the model you serve, it tells you and offers Keep current. It runs no blind trials of other models.',
       },
       {
         title: 'Recovers by itself',

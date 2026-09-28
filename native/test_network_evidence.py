@@ -390,6 +390,26 @@ class DollarTests(Base):
         own = (50 * round(self.LIST * 1.5e6) + 950 * round(self.LIST * 0.5e6)) / 1000 / 1e6
         self.assertAlmostEqual(e['usd_error'], abs(math.log(own / self.LIST)) + 0.17, places=4)
 
+    def test_uncalibrated_error_is_wider_outside_gemma_and_gpt_oss(self):
+        """calibration-2026-09-28.md (b): Andrew's realized $/job per day against list x the
+        network mix. gemma and gpt-oss: 90th percentile |ln| 0.74 over 37 model-days (ln 2).
+        Other models: 1.48 over 18 model-days, 5 beyond x2 and 2 beyond x4 (ln 4)."""
+        from network_evidence import uncalibrated_error
+
+        for model in (GEMMA, GPT, 'gemma-4-26b-8bit'):
+            self.assertAlmostEqual(uncalibrated_error(model), math.log(2))
+        niche = ('qwen3.5-35b-a3b', 'Qwen3.5-9B', 'EigenLabs/Qwen3.8-27B-4bit-mtp', 'x', None)
+        for model in niche:
+            self.assertAlmostEqual(uncalibrated_error(model), math.log(4))
+        self.put(HOUR, 'M5 Pro|48', 'qwen3.5-35b-a3b', providers=5, mean=10, completion_tokens=50)
+        e = self.e.estimate('qwen3.5-35b-a3b', 'M5 Pro|48', now=self.now, basis='list')
+        self.assertAlmostEqual(e['usd_error'], math.log(4))
+        # Own jobs calibrate a niche model like any other: |ln(own / list)| + 0.17.
+        self.credit(50, round(e['usd_per_request'] * 1.5 * 1e6), model='qwen3.5-35b-a3b')
+        self.e.own_at = None
+        e = self.e.estimate('qwen3.5-35b-a3b', 'M5 Pro|48', now=self.now, basis='list')
+        self.assertAlmostEqual(e['usd_error'], math.log(1.5) + 0.17, places=3)
+
     def test_without_prices_there_is_no_dollar_figure(self):
         e = NetworkEvidence(self.h).estimate(GEMMA, 'M5 Pro|48', now=self.now)
         self.assertEqual((e['source'], e['usd_per_h'], e['req_h']), ('cell', None, 300))

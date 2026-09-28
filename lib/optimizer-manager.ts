@@ -16,15 +16,40 @@ const bool = (v: unknown): boolean | null =>
 
 export type ManagerHome = {
   model: string;
-  /** manual | external (pins), history | current (chosen by the manager). */
+  /**
+   * manual | external (pins), history | network | current (chosen by the manager).
+   * network: the best model on Macs like this one while own history is too thin.
+   */
   source: string | null;
   at: number | null;
+  /** history: realized $ per ready hour; network: expected $/h on Macs like this one. */
   usdPerHour: number | null;
   hours: number | null;
   /** Days with ≥ 1 ready hour behind usdPerHour (history homes). */
   days: number | null;
   failures: number | null;
   failedAt: number | null;
+  /** 'M5 Pro|48': the hardware class behind a network home. */
+  cell?: string | null;
+  /** Macs of that class serving the model alone (network homes). */
+  providers?: number | null;
+};
+/**
+ * A planned automatic home change away from the serving model (native/manager.py
+ * network_home): it happens at `until` unless the user keeps `from` (a pin).
+ */
+export type HomeNotice = {
+  model: string;
+  from: string;
+  at: number | null;
+  until: number;
+  /** Expected $/h on Macs like this one on `model`. */
+  usdPerHour: number | null;
+  /** This Mac's own $/ready-hour on `from` over the last day, when known. */
+  ownUsdPerHour: number | null;
+  /** Macs like this one on `from`, when enough of them serve it alone. */
+  currentUsdPerHour: number | null;
+  cell: string | null;
 };
 export type ManagerExcursion = {
   target: string;
@@ -63,6 +88,19 @@ export type EvidenceRow = {
   source: string | null;
   eligible: boolean | null;
   why: string | null;
+  /** Passes only as a trial: a model this Mac hasn't calibrated, on sustained demand. */
+  trial?: boolean | null;
+  /** Its lowest hourly demand over its usual level, the last two hours. */
+  demandRatio?: number | null;
+};
+/** A model that paid less than home on an excursion needs stronger evidence for a while. */
+export type EvidenceLesson = {
+  model: string;
+  triedAt: number | null;
+  until: number;
+  home: string | null;
+  code: string | null;
+  factor: number | null;
 };
 export type ManagerEvidence = {
   cell: string | null;
@@ -70,6 +108,10 @@ export type ManagerEvidence = {
   home: string | null;
   homeUsdPerHour: number | null;
   rows: EvidenceRow[];
+  /** Absent before this backend learned per model. */
+  lessons?: EvidenceLesson[];
+  /** Demand over usual a trial needs (1.5). */
+  trialDemandRatio?: number | null;
 };
 export type ManagerArming = {
   model: string;
@@ -118,6 +160,8 @@ export type ManagerView = {
   evidence: ManagerEvidence | null;
   arming: ManagerArming | null;
   ledger: ManagerLedger | null;
+  /** Absent before this backend could plan home changes. */
+  homeNotice?: HomeNotice | null;
 };
 
 function home(v: unknown): ManagerHome | null {
@@ -131,6 +175,22 @@ function home(v: unknown): ManagerHome | null {
     days: num(v.days),
     failures: num(v.failures),
     failedAt: num(v.failedAt),
+    cell: str(v.cell),
+    providers: num(v.providers),
+  };
+}
+export function readHomeNotice(v: unknown): HomeNotice | null {
+  if (!record(v) || !text(v.model) || !text(v.from) || !finite(v.until))
+    return null;
+  return {
+    model: v.model,
+    from: v.from,
+    at: num(v.at),
+    until: v.until,
+    usdPerHour: num(v.usdPerHour),
+    ownUsdPerHour: num(v.ownUsdPerHour),
+    currentUsdPerHour: num(v.currentUsdPerHour),
+    cell: str(v.cell),
   };
 }
 function excursion(v: unknown): ManagerExcursion | null {
@@ -160,6 +220,19 @@ function evidenceRow(v: unknown): EvidenceRow | null {
     source: str(v.source),
     eligible: bool(v.eligible),
     why: str(v.why),
+    trial: bool(v.trial),
+    demandRatio: num(v.demandRatio),
+  };
+}
+function lesson(v: unknown): EvidenceLesson | null {
+  if (!record(v) || !text(v.model) || !finite(v.until)) return null;
+  return {
+    model: v.model,
+    triedAt: num(v.triedAt),
+    until: v.until,
+    home: str(v.home),
+    code: str(v.code),
+    factor: num(v.factor),
   };
 }
 function evidence(v: unknown): ManagerEvidence | null {
@@ -174,6 +247,11 @@ function evidence(v: unknown): ManagerEvidence | null {
     home: str(v.home),
     homeUsdPerHour: num(v.homeUsdPerHour),
     rows,
+    lessons: (Array.isArray(v.lessons) ? v.lessons : [])
+      .slice(0, 32)
+      .map(lesson)
+      .filter((l): l is EvidenceLesson => !!l),
+    trialDemandRatio: num(v.trialDemandRatio),
   };
 }
 
@@ -242,6 +320,7 @@ export function readManager(value: unknown): ManagerView | null {
         }
       : null,
     evidence: evidence(value.evidence),
+    homeNotice: readHomeNotice(value.homeNotice),
     arming:
       record(arming) && text(arming.model)
         ? {
@@ -300,6 +379,8 @@ export type ManagerSummary = {
     checkSeconds: number | null;
     neededSeconds: number | null;
   } | null;
+  /** Undefined from a backend that predates planned home changes. */
+  homeNotice?: HomeNotice | null;
 };
 
 export function readManagerSummary(value: unknown): ManagerSummary | null {
@@ -310,6 +391,9 @@ export function readManagerSummary(value: unknown): ManagerSummary | null {
     active: value.active === true,
     home: str(value.home),
     pinned: value.pinned === true,
+    ...('homeNotice' in value
+      ? { homeNotice: readHomeNotice(value.homeNotice) }
+      : {}),
     action: str(value.action),
     reason: str(value.reason),
     watchdog: record(watchdog)
@@ -379,6 +463,20 @@ export function withSummary(
     active: summary.active,
     pinned: summary.pinned,
     home,
+    // The saved notice decides whether one is pending (gone at once after "Keep current"
+    // or a pick) and when; the full view's figures are the latest decision's.
+    homeNotice:
+      summary.homeNotice === undefined
+        ? (view.homeNotice ?? null)
+        : summary.homeNotice &&
+          (view.homeNotice?.model === summary.homeNotice.model &&
+          view.homeNotice.from === summary.homeNotice.from
+            ? {
+                ...view.homeNotice,
+                at: summary.homeNotice.at,
+                until: summary.homeNotice.until,
+              }
+            : summary.homeNotice),
     action: summary.action ?? view.action,
     reason: summary.reason ?? view.reason,
     watchdog: summary.watchdog
@@ -641,6 +739,11 @@ export function managerHeadline(
       title: `Your pick ${homeName} could not be restored`,
       tone: 'attention',
     };
+  if (view.homeNotice && !view.pinned)
+    return {
+      title: `Switching to ${label(view.homeNotice.model)} at ${clock(view.homeNotice.until)}`,
+      tone: 'good',
+    };
   if (!view.home) return { title: 'Holding the current model', tone: 'good' };
   if (current && view.home.model !== current)
     return { title: `Waiting to return to ${homeName}`, tone: 'working' };
@@ -674,9 +777,28 @@ export function homeSource(home: ManagerHome | null, pinned: boolean): string {
     return home.usdPerHour != null
       ? `Best paid on this Mac · ${usd(home.usdPerHour)} per ready hour${home.hours != null ? ` over ${Math.round(home.hours)} h` : ''}${home.days != null ? ` on ${home.days} days` : ''} in 30 days`
       : 'Best paid on this Mac in the last 30 days';
+  if (home.source === 'network')
+    return home.usdPerHour != null
+      ? `Chosen from Macs like yours: ~${usd(home.usdPerHour)}/h on Macs with your chip and memory`
+      : 'Chosen from Macs like yours (same chip and memory)';
   if (home.source === 'current')
     return 'The model serving when the manager started';
   return 'Home model';
+}
+
+/** "Bloomkeeper will switch to Gemma 4 26B at 5:40 PM, which pays best on Macs like yours…" */
+export function homeNoticeText(notice: HomeNotice, label: Label = same) {
+  const pays =
+    notice.usdPerHour != null
+      ? ` (~${usd(notice.usdPerHour)}/h${notice.cell ? ` on ${cellLabel(notice.cell)} Macs` : ''})`
+      : '';
+  const here =
+    notice.ownUsdPerHour != null
+      ? ` ${label(notice.from)} made ${usd(notice.ownUsdPerHour)}/h here over the last day.`
+      : notice.currentUsdPerHour != null
+        ? ` Macs like yours make ~${usd(notice.currentUsdPerHour)}/h on ${label(notice.from)}.`
+        : '';
+  return `Bloomkeeper will switch to ${label(notice.model)} at ${clock(notice.until)}, which pays best on Macs like yours${pays}.${here}`;
 }
 
 export type Readiness = {
@@ -822,6 +944,26 @@ export function evidenceTable(
     (a, b) => (b.usdPerHour ?? -1) - (a.usdPerHour ?? -1),
   );
   return rows.map((row) => ({ ...row, home: row.model === home }));
+}
+
+const day = (at: number) =>
+  new Date(at * 1000).toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  });
+
+/** "Qwen 3.5 35B: tried Sep 28, paid less than Gemma 4 26B; needs stronger evidence until
+ * Oct 12." — what an excursion that lost to home taught the manager about that model. */
+export function lessonText(
+  lesson: EvidenceLesson,
+  homeModel?: string | null,
+  label: Label = same,
+) {
+  const home = lesson.home ?? homeModel ?? null;
+  const tried = lesson.triedAt != null ? `tried ${day(lesson.triedAt)}, ` : '';
+  const result =
+    lesson.code === 'early-exit' ? 'ended early, paying less than' : 'paid less than';
+  return `${label(lesson.model)}: ${tried}${result} ${home ? label(home) : 'the home model'}; needs stronger evidence until ${day(lesson.until)}.`;
 }
 
 /** The latest time automatic control was paused, if it is still paused. */

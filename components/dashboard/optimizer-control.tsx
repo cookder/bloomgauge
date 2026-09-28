@@ -25,6 +25,7 @@ import {
   readAutomaticRequest,
   optimizerRequestObserved,
   releasePinRequest,
+  keepCurrentRequest,
   type AutomaticRequest,
   type OptimizerControlState,
 } from '@/lib/optimizer-control';
@@ -261,8 +262,29 @@ export function OptimizerControl({
   }
   // One backend action: the pin is dropped and the manager returns to its home model
   // through a normal, confirmed move. Automatic control stays on throughout.
-  async function releasePin() {
+  function releasePin() {
     setReleaseConfirm(false);
+    if (!state) return;
+    void managerAction(
+      releasePinRequest(state, crypto.randomUUID()),
+      'Could not release your pick. Refresh the status and try again.',
+      'The response was incomplete. Checking whether your pick was released…',
+    );
+  }
+  // "Keep current" on a planned home change: the serving model becomes the pick.
+  function keepCurrent(model: string) {
+    if (!state) return;
+    void managerAction(
+      keepCurrentRequest(state, model, crypto.randomUUID()),
+      `Could not keep ${shortModel(model)}. Refresh the status and try again.`,
+      `The response was incomplete. Checking whether ${shortModel(model)} was kept…`,
+    );
+  }
+  async function managerAction(
+    request: ReturnType<typeof releasePinRequest | typeof keepCurrentRequest>,
+    failed: string,
+    incomplete: string,
+  ) {
     if (!state || pending.current || !optimizerControlFresh(state)) return;
     pending.current = true;
     epoch.current++;
@@ -276,7 +298,7 @@ export function OptimizerControl({
           'X-Bloom-Action': 'optimizer',
         },
         signal: AbortSignal.timeout(15000),
-        body: JSON.stringify(releasePinRequest(state, crypto.randomUUID())),
+        body: JSON.stringify(request),
       });
       const value = await response.json();
       if (!response.ok)
@@ -286,12 +308,9 @@ export function OptimizerControl({
             'error' in value &&
             typeof value.error === 'string'
             ? value.error
-            : 'Could not release your pick. Refresh the status and try again.',
+            : failed,
         );
-      if (!validOptimizerControl(value))
-        throw new Error(
-          'The response was incomplete. Checking whether your pick was released…',
-        );
+      if (!validOptimizerControl(value)) throw new Error(incomplete);
       if (value.at >= lastReading.current) {
         lastReading.current = value.at;
         setState(value);
@@ -701,6 +720,8 @@ export function OptimizerControl({
           readiness={ready}
           now={now}
           names={names}
+          onKeepCurrent={isOn && !stale ? keepCurrent : undefined}
+          busy={sending}
         />
       ) : (
         <div

@@ -11082,6 +11082,22 @@ button.pulse-rate:focus-visible {
   margin: 2px 0 0;
   text-align: center;
 }
+/* "Macs like yours" (network_evidence benchmark): one compact line under the pace. */
+.pulse-instrument-details > .pulse-peers {
+  margin: 6px 0 0;
+  line-height: 1.45;
+  color: var(--c-94a6b7);
+}
+.pulse-peers strong {
+  font-weight: 600;
+  color: var(--c-c9c0ff);
+}
+.pulse-peers[data-tone='above'] strong {
+  color: var(--c-82efb5);
+}
+.pulse-peers[data-tone='below'] strong {
+  color: var(--c-87b9ff);
+}
 
 .optimizer-intro h3 {
   margin: 6px 0 0;
@@ -11266,6 +11282,36 @@ button.pulse-rate:focus-visible {
   background: var(--c-1a222b);
   color: var(--c-aab8c3);
   font-weight: 500;
+}
+
+/* "It's not you": a Darkbloom-wide outage (components/dashboard/network-outage.tsx). */
+.network-outage {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--c-655031);
+  border-left: 3px solid var(--c-f3c57e);
+  border-radius: 9px;
+  background: var(--c-2c2419);
+  line-height: 1.5;
+}
+.network-outage strong {
+  color: var(--c-f3c57e);
+  font-size: 15px;
+  font-weight: 600;
+}
+.network-outage small {
+  color: var(--c-c8d4dc);
+  font-size: 13px;
+}
+@media (max-width: 680px) {
+  .network-outage {
+    padding: 10px 12px;
+  }
+  .network-outage strong {
+    font-size: 14px;
+  }
 }
 
 /* Plain-language line at the top of Overview. */
@@ -11596,6 +11642,29 @@ button.pulse-rate:focus-visible {
   background: var(--c-221c38);
   border-color: var(--c-4d3f80);
 }
+/* Network news (network-news.tsx): reuses the evidence rows. */
+.network-news-rows li.flagged {
+  background: linear-gradient(90deg, var(--c-2c2419), transparent 80%);
+  padding-left: 8px;
+  margin-left: -8px;
+  border-radius: 6px;
+}
+.network-news-flag {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-f3c57e);
+  overflow-wrap: anywhere;
+}
+.network-news-push {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-222e39);
+}
+.network-news-push .optimizer-quick-actions {
+  margin-bottom: 0;
+}
 @media (max-width: 680px) {
   .optimizer-mode-picker.manager-modes {
     gap: 6px;
@@ -11818,6 +11887,21 @@ button.pulse-rate:focus-visible {
   margin-top: 4px;
   color: var(--c-8fa2b3);
   font-size: 13px;
+}
+/* A planned home change and its "Keep current" (manager-status.tsx). */
+.manager-home-notice {
+  margin: 10px 0 4px 27px;
+  padding: 12px 14px;
+  gap: 8px;
+}
+.manager-home-notice p,
+.manager-home-notice small {
+  margin: 0;
+}
+@media (max-width: 680px) {
+  .manager-home-notice {
+    margin-left: 0;
+  }
 }
 @media (min-width: 681px) {
   .manual-picker-rows {

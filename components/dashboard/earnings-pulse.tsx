@@ -25,6 +25,7 @@ import {
   paceUnitKey,
   pulseComparison,
   pulseDial,
+  pulseBenchmarkView,
   pulseDemandView,
   pulseReference,
   readPaceUnit,
@@ -148,6 +149,9 @@ export function EarningsPulse({
         basis.routing ? comparison?.ratio : null,
         pulse?.at ?? 0,
       )
+    : null;
+  const peers = connected
+    ? pulseBenchmarkView(pulse?.peers, pulse?.at ?? 0, pulse?.models ?? [])
     : null;
   const hourEstimateReady =
     connected &&
@@ -414,6 +418,28 @@ export function EarningsPulse({
                 ? ` · ${num(window.seconds)}s warm`
                 : ''}
             </p>
+            {peers && (
+              <p
+                className="small pulse-peers"
+                data-tone={peers.tone}
+                title={peers.title}
+              >
+                Macs like yours
+                {peers.percentile && (
+                  <>
+                    : <strong>{peers.percentile}</strong>
+                  </>
+                )}{' '}
+                · {peers.requests} ({peers.peers})
+                {peers.usdPerHour != null && peers.peerUsdPerHour != null && (
+                  <span className="muted">
+                    {' '}
+                    · ≈{pace(peers.usdPerHour)} vs {pace(peers.peerUsdPerHour)}
+                    /h
+                  </span>
+                )}
+              </p>
+            )}
             <div
               className="pulse-session-total"
               role="button"

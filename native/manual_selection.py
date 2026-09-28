@@ -5,12 +5,33 @@ import re
 import threading
 import time
 import uuid
-from model_combinations import configured_reserve_gb, members, same_selection
+from model_combinations import configured_reserve_gb, members, same_selection, selection_key
 from model_readiness import session_key
 from optimizer_store import device_id
-from provider_control import endpoint_issue
+from provider_control import endpoint_issue, fenced_drain, multi_model_notice
 from cache_permission import cache_permission
 from cache_recovery import clear_file_cache, CacheRecoveryError
+
+
+def serving_list(v, raw):
+    """Darkbloom runs three or more models (the start picker's --model picks, or provider.toml's
+    enabled_models list). A pick in the model controls replaces them with that one model through
+    `darkbloom start`, as a Start does: the switch path compares one model or a pair."""
+    from provider_reporting import observed_models
+
+    models = raw.get('advertised_models')
+    return bool(
+        v.get('status') == 'running'
+        and not selection_key(models)
+        and len(observed_models(models)) >= 3
+    )
+
+
+def restart_pick(v, raw):
+    """A pick on this running provider is sent like a Start: it serves a list (serving_list), or
+    it was left drained with launchd recovery disabled (fenced_drain), which the switch path
+    refuses and a `darkbloom start` ends."""
+    return serving_list(v, raw) or fenced_drain(v.get('status'), v.get('disabled'), raw)
 
 
 class ManualSelection:
@@ -89,7 +110,7 @@ class ManualSelection:
             )
 
     def common_reason(self, v, source, live, raw, now):
-        from optimizer import finite
+        from optimizer import finite, graceful_drain
 
         o = self.o
         if v.get('status') not in ('running', 'stopped'):
@@ -115,17 +136,40 @@ class ManualSelection:
             return issue
         if '--local-endpoint' not in options and source != 'mac':
             return 'Open Optimizer → Overview on the Mac. Use Prepare, Start or Switch in the manual model controls to set up pre-warming before controlling models from your phone.'
-        if v['status'] == 'running':
+        drained = fenced_drain(v['status'], v['disabled'], raw)
+        if drained and (
+            not live.get('provider', {}).get('online')
+            or not finite(raw.get('written_at'))
+            or not -5 < now - raw['written_at'] < 10
+        ):
+            return 'Waiting for fresh readings for the current provider session.'
+        if v['status'] == 'running' and not drained:
+            many = serving_list(v, raw)
+            # Serving provider.toml's list rather than the launch agent's --model: say so.
+            notice = (
+                not many
+                and not same_selection(raw, v['model'])
+                and multi_model_notice(o.home, options)
+            )
+            if notice:
+                return notice
             if (
                 v['disabled'] is not False
                 or not live.get('provider', {}).get('online')
                 or not finite(raw.get('written_at'))
                 or not -5 < now - raw['written_at'] < 10
-                or not same_selection(raw, v['model'])
+                or not (many or same_selection(raw, v['model']))
             ):
                 return 'Waiting for fresh readings for the current provider session.'
+            if many and not graceful_drain(raw):
+                # Without a graceful drain, `start` would cut off accepted requests.
+                return 'Darkbloom serves %d models. Run `darkbloom start` in Terminal and pick one model.' % len(
+                    raw.get('advertised_models')
+                )
+            # The roster's serving eligibility covers one model or a pair; a list only needs
+            # this Mac's fresh match.
             if (
-                not o.identity_ok
+                not (o.device_identity_ok if many else o.identity_ok)
                 or not 0 <= now - o.identity_at < 180
                 or o.identity_session != (raw.get('started_at'), raw.get('pid'))
             ):
@@ -462,6 +506,8 @@ class ManualSelection:
                     'The provider or account changed. Refresh and review the selected model again.'
                 )
             kind = 'start' if v['status'] == 'stopped' else 'switch'
+            # Replacing a 3+ model selection starts the pick directly (run_start).
+            replace = kind == 'switch' and restart_pick(v, raw)
             if not row or not row['canStart' if kind == 'start' else 'canSwitch']:
                 raise ValueError(
                     (row or {}).get('startReason' if kind == 'start' else 'switchReason')
@@ -483,12 +529,14 @@ class ManualSelection:
                 'at': now,
                 'setupEndpoint': setup,
             }
+            if replace:
+                request['replace'] = True
             o.state['selectionRequests'] = (
                 o.state.get('selectionRequests', [])
                 + [{'id': request_id, 'body': data, 'source': source, 'kind': kind}]
             )[-32:]
             o.state['selectionRequest'] = copy.deepcopy(request)
-            unchanged = kind == 'switch' and model == v['model'] and not setup
+            unchanged = kind == 'switch' and not replace and model == v['model'] and not setup
             # Under the manager a manual pick becomes the pin and automatic control resumes after it.
             manager = getattr(o, 'manager', None)
             resume = bool(manager and manager.manual_queued(request_id, model, unchanged))
@@ -510,7 +558,11 @@ class ManualSelection:
                 'id': request_id,
                 'model': model,
                 'at': now,
-                'status': 'unchanged' if unchanged else 'working' if kind == 'start' else 'queued',
+                'status': 'unchanged'
+                if unchanged
+                else 'working'
+                if kind == 'start' or replace
+                else 'queued',
                 'detail': 'This model is already selected. It is now your pick; automatic control continues.'
                 if unchanged and resume
                 else 'This model is already selected. Automatic switching is paused.'
@@ -519,10 +571,15 @@ class ManualSelection:
                 if kind == 'start' and row['cacheRecovery']['canAttempt']
                 else 'Starting the selected model and verifying readiness.'
                 if kind == 'start'
+                else 'Replacing the %d models Darkbloom serves with the selected model and verifying readiness.'
+                % len(raw.get('advertised_models') or [])
+                if replace and serving_list(v, raw)
+                else 'Starting Darkbloom again with the selected model and verifying readiness.'
+                if replace
                 else 'Manual switch queued. Automatic switching is paused.',
                 'session': session_key(v['raw']) if unchanged else None,
             }
-            if kind == 'start':
+            if kind == 'start' or replace:
                 o.state['pending'] = {
                     'kind': 'manual-start',
                     'model': model,
@@ -554,9 +611,11 @@ class ManualSelection:
                 raise
             o.proposal = None
             o.next_switch = None
-            o.status = 'observing' if unchanged else 'starting' if kind == 'start' else 'waiting'
+            o.status = (
+                'observing' if unchanged else 'starting' if kind == 'start' or replace else 'waiting'
+            )
             o.detail = o.state['manualResult']['detail']
-            if kind == 'start':
+            if kind == 'start' or replace:
                 o.warmup = {}
                 o.worker = threading.Thread(
                     target=self.run_start,
@@ -577,7 +636,9 @@ class ManualSelection:
         with o.lock:
             return bool(
                 not o.stop.is_set()
-                and current['status'] == expected['status'] == 'stopped'
+                and current['status']
+                == expected['status']
+                == ('running' if request.get('replace') else 'stopped')
                 and all(
                     current[k] == expected[k]
                     for k in ('options', 'environment', 'model', 'disabled')
@@ -783,12 +844,15 @@ class ManualSelection:
         )
 
     def run_start(self, request, data, expected, account, device):
-        from optimizer import launch_signature, ExternalChange, DemandDeferred
+        from optimizer import ExternalChange, DemandDeferred
 
         o = self.o
         status = 'failed'
         detail = 'The selected start could not be verified. Refresh its status before trying again.'
         result_session = None
+        # A running 3+ model selection is replaced the same way (serving_list): its rows say
+        # canSwitch/switchReason, a stopped provider's canStart/startReason.
+        can, why = ('canSwitch', 'switchReason') if request.get('replace') else ('canStart', 'startReason')
         try:
             with o.command_lock:
                 current = o.provider_control.inspect()
@@ -818,9 +882,9 @@ class ManualSelection:
                     ),
                     None,
                 )
-                if not row or not row['canStart']:
+                if not row or not row[can]:
                     raise ValueError(
-                        (row or {}).get('startReason')
+                        (row or {}).get(why)
                         or 'The selected model is no longer available. No command was sent.'
                     )
                 if row['requiresRuntimeVerification'] and not data['verifyRuntime']:
@@ -852,13 +916,13 @@ class ManualSelection:
                 )
                 if (
                     not final_row
-                    or not final_row['canStart']
+                    or not final_row[can]
                     or final_row['cacheRecovery']['needed']
                     or final_row['requiresRuntimeVerification']
                     and not data['verifyRuntime']
                 ):
                     raise ValueError(
-                        (final_row or {}).get('startReason')
+                        (final_row or {}).get(why)
                         or 'The selected model or resources changed before dispatch.'
                     )
                 self.start_progress(
@@ -874,7 +938,7 @@ class ManualSelection:
                     request['model'],
                     expected['raw'].get('started_at'),
                     360,
-                    launch_signature(options, current['environment']),
+                    o.started_launch(options, current['environment']),
                 ):
                     raise ValueError(
                         'The selected model started but readiness could not be verified. Automatic switching remains paused; no other model was started.'
@@ -889,6 +953,12 @@ class ManualSelection:
         except Exception:
             pass  # CLI output, paths and credentials never enter responses.
         finally:
+            done = status == 'completed'
+            if request['setupEndpoint']:
+                detail = o.setup_result(request['model'], done, None if done else detail, detail)
+            if not done:
+                # Darkbloom may restore provider.toml's list after a failed start.
+                detail = multi_model_notice(o.home, expected['options']) or detail
             with o.lock:
                 o.state['manualResult'] = {
                     'id': request['id'],

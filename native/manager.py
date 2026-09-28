@@ -12,7 +12,10 @@ when their results over 14 days aren't clearly positive.
 Home, in order: the user's manual pick (a pin, never reverted), the own-history
 solo model with the best multi-day lower bound of realized $/ready-hour over the
 last 30 days (>= 3 days with a ready hour each; a challenger's bound must beat the
-saved home's mean), else the current model (never a gpt-oss fallback or trial pick).
+saved home's mean), else the solo model that pays best on Macs like this one
+(`network_home`: same chip and memory, dedicated boxes, fresh public evidence; a
+change away from the serving model is announced first, with one-tap "Keep current"),
+else the current model (never a gpt-oss fallback or trial pick).
 
 A failed automatic switch never pauses: the manager checks whether the target
 became ready anyway, else restores the previous (or home) model; after two failed
@@ -22,15 +25,23 @@ W = max(10 min, drain deadline + 3 x median load time).
 State lives in `optimizer.state['manager']`; Optimizer owns every command.
 """
 
-import copy, logging, math, pathlib, statistics, subprocess, threading, time
+import copy, logging, math, pathlib, re, statistics, subprocess, threading, time
 from datetime import datetime
 import excursions
-from model_combinations import members, selection_key, same_selection, selection_label
+from model_combinations import (
+    PREFIX,
+    default_config_path,
+    members,
+    selection_key,
+    same_selection,
+    selection_label,
+)
 from model_readiness import session_key
 from optimizer_store import device_id
 from provider_sessions import matching_process, process_identity
 from provider_reporting import state_fresh
 from demand_targets import GEMMA
+from network_evidence import MIN_PROVIDERS, uncalibrated_error
 
 # Mixed advertisements earned ~0.46x dedicated gemma in the same hardware cell.
 SOLO_MODELS = frozenset({GEMMA})
@@ -48,6 +59,52 @@ HOME_MIN_DAYS = 3
 # is not three days.
 HOME_STINT_GAP_SECONDS = 3600
 HOME_HOLD_SECONDS = 86400  # the saved home must be a day old before a challenger replaces it
+# Starting home from Macs like yours (network_home, roadmap item 3), used only while no model
+# has an own-history lower bound: the allowed solo model with the best 90% lower bound of $/h
+# on boxes of this exact cell serving it alone (NetworkEvidence.dedicated_table, >= 5
+# providers). Mixed boxes earn ~0.46x (SOLO_MODELS) and a neighbour cell is a proposal only
+# (PLAN §6.4), so neither counts. The last 24 h of evidence (day and night), ~2 h of 5-minute
+# windows on the model (the excursions' two hourly checks) and a window in the last hour.
+NETWORK_HOME_HOURS = 24
+NETWORK_HOME_MIN_WINDOWS = 24
+NETWORK_HOME_FRESH_SECONDS = 3600
+# A change away from the serving model (the rest only labels it) needs:
+# - the pick seen in >= 20 of the last 24 clock hours. Picks from under a day of evidence
+#   disagreed with the full-day pick in 15-25% of (start hour, cell) cases on Sep 27-28 (poll
+#   by day + this app's rows by night): all were daytime-only spans, where qwen3.6 led on
+#   M4/M5 Max 128 and gpt-oss on M1 Max 64 while gemma led over the day. A wrong first pick
+#   lasts, because own history then only knows that model.
+# - the pick paying >= 2x the serving model, on this Mac's own realized $/ready-hour over the
+#   last 24 h (>= 1 ready hour) and on Macs like it where they have evidence (PLAN §6.4: auto
+#   only at >= 2x on average; this also covers the ~2x list-price error, USD_ERROR_UNCALIBRATED).
+#   Otherwise the Mac is earning well now and stays.
+# - a notice first, with one-tap "Keep current" (a pin). PLAN §6.4's 24 h notice was there to
+#   see both regimes; the 20-hour rule above already does (every 20-h span of Sep 27-28 gave
+#   the same pick in every fast-box cell), so a longer wait only loses pay on the worse model
+#   (~$0.04/h on an M5 Pro 48 on gpt-oss vs gemma). The notice is 2 h, and the same pick must
+#   still hold and clear the gates (at the hysteresis bar below) when it ends.
+#   The 2x covers list x mix's $/request error for gemma and gpt-oss (ln 2), not for other
+#   models (ln 4, network_evidence.uncalibrated_error; calibration-2026-09-28 (b)). So the pick
+#   at the low end of that error (its estimate's 'usd_error', calibrated per model once this Mac
+#   has its own jobs on it) must also beat the serving model's rate: a niche model at 2.3x gemma
+#   on means pays about 0.57x gemma there. Not the estimate's full 'low', which adds the spread
+#   of req/h between boxes and on which the pick is ranked: on the Sep 27-28 M5 Pro 48 figures
+#   (test_manager_network_home) dedicated gemma's is $0.010/h of $0.048/h, under gpt-oss's
+#   $0.011/h, so even that change would never be made.
+# - hysteresis: an announced change stands while the pick still pays >= 1.6x (and its bound
+#   0.8x) of the serving model; nearer the 2x line, own pay wobbling by a few percent
+#   cancelled and re-announced it (three announcements in 70 minutes, never switching).
+#   A notice that did drop out comes back with its first deadline, unannounced, within
+#   NETWORK_HOME_NOTICE_SECONDS (and with >= NETWORK_HOME_RESUME_SECONDS still to run).
+# - never while nothing serving is reported (drained, dark) or during an excursion: the saved
+#   home stays, and the pick is judged against the model the Mac really serves as home.
+NETWORK_HOME_CHANGE_HOURS = 20
+NETWORK_HOME_GAIN = 2.0
+NETWORK_HOME_KEEP_GAIN = 1.6
+NETWORK_HOME_OWN_SECONDS = 86400
+NETWORK_HOME_OWN_MIN_SECONDS = 3600
+NETWORK_HOME_NOTICE_SECONDS = 2 * 3600
+NETWORK_HOME_RESUME_SECONDS = 15 * 60
 # One-sided 90% Student-t quantiles for 1..30 degrees of freedom (days - 1); 1.282 beyond. The
 # same 90% level as the network evidence's lower bound.
 T90 = (
@@ -116,6 +173,13 @@ def active(state):
     return state.get('mode') == 'demand' and enabled(state.get('demandPolicy'))
 
 
+def readable(text):
+    """User-facing text names a pair "a + b", never its internal selection key."""
+    if not isinstance(text, str) or PREFIX not in text:
+        return text
+    return re.sub(re.escape(PREFIX) + r'\[[^\]]*\]', lambda k: selection_label(k.group(0)), text)
+
+
 def hold_error(selection):
     """Why the manager can't hold this serving selection, or None: one model, or a pair
     without a solo-only model (SOLO_MODELS). Pairs are held and restored, never scored."""
@@ -169,6 +233,8 @@ def release(state):
             'restoreAt',
             'restoreBlocker',
             'deferred',
+            'homeNotice',
+            'homeNoticeLast',
         ):
             m.pop(key, None)
 
@@ -256,42 +322,45 @@ def loaded(raw, now):
 
 
 def config_path(home, options):
-    """The provider.toml Darkbloom reads: `--config`, else the first that exists of
-    ConfigManager.defaultConfigPath's candidates (the new path when none does)."""
+    """The provider.toml Darkbloom reads: `--config`, else ConfigManager.defaultConfigPath
+    (`default_config_path`: 0.9.11 dropped the legacy locations)."""
     paths = [options[i + 1] for i, v in enumerate(options[:-1]) if v in ('--config', '-c')]
     if paths:
         return pathlib.Path(paths[0]).expanduser()
-    candidates = [
-        pathlib.Path(home) / suffix
-        for suffix in (
-            '.config/darkbloom/provider.toml',
-            'Library/Application Support/darkbloom/provider.toml',
-            '.config/eigeninference/provider.toml',
-            'Library/Application Support/eigeninference/provider.toml',
-        )
-    ]
-    return next((p for p in candidates if p.exists()), candidates[0])
+    return default_config_path(home)
 
 
-def toml_selection(home, options):
-    """`[backend] enabled_models` from provider.toml. Darkbloom 0.9.10's launchd child
-    follows it rather than the launch agent's --model arguments. None when absent."""
+def toml_models(home, options):
+    """`[backend] enabled_models` from provider.toml as a list, on one line or several
+    (TOMLKit wraps long arrays). None when absent or unreadable."""
     try:
         text = config_path(home, options).read_text()
     except (OSError, ValueError):
         return None
     section = ''
-    for line in text.splitlines():
+    lines = iter(text.splitlines())
+    for line in lines:
         line = line.split('#', 1)[0].strip()
         if line.startswith('['):
             section = line.strip('[] ')
         elif section == 'backend' and line.split('=', 1)[0].strip() == 'enabled_models':
-            value = line.split('=', 1)[1] if '=' in line else ''
-            if not value.strip().startswith('[') or not value.strip().endswith(']'):
+            value = line.split('=', 1)[1].strip() if '=' in line else ''
+            if not value.startswith('['):
                 return None
-            models = [m.strip().strip('"\'') for m in value.strip()[1:-1].split(',') if m.strip()]
-            return selection_key(models)
+            while not value.endswith(']'):
+                more = next(lines, None)
+                if more is None:
+                    return None
+                value += ' ' + more.split('#', 1)[0].strip()
+            return [m.strip().strip('"\'') for m in value[1:-1].split(',') if m.strip()]
     return None
+
+
+def toml_selection(home, options):
+    """`[backend] enabled_models` from provider.toml. Darkbloom 0.9.10's launchd child
+    follows it rather than the launch agent's --model arguments. None when absent."""
+    models = toml_models(home, options)
+    return None if models is None else selection_key(models)
 
 
 def idle_unload_chosen(home, options):
@@ -312,11 +381,18 @@ def idle_unload_chosen(home, options):
     flags = [options[i + 1] for i, v in enumerate(options[:-1]) if v == '--idle-timeout']
     fallback = chosen(flags[-1]) if flags else False
     try:
-        text = config_path(home, options).read_text()
+        value = toml_idle(home, options)
     except FileNotFoundError:
         return fallback
     except (OSError, ValueError):
         return True
+    return fallback if value is None else chosen(value)
+
+
+def toml_idle(home, options):
+    """provider.toml's `[backend] idle_timeout_mins` as written, or None when it isn't set.
+    Raises FileNotFoundError without a provider.toml, OSError/ValueError when unreadable."""
+    text = config_path(home, options).read_text()
     section = ''
     for line in text.splitlines():
         line = line.split('#', 1)[0].strip()
@@ -328,8 +404,35 @@ def idle_unload_chosen(home, options):
         if (section, key) == ('backend', 'idle_timeout_mins') or (
             not section and key == 'backend.idle_timeout_mins'
         ):
-            return chosen(value)
-    return fallback
+            return value
+    return None
+
+
+def start_options(home, options):
+    """The launch agent's options to pass to `darkbloom start`, less a stale `--idle-timeout`.
+
+    Launch agents written before Darkbloom 0.8.14 carry `--idle-timeout N`. Its launchd child
+    uses that only while provider.toml doesn't set idle_timeout_mins (StartCommand.swift,
+    idleTimeoutPinned), but `darkbloom start --idle-timeout N` writes N into provider.toml
+    (setIdleUnloadMinutes) and the rebuilt launch agent drops the flag. So the flag is passed
+    only while provider.toml has no value (Darkbloom then keeps it there); otherwise it would
+    replace the user's `darkbloom idle` choice with the stale value."""
+    if '--idle-timeout' not in options:
+        return list(options)
+    try:
+        pinned = toml_idle(home, options) is not None
+    except (OSError, ValueError):
+        pinned = False
+    if not pinned:
+        return list(options)
+    kept, i = [], 0
+    while i < len(options):
+        if options[i] == '--idle-timeout' and i + 1 < len(options):
+            i += 2
+            continue
+        kept.append(options[i])
+        i += 1
+    return kept
 
 
 def history_rates(earned, now, exclude=()):
@@ -432,11 +535,209 @@ def trial_selection(runs, model, last_switch):
     )
 
 
-def choose_home(m, earned, runs, current, allowed, now, last_switch=0):
+def recent_rate(earned, model, now):
+    """This Mac's realized $/ready-hour on `model` over NETWORK_HOME_OWN_SECONDS, or None with
+    less than NETWORK_HOME_OWN_MIN_SECONDS of ready time."""
+    minutes = [
+        x
+        for x in ((earned or {}).get(model) or {}).get('minutes', [])
+        if now - NETWORK_HOME_OWN_SECONDS <= x.get('at', 0) <= now
+    ]
+    seconds = sum(x['seconds'] for x in minutes)
+    if seconds < NETWORK_HOME_OWN_MIN_SECONDS:
+        return None
+    return sum(x['usd'] for x in minutes) * 3600 / seconds
+
+
+NOTICE_KEYS = (
+    'model',
+    'from',
+    'at',
+    'until',
+    'usdPerHour',
+    'currentUsdPerHour',
+    'ownUsdPerHour',
+    'cell',
+)
+
+
+SAVED_HOME_KEYS = ('model', 'source', 'at', 'usdPerHour', 'hours', 'low', 'providers', 'cell')
+
+
+def notice_timing(notice):
+    return tuple((notice or {}).get(k) for k in NOTICE_KEYS[:4])
+
+
+def ended_notice(m, now):
+    """The last announced home change that dropped out without being made, while it may still
+    come back with its deadline (NETWORK_HOME_NOTICE_SECONDS), else {}."""
+    last = m.get('homeNoticeLast')
+    if (
+        isinstance(last, dict)
+        and finite(last.get('endedAt'))
+        and 0 <= now - last['endedAt'] <= NETWORK_HOME_NOTICE_SECONDS
+    ):
+        return last
+    return {}
+
+
+def cell_text(cell):
+    """'M5 Pro|48' -> 'M5 Pro 48 GB'."""
+    name, _, memory = (cell or '').rpartition('|')
+    return '%s %s GB' % (name, memory) if name and memory else 'this chip and memory'
+
+
+def network_note(home):
+    usd = home.get('usdPerHour')
+    return 'chosen from Macs like yours: %son %s Macs serving it alone' % (
+        'about $%.3f/h ' % usd if finite(usd) else '',
+        cell_text(home.get('cell')),
+    )
+
+
+def notice_text(notice):
+    """The announcement of a planned home change (event log and status)."""
+    own = notice.get('ownUsdPerHour')
+    return (
+        'Bloomkeeper will switch to %s at %s: it pays best on Macs like yours (about $%.3f/h on '
+        '%s Macs%s). Choose Keep %s in Optimizer → Overview to stay on it.'
+        % (
+            notice['model'],
+            clock(notice.get('until')),
+            notice.get('usdPerHour') or 0,
+            cell_text(notice.get('cell')),
+            '; %s made $%.3f/h here over the last day' % (notice['from'], own)
+            if finite(own)
+            else '',
+            notice['from'],
+        )
+    )
+
+
+def network_home(m, network, current, allowed, earned, now):
+    """(home, notice) from Macs like yours, for a Mac whose own history has no lower bound.
+
+    network  NetworkEvidence.dedicated_table(): {'cell', 'updatedAt', 'models': {model:
+             estimate}, 'neighbours': {model: estimate}}, dedicated boxes only.
+    home     {'model', 'source': 'network', 'at', 'usdPerHour', 'low', 'providers', 'cell'}:
+             the allowed, unblocked solo model with the best 90% lower bound of $/h in this
+             cell (>= MIN_PROVIDERS providers, >= NETWORK_HOME_MIN_WINDOWS windows, a window in
+             the last NETWORK_HOME_FRESH_SECONDS). None: fall back (thin, stale or unclear
+             evidence, a change not yet due, or the serving model already earns enough).
+    notice   A change away from the serving model, announced first: {'model', 'from', 'at',
+             'until', 'usdPerHour', 'low', 'currentUsdPerHour', 'ownUsdPerHour', 'providers',
+             'cell'}. The home changes at 'until' if the same pick and gates still stand;
+             "Keep current" pins 'from' (keep_current). None when nothing is pending.
+    Nothing (None, None) while no serving model is reported or an excursion is active: the
+    saved home stays (choose_home), never an unannounced pick.
+    """
+    if not current or (m.get('excursion') or {}).get('target'):
+        return None, None
+    saved = m.get('home') or {}
+    network = network if isinstance(network, dict) else {}
+    models = network.get('models') if isinstance(network.get('models'), dict) else {}
+    updated = network.get('updatedAt')
+    if not finite(updated) or not -300 <= now - updated <= NETWORK_HOME_FRESH_SECONDS:
+        return None, None
+
+    def usable(k, e):
+        return (
+            k in allowed
+            and len(members(k)) == 1
+            and not blocked(m, k, now)
+            and isinstance(e, dict)
+            and finite(e.get('low'))
+        )
+
+    rated = {
+        k: e
+        for k, e in models.items()
+        if usable(k, e)
+        and e.get('source') == 'cell'
+        and e.get('dedicated_only') is True
+        and (e.get('providers') or 0) >= MIN_PROVIDERS
+        and (e.get('windows') or 0) >= NETWORK_HOME_MIN_WINDOWS
+        and e['low'] > 0
+        and finite(e.get('usd_per_h'))
+    }
+    if not rated:
+        return None, None
+    best = max(rated, key=lambda k: (rated[k]['low'], k))
+    e = rated[best]
+    # A model too few Macs of this cell serve alone, whose lower bound on the same chip with
+    # more memory beats the pick, makes the pick unclear (M3 Ultra 96: no dedicated gemma, which
+    # leads at 256-512 GB; PLAN §6.4 makes that a one-tap proposal only).
+    near = network.get('neighbours') if isinstance(network.get('neighbours'), dict) else {}
+    if any(usable(k, n) and k not in rated and n['low'] > e['low'] for k, n in near.items()):
+        return None, None
+    same = (saved.get('model'), saved.get('source')) == (best, 'network')
+    home = {
+        'model': best,
+        'source': 'network',
+        'at': saved.get('at', now) if same else now,
+        'usdPerHour': e['usd_per_h'],
+        'low': e['low'],
+        'providers': e['providers'],
+        'cell': network.get('cell'),
+    }
+    if best == current or same:
+        return home, None  # no change, or already the home
+    # A change away from the serving model needs a full day of evidence on the pick (both
+    # regimes), evidence that the serving model pays less than half as much (on this Mac, or
+    # on Macs like it) with the pick's lower bound above it too, and the notice first.
+    if (e.get('hours_seen') or 0) < NETWORK_HOME_CHANGE_HOURS:
+        return None, None
+    own = recent_rate(earned, current, now)
+    peers = models.get(current) if isinstance(models.get(current), dict) else {}
+    theirs = peers.get('usd_per_h') if finite(peers.get('usd_per_h')) else None
+    if own is None and theirs is None:
+        return None, None
+    notice = m.get('homeNotice') or {}
+    pending = (notice.get('model'), notice.get('from')) == (best, current) and finite(
+        notice.get('until')
+    )
+    # Hysteresis: an announced change is judged on the looser bar until it is made or dropped.
+    gain = NETWORK_HOME_KEEP_GAIN if pending else NETWORK_HOME_GAIN
+    error = e.get('usd_error') if finite(e.get('usd_error')) else uncalibrated_error(best)
+    low = e['usd_per_h'] * math.exp(-error) * NETWORK_HOME_GAIN / gain
+    if any(
+        x is not None and (e['usd_per_h'] <= gain * x or low <= x) for x in (own, theirs)
+    ):
+        return None, None
+    last = ended_notice(m, now)
+    if pending:
+        if now >= notice['until']:
+            return home, None
+        since, until = notice.get('at', now), notice['until']
+    elif (last.get('model'), last.get('from')) == (best, current) and finite(last.get('until')):
+        # The same change dropped out a moment ago: its deadline stands.
+        since = last['at'] if finite(last.get('at')) else now
+        until = max(last['until'], now + NETWORK_HOME_RESUME_SECONDS)
+    else:
+        since, until = now, now + NETWORK_HOME_NOTICE_SECONDS
+    return None, {
+        'model': best,
+        'from': current,
+        'at': since,
+        'until': until,
+        'usdPerHour': e['usd_per_h'],
+        'low': e['low'],
+        'currentUsdPerHour': theirs,
+        'ownUsdPerHour': own,
+        'providers': e['providers'],
+        'cell': network.get('cell'),
+    }
+
+
+def choose_home(m, earned, runs, current, allowed, now, last_switch=0, network=None):
     """Pin, else own history: the allowed model with the best lower bound (home_rates), kept
-    until a day-old saved home's mean is beaten by a challenger's lower bound; else current.
+    until a day-old saved home's mean is beaten by a challenger's lower bound; else Macs like
+    yours (network_home); else current.
     A saved home keeps that protection only while it is allowed and has a lower bound itself
-    (the same minimum days); one no longer allowed is dropped."""
+    (the same minimum days); one no longer allowed is dropped. While a change away from the
+    serving model is announced, the home stays as it was and carries the notice ('notice').
+    With no serving model reported (drained, dark: the watchdog's restore target too) or
+    during an excursion, Macs like yours are not consulted and the saved home stands."""
     saved = m.get('home') or {}
     if pinned(saved) and saved.get('model'):
         return dict(saved)
@@ -465,11 +766,18 @@ def choose_home(m, earned, runs, current, allowed, now, last_switch=0):
             'at': saved.get('at', now) if saved.get('model') == best else now,
             **rates[best],
         }
+    home, notice = network_home(m, network, current, allowed, earned, now)
+    if home:
+        return home
+    fallback = None
     if saved.get('model') in allowed:
-        return dict(saved)
-    if current and not hold_error(current) and not trial_selection(runs(), current, last_switch):
-        return {'model': current, 'source': 'current', 'at': now}
-    return None
+        fallback = dict(saved)
+    elif current and not hold_error(current) and not trial_selection(runs(), current, last_switch):
+        fallback = {'model': current, 'source': 'current', 'at': now}
+    if notice:
+        fallback = fallback or {'model': current, 'source': 'current', 'at': now}
+        fallback['notice'] = notice
+    return fallback
 
 
 def admission(row, rules):
@@ -670,6 +978,8 @@ def decide(decision, state, context, now):
             reason = (
                 'Returning to your pick %s.' % name
                 if pinned(home)
+                else 'Moving to home model %s, %s.' % (name, network_note(home))
+                if home.get('source') == 'network'
                 else 'Returning to home model %s.' % name
             )
     elif pinned(home):
@@ -679,9 +989,18 @@ def decide(decision, state, context, now):
             ' (best paid on this Mac: $%.3f per ready hour over the last 30 days).'
             % home['usdPerHour']
             if home.get('source') == 'history' and finite(home.get('usdPerHour'))
+            else ' (%s).' % network_note(home)
+            if home.get('source') == 'network'
             else '.'
         )
-        if not (finite(m.get('retryAt')) and m['retryAt'] > now):
+        notice = home.get('notice')
+        if notice:  # a planned home change: no excursion meanwhile
+            reason += ' Switching to %s at %s: it pays best on Macs like yours.' % (
+                notice['model'],
+                clock(notice.get('until')),
+            )
+            arming = m.get('arming')
+        elif not (finite(m.get('retryAt')) and m['retryAt'] > now):
             arming = excursions.next_arming(m.get('arming'), evaluation, now)
             proposal = manager_excursion(
                 copy.deepcopy(state),
@@ -761,6 +1080,9 @@ def control_summary(state, decision, watchdog, now):
         'active': active(state),
         'home': home.get('model'),
         'homeSource': home.get('source'),
+        'homeNotice': {k: m['homeNotice'].get(k) for k in NOTICE_KEYS}
+        if isinstance(m.get('homeNotice'), dict) and not pinned(home) and active(state)
+        else None,
         'pinned': pinned(home),
         'action': view.get('action') if fresh else None,
         'reason': view.get('reason') if fresh else None,
@@ -810,11 +1132,31 @@ def unpin(state, now):
     if m.get('resume') or state.get('requestedModel') or state.get('pending'):
         raise ValueError('Wait for the current model change to finish, then release the pin.')
     m.pop('home')
-    for key in ('homeRetry', 'retryAt', 'arming'):
+    for key in ('homeRetry', 'retryAt', 'arming', 'homeNoticeLast'):
         m.pop(key, None)
     m['lastAction'] = {'action': 'unpin', 'model': home.get('model'), 'at': now, 'success': True}
     state.pop('demandProposal', None)
     return home.get('model')
+
+
+def keep_current(state, model, now):
+    """"Keep current" on a planned home change (caller holds the lock): pin the model the notice
+    would leave, so the manager holds it and never switches away. Returns the notice."""
+    if not active(state):
+        raise ValueError('Turn the manager on before choosing the model to keep.')
+    m = state.setdefault('manager', {})
+    notice = m.get('homeNotice') or {}
+    if not notice.get('model') or notice.get('from') != model:
+        raise ValueError('No switch away from %s is planned now. Refresh the status.' % model)
+    if m.get('resume') or state.get('requestedModel') or state.get('pending'):
+        raise ValueError('Wait for the current model change to finish, then choose again.')
+    m['home'] = pin(model, now)
+    m.pop('homeNotice')
+    for key in ('homeRetry', 'retryAt', 'arming', 'homeNoticeLast'):
+        m.pop(key, None)
+    m['lastAction'] = {'action': 'keep-current', 'model': model, 'at': now, 'success': True}
+    state.pop('demandProposal', None)
+    return notice
 
 
 def retry_hold(m, model, now):
@@ -874,15 +1216,20 @@ def view(
                     disabledUntil}: excursions that ended in the last `days` days,
                     realized gain against staying home and the gain that was predicted.
       excursionEnd  {code, reason} when this decision ends the active excursion.
+    homeNotice      a planned change of the home away from the serving model (network_home):
+                    {model, from, at, until, usdPerHour, low, currentUsdPerHour, ownUsdPerHour,
+                    providers, cell}, or null.
     """
     m = state.get('manager') or {}
-    home = context.get('home')
+    home = copy.deepcopy(context.get('home'))
+    notice = home.pop('notice', None) if isinstance(home, dict) else None
     return {
         'strategy': 'manager',
         'active': active(state),
         'action': action,
         'reason': reason,
-        'home': copy.deepcopy(home),
+        'home': home,
+        'homeNotice': notice,
         'pinned': pinned(home),
         'proposal': copy.deepcopy(proposal),
         'excursion': excursion_view(m.get('excursion'), context),
@@ -914,7 +1261,56 @@ class ManagerControl:
         self.tick_at = None
         self.observed_since = time.time()  # launch; a wake resets it
         self.load_cache = (0, LOAD_SECONDS)
+        self.network_cache = (None, None)
         self.excursions = excursions.ExcursionData(optimizer)
+        self.device_hold = None  # the new device key waiting for the roster (device_changed)
+
+    def device_changed(self, now, settings, account, device):
+        """Same account, new device (the sha256 of Darkbloom's Secure Enclave key): Darkbloom
+        re-mints the key when it can't sign with it, and uses a new one on every start when the
+        keychain key is unavailable. Nothing is sent until the provider roster lists this key
+        for the account, then the Mac is adopted and automatic control continues; it never
+        pauses. A different account still turns automatic control off (Optimizer._tick)."""
+        o = self.o
+        hold = (
+            'Darkbloom is using a new device key on this Mac (it makes one when it can’t use the '
+            'old one, for example after an update). Automatic control stays on: nothing is '
+            'switched until the provider roster matches this Mac to your account again, then it '
+            'continues on its own.'
+        )
+        first = False
+        with o.lock:
+            verified = bool(
+                o.device_identity_ok
+                and o.identity_device == device
+                and 0 <= now - o.identity_at < 180
+            )
+            if verified:
+                o.state['device'] = device
+                self.device_hold = None
+                self.dark_since = None
+                o.save()
+            else:
+                first = (self.device_hold or {}).get('device') != device
+                if first:
+                    self.device_hold = {'device': device, 'since': now}
+                    o.next_identity = 0  # re-verify at the next refresh
+                o.status = 'waiting'
+                o.detail = hold
+        if verified:
+            o.store.event(
+                account,
+                device,
+                now,
+                'manager-notice',
+                settings.get('expectedModel'),
+                'Darkbloom changed this Mac’s device key and the provider roster matched it '
+                'to your account again. Automatic control continues.',
+            )
+        elif first:
+            o.store.event(
+                account, device, now, 'manager-notice', settings.get('expectedModel'), hold
+            )
 
     def clock_tick(self, now):
         """Every control tick, any mode: a long gap means the Mac slept."""
@@ -946,7 +1342,28 @@ class ManagerControl:
             allowed,
             now,
             settings.get('lastSwitchAt', 0),
+            self.network_evidence(allowed | ({current} if current else set()), now),
         )
+
+    def network_evidence(self, models, now):
+        """Macs like this one, for network_home: NetworkEvidence.dedicated_table over
+        NETWORK_HOME_HOURS (list prices, as the excursions compare models), cached for a
+        minute. None without network evidence."""
+        ne = getattr(self.o, 'network_evidence', None)
+        if ne is None:
+            return None
+        key = (tuple(sorted(m for m in models if len(members(m)) == 1)), int(now // 60))
+        if self.network_cache[0] == key:
+            return copy.deepcopy(self.network_cache[1])
+        try:
+            value = ne.dedicated_table(
+                list(key[0]), hours=NETWORK_HOME_HOURS, now=now, basis=excursions.BASIS
+            )
+        except Exception:
+            log.exception('Network evidence for the home model failed')
+            value = None
+        self.network_cache = (key, value)
+        return copy.deepcopy(value)
 
     def decide(self, decision, settings, live, raw, rows, now):
         account, device = live.get('account', ''), live.get('device', '')
@@ -1012,6 +1429,25 @@ class ManagerControl:
         o.store.event(account, device, now, 'manager', model, detail)
         return model
 
+    def keep_current(self, model, now):
+        """'keep-current' on the control endpoint: stay on `model` instead of the planned
+        switch; it becomes the user's pick."""
+        o = self.o
+        with o.lock:
+            notice = keep_current(o.state, model, now)
+            o.save()
+            o.proposal = None
+            o.status = 'optimizing'
+            o.detail = (
+                'You kept %s: Bloomkeeper holds it as your pick and will not switch to %s. '
+                'Choose Manager on to let Bloomkeeper choose the home model again.'
+                % (model, notice['model'])
+            )
+            detail = o.detail
+            account, device = o.state.get('account', ''), o.state.get('device', '')
+        o.store.event(account, device, now, 'manager', model, detail)
+        return model
+
     def remember(self, decision, now):
         """Background: persist what the pure decision used or decided (home, arming, the end
         of an excursion), then book finished excursions. The ledger's kill switch never
@@ -1052,23 +1488,53 @@ class ManagerControl:
                 and not pinned(saved)
                 and (saved.get('model'), saved.get('source')) != (home['model'], home['source'])
             ):
-                m['home'] = {
-                    k: home[k]
-                    for k in ('model', 'source', 'at', 'usdPerHour', 'hours')
-                    if k in home
-                }
+                m['home'] = {k: home[k] for k in SAVED_HOME_KEYS if k in home}
                 changed = True
                 detail = 'Home model is now %s (%s).' % (
                     home['model'],
                     'best realized pay per ready hour on this Mac'
                     if home['source'] == 'history'
+                    else network_note(home)
+                    if home['source'] == 'network'
                     else 'the model serving when the manager started',
                 )
+            # The notice's timing is state; its figures are the decision's (saved as announced).
+            # One that drops out without the change being made is kept a while as
+            # homeNoticeLast, so that it comes back with its deadline and is not announced
+            # again (network_home, ended_notice).
+            held = pinned(m.get('home'))
+            notice = view.get('homeNotice') if not held else None
+            old = m.get('homeNotice') or {}
+            last = ended_notice(m, now)
+            announce = None
+            if notice_timing(notice) != notice_timing(old):
+                if notice:
+                    m['homeNotice'] = {k: notice.get(k) for k in NOTICE_KEYS}
+                    m.pop('homeNoticeLast', None)
+                    told = old or last
+                    if tuple(told.get(k) for k in ('model', 'from', 'until')) != tuple(
+                        notice.get(k) for k in ('model', 'from', 'until')
+                    ):
+                        announce = notice
+                else:
+                    m.pop('homeNotice', None)
+                    made = (m.get('home') or {}).get('model') == old.get('model')
+                    if old.get('model') and not made and not held:
+                        m['homeNoticeLast'] = {
+                            **{k: old.get(k) for k in NOTICE_KEYS[:4]},
+                            'endedAt': now,
+                        }
+                changed = True
+            elif 'homeNoticeLast' in m and not last:
+                m.pop('homeNoticeLast')  # too long ago to come back with its deadline
+                changed = True
             if changed:
                 o.save()
             account, device = o.state.get('account', ''), o.state.get('device', '')
         if detail:
             o.store.event(account, device, now, 'manager', home['model'], detail)
+        if announce:
+            o.store.event(account, device, now, 'manager', announce['model'], notice_text(announce))
         self.book(now)
 
     def book(self, now):
@@ -1185,6 +1651,7 @@ class ManagerControl:
         return text[:1].lower() + text[1:160] if text else None
 
     def say(self, text, status='waiting'):
+        text = readable(text)
         with self.o.lock:
             self.o.status = status
             self.o.detail = text
@@ -1265,6 +1732,27 @@ class ManagerControl:
             endpoint_issue(options or []) and not idle_unload_chosen(self.o.home, options or [])
         )
 
+    def resting_note(self, raw, current, options, now):
+        """Why nothing is loaded when Darkbloom unloaded a model that served in this session
+        because the user chose idle unloading (idle_unload_chosen), and the setting that
+        changes it; None otherwise."""
+        from optimizer import drained_idle
+
+        if (
+            not current
+            or not served(raw)
+            or loaded(raw, now)[0]
+            or drained_idle(raw)
+            or provider_busy(raw)
+            or not idle_unload_chosen(self.o.home, options or [])
+        ):
+            return None
+        return readable(
+            'Darkbloom unloaded %s after it sat idle, as its idle setting asks: base rewards pause '
+            'until a request loads it again. To keep it loaded, run `darkbloom idle keep-loaded`, '
+            'then `darkbloom restart`, in Terminal.' % current
+        )
+
     def reload_resting(self, now, settings, live, raw, current, options, m):
         """Darkbloom's idle timeout unloaded a model (or pair) that served in this session. An
         unloaded model earns no base reward, so load it again through the local endpoint right
@@ -1319,6 +1807,7 @@ class ManagerControl:
                 m['restoreAt'] = end + RESTORE_RETRY_SECONDS
                 m['restoreBlocker'] = detail
                 text = 'Loading %s again is waiting: %s' % (target, detail)
+            text = readable(text)
             o.status = 'optimizing' if success else 'waiting'
             o.detail = text
             self.dark_text = None
@@ -1412,7 +1901,7 @@ class ManagerControl:
                 o.save()
             account, device = o.state.get('account', ''), o.state.get('device', '')
         for note in notes:
-            o.store.event(account, device, now, 'manager', current, note)
+            o.store.event(account, device, now, 'manager', current, readable(note))
 
     def recover(self, now, settings, live, raw, current, m):
         """After a failed automatic switch: wait briefly for the target, then restore."""
@@ -1538,12 +2027,16 @@ class ManagerControl:
         # A cold but correct selection is force-loaded first; a restart is the retry, and
         # also follows a reload that can't work (no local endpoint) or kept being deferred.
         attempts = (m.get('recovery') if purpose == 'recovery' else m.get('watchdog')) or {}
+        from optimizer import drained_idle
+
+        # A drained provider refuses new work, a local warm-up included: it needs a restart.
         reload = purpose == 'idle' or bool(
             not stopped
             and target == current
             and not attempts.get('attempts')
             and attempts.get('deferred', 0) < RELOAD_DEFERRALS
             and not self.endpoint_missing()
+            and not drained_idle(raw)
         )
         with o.lock:
             if (
@@ -1567,10 +2060,9 @@ class ManagerControl:
             }
             o.save()
             o.status = 'switching'
-            o.detail = '%s. %s %s and verifying it is warm.' % (
-                what,
-                'Loading' if reload else 'Starting' if stopped else 'Restoring',
-                target,
+            o.detail = readable(
+                '%s. %s %s and verifying it is warm.'
+                % (what, 'Loading' if reload else 'Starting' if stopped else 'Restoring', target)
             )
             self.dark_text = None if purpose == 'idle' else o.detail
             if stopped:
@@ -1599,7 +2091,7 @@ class ManagerControl:
 
     def restore(self, target, purpose, account, device, dark_at):
         """Worker: force-load `target` (restart only if needed, never --force) and verify warm."""
-        from optimizer import ExternalChange, NothingSent, launch_signature
+        from optimizer import ExternalChange, NothingSent, drained_idle
         from prewarm import WarmupDeferred, WarmupError
 
         o = self.o
@@ -1617,6 +2109,12 @@ class ManagerControl:
                 running = matching_process(process_identity(raw)) is True and state_fresh(
                     raw, time.time()
                 )
+                # A drain disables launchd recovery until the start that follows it; when none
+                # followed, the provider runs drained with its launch agent disabled. That is
+                # not the user's `darkbloom stop` (which ends the process): restart it, and the
+                # start enables the launch agent again.
+                disabled = o.service_disabled()
+                fenced = disabled is True and running and not stopped and drained_idle(raw)
                 if (
                     o.stop.is_set()
                     or not self.active()
@@ -1624,7 +2122,7 @@ class ManagerControl:
                     or pending.get('model') != target
                     or session_key(raw) != pending.get('session')
                     or (raw and device_id(raw) != device)
-                    or o.service_disabled() is not False
+                    or (disabled is not False and not fenced)
                     or running != (not stopped)
                 ):
                     raise ExternalChange('The provider stopped or changed before the restore.')
@@ -1702,7 +2200,7 @@ class ManagerControl:
                     self.commanded(target, command_at)
                 o.command(target, options, environment)
                 stage = 'verify'
-                expected = launch_signature(options, environment)
+                expected = o.started_launch(options, environment)
                 success = o.verify_started(
                     target,
                     raw.get('started_at'),
@@ -1839,6 +2337,8 @@ class ManagerControl:
                             % clock(wd['nextAt'])
                         )
                     m['watchdog'] = wd
+            text = readable(text)
+            notices = [readable(note) for note in notices]
             o.status = 'optimizing' if success else 'waiting'
             o.detail = text
             self.dark_text = None if success else text
@@ -1865,6 +2365,7 @@ class ManagerControl:
                 'Restoring after the failed switch to %s did not work twice. Automatic control stays on. Bloomkeeper tries again at %s; check Darkbloom on the Mac (darkbloom doctor).'
                 % (rec.get('failedTarget'), clock(wd['nextAt']))
             )
+            detail = readable(detail)
             o.status = 'waiting'
             o.detail = self.dark_text = detail
             o.save()
@@ -2013,8 +2514,10 @@ class ManagerControl:
                 now,
                 'manager-notice',
                 previous,
-                'Restored %s after the switch to %s failed. Automatic control continues; %s is held back.'
-                % (previous, target, target),
+                readable(
+                    'Restored %s after the switch to %s failed. Automatic control continues; %s is held back.'
+                    % (previous, target, target)
+                ),
             )
         return True
 
@@ -2139,6 +2642,7 @@ class ManagerControl:
                     'The serving model changed outside Bloomkeeper to %s. Holding it as your pick; the manager will not switch away from it.'
                     % current
                 )
+            detail = readable(detail)
             o.status = 'optimizing'
             o.detail = detail
             o.save()
@@ -2162,7 +2666,7 @@ class ManagerControl:
             }
             o.state.pop('rollbackModel', None)
             o.status = 'waiting'
-            o.detail = (
+            o.detail = readable(
                 'Darkbloom reported that %s failed to load after reconnecting. Restoring %s unless it recovers.'
                 % (current, previous)
             )

@@ -44,6 +44,7 @@ import { SupportDiagnostics } from '@/components/dashboard/support-diagnostics';
 import { Guide } from '@/components/dashboard/guide';
 import { AboutBloom } from '@/components/dashboard/about-bloom';
 import { OverviewSummary } from '@/components/dashboard/overview-summary';
+import { NetworkOutageBanner } from '@/components/dashboard/network-outage';
 import {
   UsageInvitation,
   useDashboardUsage,
@@ -109,6 +110,8 @@ type Snapshot = {
   forecast?: Forecast;
   pulse?: EarningsPulseData;
   traffic?: TrafficPulseData;
+  /** native/network_health.py view(): Darkbloom-wide outage, validated by lib/network-health. */
+  networkHealth?: unknown;
   hardware: Hardware;
   provider: Provider;
   earnings: {
@@ -524,6 +527,7 @@ function DashboardContent() {
             </AppScreen>
             <div className="desktop-earnings-workspace earnings-workspace-layout">
               <AppScreen name="overview">
+                <NetworkOutageBanner health={data?.networkHealth} />
                 <OverviewSummary
                   active={
                     visible('overview') &&

@@ -143,6 +143,26 @@ export function releasePinRequest(
   };
 }
 
+/** Manager: "Keep current" on a planned home change; `model` becomes the pin. */
+export type KeepCurrentRequest = {
+  action: 'keep-current';
+  requestId: string;
+  expectedControl: string;
+  model: string;
+};
+export function keepCurrentRequest(
+  state: OptimizerControlState,
+  model: string,
+  requestId: string,
+): KeepCurrentRequest {
+  return {
+    action: 'keep-current',
+    requestId,
+    expectedControl: state.controlVersion,
+    model,
+  };
+}
+
 export function initialOptimizerModels(state: OptimizerControlState): string[] {
   // The stopped/warming current model remains part of the reviewed first plan.
   // Its runtime eligibility is checked by the guarded backend before enabling.

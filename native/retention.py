@@ -27,6 +27,8 @@ TABLES = {
     'concurrency_observations': 'at',
     'earnings_forecast_observations': 'created_at',
     'network_cell_rates': ('hour', 30 * 86400),  # public aggregates, network_evidence.py
+    'model_catalog_events': 'at',  # network news, model_catalog_watch.py
+    'network_incidents': 'start',  # Darkbloom outages (aggregates only), network_health.py
 }
 
 

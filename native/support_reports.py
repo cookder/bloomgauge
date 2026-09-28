@@ -41,6 +41,12 @@ AUTO_LIMITED = (
     'Automatic reports are limited to one per problem a day, one per kind of problem '
     'every six hours and three a day. You can still send this report yourself.'
 )
+# During a Darkbloom-wide outage (network_health.py) the problems a Mac sees are the
+# network's, not the Mac's: automatic reports wait; the user can still send one.
+AUTO_OUTAGE = (
+    'Automatic reports pause during a Darkbloom network problem, since there is nothing to '
+    'fix on this Mac. You can still send this report yourself.'
+)
 TIMEOUT = 15
 # Keep in step with lib/support-issues.ts supportCategories and the website's list
 # (bloom-storefront lib/support-protocol.ts), which rejects a report it doesn't know.
@@ -346,6 +352,13 @@ class SupportReports:
             and type(item.get('problem')) is str
         ]
 
+    def _network_outage(self):
+        health = getattr(self.collector, 'network_health', None)
+        try:
+            return bool(health and health.outage())
+        except Exception:
+            return False
+
     def _auto_allowed(self, category, problem):
         sent, now = self._auto_sent(), self.now()
         return self.auto_status()['autoSend'] and not (
@@ -387,6 +400,8 @@ class SupportReports:
             raise ValueError('Invalid support context.')
         description = _text(data['description'], 2000, multiline=True)
         contact = _text(data['contact'], 254)
+        if automatic and self._network_outage():
+            raise SupportError('rate_limited', message=AUTO_OUTAGE)
         with self.lock:
             self._prune()
             if self.closed:

@@ -7,10 +7,14 @@ authorize one cleanup attempt; only a new hardware reading can authorize Start.
 import copy
 import time
 from cache_recovery import clear_file_cache, CacheRecoveryError
-from model_combinations import configured_reserve_gb
+from model_combinations import (
+    combination_config_error,
+    configured_reserve_gb,
+    members,
+    pair_budget,
+)
 from model_readiness import session_key
 from optimizer_store import device_id
-from provider_control import endpoint_issue
 
 
 class OnStart:
@@ -79,26 +83,54 @@ class OnStart:
         with o.lock:
             raw = copy.deepcopy(o.raw)
             state = copy.deepcopy(o.state)
-        reason = endpoint_issue(current['options']) or o.manual_selection.common_reason(
+        reason = o.endpoint_notice(current['options']) or o.manual_selection.common_reason(
             current, self.op['source'], live, raw, time.time()
         )
         if reason:
             raise ValueError(reason)
-        row = next(
-            (r for r in o.candidates({}, {}, live, state) if r['id'] == current['model']), None
-        )
-        if not row or not row['available']:
-            raise ValueError(
-                (row or {}).get('reason')
-                or 'The saved model is no longer available for automatic selection.'
+        models = members(current['model'])
+        rows = {r['id']: r for r in o.candidates({}, {}, live, state)}
+        if len(models) == 1:
+            row = rows.get(models[0])
+            if not row or not row['available']:
+                raise ValueError(
+                    (row or {}).get('reason')
+                    or 'The saved model is no longer available for automatic selection.'
+                )
+        # A pair (the manager holds one without gemma) is checked model by model, and its
+        # memory as a pair, as the provider controls' Start does. It was looked up as one
+        # model and refused as "no longer available".
+        for model in models:
+            row = rows.get(model)
+            if not row or not row['available']:
+                raise ValueError(
+                    '%s is not available for automatic selection: %s'
+                    % (model, (row or {}).get('reason') or 'it is not in the network catalog.')
+                )
+        reserve = configured_reserve_gb(o.home, current['options'])
+        if len(models) == 2:
+            error = combination_config_error(
+                o.home, current['options'], current['environment'], voluntary=False
             )
-        budget = memory_budget(
-            live.get('hardware', {}),
-            {'memoryGB': 0},
-            current['model'],
-            row['memoryGB'],
-            config_reserve=configured_reserve_gb(o.home, current['options']),
-        )
+            if error:
+                raise ValueError(error)
+            budget = pair_budget(
+                live.get('hardware', {}),
+                {'memoryGB': 0},
+                models,
+                [rows[m]['memoryGB'] for m in models],
+                config_reserve=reserve,
+            )
+        elif models:
+            budget = memory_budget(
+                live.get('hardware', {}),
+                {'memoryGB': 0},
+                models[0],
+                rows[models[0]]['memoryGB'],
+                config_reserve=reserve,
+            )
+        else:
+            raise ValueError('The saved model is no longer available for automatic selection.')
         if not budget:
             raise ValueError(
                 'Waiting for verified memory estimates for the saved model. Refresh before turning On.'

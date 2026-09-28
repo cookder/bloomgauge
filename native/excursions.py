@@ -33,7 +33,23 @@ checks at least CHECK_SECONDS apart (~2 h of persistence). A check passes when:
     dedicated boxes count (gemma on mixed boxes gets ~0.46x, which would inflate it);
   - it is a solo catalog model the user selected, it fits memory (manager.admission),
     it is not blocked after a failed switch (24 h) and not cooling down after an
-    early exit (24 h) or a faded/failed excursion (60 min).
+    early exit (24 h) or a faded/failed excursion (60 min);
+  - a model with a lesson (below) has its ratio divided by the lesson's factor first.
+Trial checks (Andrew, Sep 28: Macs that can hold large models try them when demand is higher
+than usual and sustained, then learn per model). A model this Mac has not calibrated (< 50 own
+jobs in 7 days) that fits memory may pass on its trial bound instead: the 90% low with the ln 2
+$/request error (network_evidence.USD_ERROR_TRIAL) instead of ln 4, so a public ratio of about
+2-2.5x instead of ~4x, when also
+  - its network demand (active + queued requests in the public capacity feed) has had a median
+    >= TRIAL_DEMAND_RATIO x its usual level for that hour (demand_alerts.usual_levels) in each
+    of the last TRIAL_DEMAND_HOURS hours, so it held at both checks, and
+  - no excursion to it started in the last TRIAL_EVERY_SECONDS (one trial a week per model).
+Its own jobs then calibrate it (network_evidence.OWN_MIN_JOBS), and its ledger row may give it a
+lesson. Every other rule is the same.
+Lessons: a booked excursion that paid less per clock hour than home would have
+(homeCounterfactualUsdPerHour), or that ended by early exit, divides that model's future
+ratios by exp(penalty), penalty = ln(counterfactual / realized) up to LESSON_MAX (early exit:
+LESSON_MAX), fading linearly to nothing over LESSON_SECONDS; losses add up.
 Global gates: the managerExcursions setting, the ledger kill switch, a pinned home
 (never), serving home, < MAX_PER_DAY excursions in 24 h (or the policy's lower
 maxSwitchesPerDay, which dispatch enforces), DWELL_SECONDS since the last switch and
@@ -66,6 +82,8 @@ turns excursions off and on again (PLAN 6.6 and 6.9).
 """
 
 import copy, json, logging, math, sqlite3, statistics, threading
+from collections import defaultdict
+from datetime import datetime
 from model_combinations import members
 from network_evidence import MIN_PROVIDERS, t90_one_sided
 
@@ -83,8 +101,18 @@ EVIDENCE_HOURS = 2  # network window for the ratio and the prediction
 BASIS = 'list'
 LATEST_HOURS = 1  # latest-hour window (fade)
 MIN_RATIO_LOW = 1.0  # 90% lower bound of candidate/home $/h must exceed this
-MIN_GAIN_SHARE = 0.5  # predicted gain >= 50% of home $/h ...
-TAU_USD_PER_HOUR = 0.04  # ... and >= switch cost over AMORTIZE_HOURS + $0.04/h
+# The gain bar is one out-of-sample error of the 1-h gain (PLAN 6.4's definition of tau), sized on
+# the public /v1/stats poll (checks Sep 27 08:34 - Sep 28 07:34 in 30 cells; see
+# calibration-2026-09-28.md). The 2 h ratio's error on the next hour grows with home's rate, so it
+# is mostly a share of home. Where a candidate looked better (1.1 <= ratio < 2, latest-hour ratio
+# >= 1.1) the mean absolute error of the gain was 0.96 x home $/h with a gemma home (90% CI
+# 0.80-1.16; n 194, 14 cells; the candidate paid no more than home in 51% of the next hours) and
+# 0.69 x (0.58-0.77; n 1,744, 28 cells) with a gpt-oss home; 0.5 sat below every interval. In $/h
+# the error was $0.011 at homes under $0.01/h, $0.020 at $0.01-0.02 and $0.031 at $0.02-0.04: a
+# flat $0.04 was 2-4x it on the slower half of the fleet, so only a $0.01 floor stays absolute. On
+# the poll replay neither change moved a gemma-home Mac (the 90% lower bound binds first).
+MIN_GAIN_SHARE = 1.0  # predicted gain >= home $/h (ratio >= 2) ...
+TAU_USD_PER_HOUR = 0.01  # ... and >= switch cost over AMORTIZE_HOURS + $0.01/h
 AMORTIZE_HOURS = 2
 HOME_TRAILING_SECONDS = 72 * 3600  # own home $/h: the last 72 h on home ...
 HOME_TRAILING_MIN_SECONDS = 4 * 3600  # ... with >= 4 ready hours, else 14 days
@@ -142,6 +170,31 @@ BOOK_DELAY_SECONDS = 300  # book an excursion once its credits have settled
 NO_RETURN = frozenset({'manual', 'external', 'replaced'})
 MAX_ROWS = 10
 CACHE_SECONDS = 60
+# --- trials (models this Mac has not calibrated) ---------------------------------
+# TRIAL_DEMAND_RATIO from Andrew's opt_network (the public capacity feed every 30 s, Sep 6-28,
+# 6 niche models, 2,488 model-hours): at the first hour when two consecutive hourly medians reach
+# k x usual, the next 3 hours (a niche switch and ramp plus the 2 h the gain bar amortizes over)
+# stayed above usual 61% of the time at k = 1.0, 75% at 1.25, 77% at 1.5, 80% at 2 and 85% at 2.5
+# (51% after any hour). Past 1.25-1.5 the gain is slow while episodes thin out (110 in 22 days at
+# 1.5, 76 at 2). The Sep 9-10 qwen3.5-35b regime (this Mac's own qwen pay $0.14-0.38/h against
+# gemma's ~$0.10) held 2.3-17x usual for 13 hours. On the public poll (Sep 27-28) demand >= 1.5x
+# did not make the public pay ratio itself more persistent: the gate keeps trials to unusual,
+# sustained demand; the pay bar and the ledger judge them.
+TRIAL_DEMAND_RATIO = 1.5
+TRIAL_DEMAND_HOURS = 2  # hourly medians, the last two hours: both checks
+TRIAL_DEMAND_SAMPLES = 60  # 30-second capacity samples per hour (half coverage) for a reading
+TRIAL_EVERY_SECONDS = 7 * 86400  # one trial per model a week (OWN_DAYS: own jobs calibrate it after)
+DEMAND_CACHE_SECONDS = 300  # as demand_alerts refreshes its usual levels
+# --- lessons (per model) ------------------------------------------------------------
+# One ledger row's noise sets the most a single excursion can teach: a null excursion (gemma
+# against its own trailing 72 h rate on Andrew's Mac, Sep 6-28, ready-hour windows) read
+# |ln(realized / counterfactual)| >= 0.73 one time in ten over 4 h (n 55; 1.1 over 2 h, n 116) and
+# read as a loss 50-67% of the time, so one row is worth up to about x2 (ln 2, the ledger's own
+# TRAILING_SPREAD) and a small shortfall only moves the bar a little. For scale: 57 of Andrew's 58
+# legacy trips away from gemma (>= 30 ready min, Sep 8-26) paid less than gemma's trailing rate.
+LESSON_SECONDS = LEDGER_DAYS * 86400
+LESSON_MAX = math.log(2)
+LESSON_SKIP = NO_RETURN | {'off', 'changed'}  # the user, an outside change or a failed load ended it
 
 # Gates that clear arming; the others (daily limit, dwell, environment) only pause it.
 RESET_GATES = frozenset({'off', 'paused', 'no home', 'pinned', 'away'})
@@ -329,6 +382,84 @@ def ledger_bound(gains):
     return mean, mean - t90_one_sided(n - 1) * statistics.stdev(gains) / math.sqrt(n)
 
 
+def lesson_penalty(r):
+    """Log-units penalty from one ledger row: ln(counterfactual / realized) when it paid less
+    per clock hour than home would have, up to LESSON_MAX; LESSON_MAX after an early exit; 0
+    for rows the user, an outside change or a failed load ended."""
+    code = r.get('endCode')
+    if code in LESSON_SKIP:
+        return 0.0
+    if code == 'early-exit':
+        return LESSON_MAX
+    real, cf = r.get('realizedUsdPerHour'), r.get('homeCounterfactualUsdPerHour')
+    if not (finite(real) and finite(cf) and cf > 0 and real < cf):
+        return 0.0
+    return min(LESSON_MAX, math.log(cf / real)) if real > 0 else LESSON_MAX
+
+
+def lessons(records, now):
+    """model -> {'factor', 'penalty', 'until', 'triedAt', 'endedAt', 'home', 'code',
+    'realizedUsdPerHour', 'homeUsdPerHour'} from ledger rows (pure): each losing row's penalty
+    fades linearly to 0 over LESSON_SECONDS after it ended, several add up, and the model's
+    ratios are divided by factor = exp(penalty). The latest losing row describes it."""
+    out = {}
+    for r in records or []:
+        model, end = r.get('model'), r.get('endedAt')
+        if not isinstance(model, str) or not finite(end) or not 0 <= now - end < LESSON_SECONDS:
+            continue
+        p = lesson_penalty(r)
+        if p <= 0:
+            continue
+        item = out.setdefault(model, {'model': model, 'penalty': 0.0, 'endedAt': -math.inf})
+        item['penalty'] += p * (1 - (now - end) / LESSON_SECONDS)
+        if end >= item['endedAt']:
+            item.update(
+                triedAt=r.get('startedAt'),
+                endedAt=end,
+                until=end + LESSON_SECONDS,
+                home=r.get('from'),
+                code=r.get('endCode'),
+                realizedUsdPerHour=r.get('realizedUsdPerHour'),
+                homeUsdPerHour=r.get('homeCounterfactualUsdPerHour'),
+            )
+    for item in out.values():
+        item['factor'] = math.exp(item['penalty'])
+    return out
+
+
+def day(at):
+    t = datetime.fromtimestamp(at)
+    return '%s %d' % (t.strftime('%b'), t.day)
+
+
+def lesson_text(item):
+    """"qwen3.5-35b-a3b: tried Sep 28, paid less than gemma-4-26b-qat-4bit; needs stronger
+    evidence until Oct 12." (the UI builds the same sentence with display names)."""
+    tried = item.get('triedAt') if finite(item.get('triedAt')) else item.get('endedAt')
+    return '%s: tried %s, %s %s; needs stronger evidence until %s.' % (
+        item['model'],
+        day(tried),
+        'ended early, paying less than' if item.get('code') == 'early-exit' else 'paid less than',
+        item.get('home') or 'the home model',
+        day(item['until']),
+    )
+
+
+def demand_high(reading):
+    """The trial demand gate: every one of the last TRIAL_DEMAND_HOURS hours had a median load
+    >= TRIAL_DEMAND_RATIO x usual (and at least demand_alerts' minimum load)."""
+    from demand_alerts import SPIKE_MIN_LOAD
+
+    hours = (reading or {}).get('hours') or []
+    return len(hours) == TRIAL_DEMAND_HOURS and all(
+        finite(h.get('ratio'))
+        and h['ratio'] >= TRIAL_DEMAND_RATIO
+        and finite(h.get('load'))
+        and h['load'] >= SPIKE_MIN_LOAD
+        for h in hours
+    )
+
+
 # --- pure state helpers ---------------------------------------------------
 
 
@@ -450,6 +581,10 @@ def evaluate(state, context, now):
     dead = x.get('deadSeconds') or {}
     p_home = failure_chance(name, None, total, True) if name else P_FAIL_RELIABLE
     network = x.get('homeNetwork') or {}
+    taught = x.get('lessons') or {}
+    demand = x.get('demand') or {}
+    # One trial a week per model: any excursion to it that started in the last week counts.
+    tried = {w[0] for w in windows(m, now) if w[1] > now - TRIAL_EVERY_SECONDS}
     gate = None
     if not enabled(rules):
         gate = 'off'
@@ -476,6 +611,10 @@ def evaluate(state, context, now):
         ratio, low, high = c.get('ratio'), c.get('low'), c.get('high')
         latest = c.get('latestRatio')
         mult = predicted_ratio(c, network)
+        trial_low = c.get('trialLow')
+        lesson = taught.get(model) or {}
+        factor = lesson['factor'] if finite(lesson.get('factor')) and lesson['factor'] > 1 else 1.0
+        reading = demand.get(model) or {}
         r = {
             'model': model,
             'usdPerHour': rounded(rate * mult) if rate is not None and finite(mult) else None,
@@ -487,6 +626,11 @@ def evaluate(state, context, now):
             'providers': c.get('providers') or 0,
             'source': c.get('source') or 'none',
             'dedicated': c.get('dedicated'),
+            'calibrated': c.get('calibrated'),
+            'trialLow': rounded(trial_low, 3),
+            'demandRatio': rounded(reading.get('ratio'), 2),
+            'lessonFactor': rounded(factor, 3) if factor > 1 else None,
+            'trial': False,
             'eligible': False,
             'why': None,
         }
@@ -517,25 +661,49 @@ def evaluate(state, context, now):
         elif rate is None or rate <= 0:
             why = 'no home rate'
         else:
-            predicted = predictions[model] = rate * mult
             budget = row.get('loadBudget') or {}
             required = budget.get('requiredGB') if finite(budget.get('requiredGB')) else row.get('memoryGB')
             p = failure_chance(model, required, total, c.get('priorSuccess'))
-            cost = switch_cost(model, predicted, rate, p, total, name, dead, p_home)
-            need = required_gain(rate, cost)
+            # It fits memory (admission above): an uncalibrated model may pass on its trial bound.
+            trialable = c.get('calibrated') is False and finite(trial_low)
+
+            def judge(f):
+                """(why, trial, predicted, cost, need) with the model's ratios divided by f."""
+                predicted = rate * mult / f
+                cost = switch_cost(model, predicted, rate, p, total, name, dead, p_home)
+                need = required_gain(rate, cost)
+
+                def bar(bound):
+                    if bound / f <= MIN_RATIO_LOW:
+                        return 'weak evidence'
+                    if not finite(latest) or latest < FADE_RATIO:
+                        return 'fading'
+                    return 'gain too small' if predicted - rate < need else None
+
+                why, trial = bar(low), False
+                if why == 'weak evidence' and trialable:
+                    why = bar(trial_low)
+                    if why is None:
+                        if model in tried:
+                            why = 'tried this week'
+                        elif not demand_high(reading):
+                            why = 'demand not high enough'
+                        else:
+                            trial = True
+                return why, trial, predicted, cost, need
+
+            why, trial, predicted, cost, need = judge(factor)
+            if why and factor > 1 and judge(1.0)[0] is None:
+                why = 'paid less before'  # a lesson from its ledger row holds it back
+            predictions[model] = predicted
             r.update(
                 gainUsdPerHour=rounded(predicted - rate),
                 needUsdPerHour=rounded(need),
                 costUsd=rounded(cost),
                 pFail=p,
+                trial=trial,
             )
-            if low <= MIN_RATIO_LOW:
-                why = 'weak evidence'
-            elif not finite(latest) or latest < FADE_RATIO:
-                why = 'fading'
-            elif predicted - rate < need:
-                why = 'gain too small'
-            else:
+            if why is None:
                 passing.append((predicted - rate, model))
         r['why'] = why or gate
         r['eligible'] = r['why'] is None
@@ -624,11 +792,29 @@ def propose(state, now, context):
     predicted = predicted if finite(predicted) else rate * r['ratio']
     cell = x.get('cell')
     where = ('%s, %s GB' % tuple(cell.split('|'))) if isinstance(cell, str) and '|' in cell else 'this hardware class'
-    reason = (
-        'public data for Macs like this one (%s) shows it paying %.1fx %s (90%% low %.2fx) '
-        'at %d hourly checks; expected about $%.3f/h here vs $%.3f/h at home.'
-        % (where, r['ratio'], home, r['ratioLow'], arming['checks'], predicted, rate)
-    )
+    if r.get('trial'):
+        reason = (
+            'a trial of a model this Mac has not served lately: public data for Macs like this '
+            'one (%s) shows it paying %.1fx %s (90%% low %.2fx at the trial margin) at %d hourly '
+            'checks, with its demand at %.1fx its usual level for these hours; expected about '
+            '$%.3f/h here vs $%.3f/h at home.'
+            % (
+                where,
+                r['ratio'],
+                home,
+                r['trialLow'],
+                arming['checks'],
+                r['demandRatio'],
+                predicted,
+                rate,
+            )
+        )
+    else:
+        reason = (
+            'public data for Macs like this one (%s) shows it paying %.1fx %s (90%% low %.2fx) '
+            'at %d hourly checks; expected about $%.3f/h here vs $%.3f/h at home.'
+            % (where, r['ratio'], home, r['ratioLow'], arming['checks'], predicted, rate)
+        )
     network = x.get('homeNetwork') or {}
     return {
         'target': r['model'],
@@ -657,6 +843,10 @@ def propose(state, now, context):
             'pFail': r.get('pFail'),
             'checks': arming['checks'],
             'armedSince': arming.get('since'),
+            'trial': bool(r.get('trial')),
+            'trialLow': r.get('trialLow'),
+            'demandRatio': r.get('demandRatio'),
+            'lessonFactor': r.get('lessonFactor'),
         },
     }
 
@@ -720,6 +910,26 @@ def evidence_view(context, evaluation):
         'gate': evaluation['gate'],
         'environment': evaluation['environment'],
         'rows': copy.deepcopy(evaluation['rows']),
+        'trialDemandRatio': TRIAL_DEMAND_RATIO,
+        # Models with a lesson from the ledger, in plain words and as fields for the UI.
+        'lessons': [
+            {
+                'model': item['model'],
+                'triedAt': item.get('triedAt'),
+                'endedAt': item.get('endedAt'),
+                'until': item.get('until'),
+                'home': item.get('home'),
+                'code': item.get('code'),
+                'realizedUsdPerHour': rounded(item.get('realizedUsdPerHour')),
+                'homeUsdPerHour': rounded(item.get('homeUsdPerHour')),
+                'factor': rounded(item.get('factor'), 3),
+                'text': lesson_text(item),
+            }
+            for item in sorted(
+                (x.get('lessons') or {}).values(), key=lambda i: (-(i.get('until') or 0), i['model'])
+            )
+            if finite(item.get('until'))
+        ],
     }
 
 
@@ -964,6 +1174,54 @@ def kill(ledger, account, device, m, now):
 # --- data (I/O) -------------------------------------------------------------------
 
 
+def demand_readings(store, models, now):
+    """model -> {'ratio', 'hours'}: for each of the last TRIAL_DEMAND_HOURS hours (newest first),
+    the median load (active + queued requests, the latest capacity sample per 30 s, as
+    demand_alerts reads it) over that hour's usual load (demand_alerts.usual_levels, time-of-day
+    scope only); ratio = the lowest hour's (None while any hour lacks a reading). Reads through a
+    read-only snapshot (demand_baselines.read_view): usual_levels scans 30 days."""
+    from demand_alerts import _samples, usual_levels  # the app's one definition of "usual"
+    from demand_baselines import read_view
+
+    span = TRIAL_DEMAND_HOURS * 3600
+    loads = defaultdict(list)
+    with read_view(store) as view:
+        with view.h.lock:
+            for row in view.h.db.execute(
+                _samples(','.join('?' * len(models))) + 'SELECT model,at,load FROM samples',
+                (*models, now - span, now + 1, now),
+            ):
+                loads[row['model']].append((row['at'], row['load']))
+            usual = [
+                usual_levels(view.h.db, models, now - k * 3600) for k in range(TRIAL_DEMAND_HOURS)
+            ]
+    out = {}
+    for model in models:
+        hours = []
+        for k in range(TRIAL_DEMAND_HOURS):
+            end = now - k * 3600
+            seen = [load for at, load in loads[model] if end - 3600 < at <= end]
+            level = usual[k].get(model) or {}
+            base = level.get('baselineLoad') if level.get('baselineScope') == 'daytype_hour' else None
+            load = statistics.median(seen) if len(seen) >= TRIAL_DEMAND_SAMPLES else None
+            hours.append(
+                {
+                    'end': end,
+                    'load': load,
+                    'usualLoad': base,
+                    'samples': len(seen),
+                    'ratio': load / base if finite(load) and finite(base) and base > 0 else None,
+                }
+            )
+        ratios = [h['ratio'] for h in hours]
+        out[model] = {
+            'at': now,
+            'ratio': min(ratios) if all(finite(v) for v in ratios) else None,
+            'hours': hours,
+        }
+    return out
+
+
 class ExcursionData:
     """Builds context['excursions'] for the pure rules. Background and GET previews share it."""
 
@@ -974,10 +1232,12 @@ class ExcursionData:
         self.key = self.value = None
         self.value_at = None
         self.dead = (None, None, {})  # (account/device, at, model -> seconds)
+        self.demand_cache = (None, {})  # (models, 5-minute slot), model -> reading
 
     def invalidate(self):
         with self.lock:
             self.key = self.value = None
+            self.demand_cache = (None, {})
 
     def context(self, settings, live, raw, rows, home, current, now):
         m = settings.get('manager') or {}
@@ -1044,6 +1304,15 @@ class ExcursionData:
             if ne is not None and name:
                 c.update(self.ratio(ne, model, name, cell, now))
             candidates.append(c)
+        # Demand readings only for models a trial could move to (the SQL reads 30 days).
+        trials = [
+            c['model']
+            for c in candidates
+            if c.get('calibrated') is False
+            and finite(c.get('trialLow'))
+            and c['trialLow'] > MIN_RATIO_LOW
+        ]
+        demand = self.demand(trials, now) if trials else {}
         active = None
         if excursion and name:
             saved = excursion.get('evidence') if isinstance(excursion.get('evidence'), dict) else {}
@@ -1075,9 +1344,10 @@ class ExcursionData:
                 environment = 'Waiting for current readings.'
         try:
             summary = self.ledger.summary(account, device, now)
+            taught = lessons(self.ledger.records(account, device, now - LESSON_SECONDS), now)
         except sqlite3.Error:
             log.exception('Could not read the excursion ledger')
-            summary = {}
+            summary, taught = {}, {}
         total = (live.get('hardware') or {}).get('memoryTotalGB')
         return {
             'cell': cell,
@@ -1094,6 +1364,8 @@ class ExcursionData:
             'candidates': candidates,
             'active': active,
             'ledger': summary,
+            'lessons': taught,
+            'demand': demand,
         }
 
     @staticmethod
@@ -1165,6 +1437,8 @@ class ExcursionData:
             'latestLow': latest.get('low'),
             'usdPerHour': a.get('usd_per_h'),  # for predicted_ratio's cap
             'homeUsable': usable(network_point(b)),
+            'calibrated': a.get('calibrated'),  # own jobs calibrate its $/request
+            'trialLow': wide.get('trial_low'),  # the 90% low at the trial margin (uncalibrated)
         }
 
     @staticmethod
@@ -1215,6 +1489,23 @@ class ExcursionData:
                 out['network'] = False
         out['home'] = counterfactual(trailing, before, during)
         return out
+
+    def demand(self, models, now):
+        """model -> demand reading (demand_readings), cached DEMAND_CACHE_SECONDS."""
+        key = (tuple(sorted(models)), int(now // DEMAND_CACHE_SECONDS))
+        with self.lock:
+            if self.demand_cache[0] == key:
+                return copy.deepcopy(self.demand_cache[1])
+        store = getattr(self.o, 'store', None)
+        value = {}
+        if store is not None:
+            try:
+                value = demand_readings(store, list(key[0]), now)
+            except Exception:
+                log.exception('Could not read network demand for trial excursions')
+        with self.lock:
+            self.demand_cache = (key, value)
+        return copy.deepcopy(value)
 
     def dead_seconds(self, account, device, now):
         """model -> this Mac's median seconds from a switch command to the first paid job."""

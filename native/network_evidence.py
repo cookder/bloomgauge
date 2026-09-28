@@ -18,7 +18,9 @@ Intervals are 90%: Student-t over providers (df = providers - 1), and a model ne
 MIN_PROVIDERS providers at the level used. A ratio prices both models on one basis
 (basis='list': list price x the network's token mix for both). The $/request error of
 each model is calibrated from this Mac's own credits when it has OWN_MIN_JOBS jobs on
-the model, else USD_ERROR_UNCALIBRATED.
+the model, else uncalibrated_error(model). For a model this Mac has not calibrated, relative()
+also gives trial_low: the same bound with the model's error at USD_ERROR_TRIAL (ln 2), which a
+trial excursion may use (excursions.py adds the memory, demand and once-a-week gates).
 """
 
 import logging, math, sqlite3, statistics, threading, time
@@ -37,10 +39,22 @@ OWN_DAYS, OWN_MIN_JOBS, OWN_CACHE_SECONDS = 7, 50, 900
 # 90% error of $/request, in log units. 'own': this Mac's own daily $/job moves about
 # +-17%. List price x the network's token mix is calibrated per model against this Mac's
 # own credits (>= OWN_MIN_JOBS jobs in OWN_DAYS): error = |ln(own $/job / list $/request)|
-# + the daily 0.17. Without own jobs: ln 2 ("up to ~2x": Andrew's 7-day list x mix was off
-# x0.97-x1.77 per model, and x1.9-2.1 on one Sunday morning; gap-2 section 6, audit row 6).
+# + the daily 0.17. Without own jobs, per model (uncalibrated_error): Andrew's realized $/job per
+# day (>= 50 jobs) against list x the network mix (the day's network prompt/request, the poll's
+# completion/request per model; calibration-2026-09-28.md (b)). gemma and gpt-oss: 37 model-days,
+# 90th percentile |ln| 0.74, 4 beyond x2, so ln 2. Every other model: 18 model-days over 5 models
+# (Qwen3.5-9B, qwen3.5-35b, Qwen3.8, nemotron, qwen3.6-vl), median 0.57, 90th percentile 1.48,
+# 5 beyond x2 and 2 beyond x4 (own completions per job ran 30-3,293 tokens on 9B), so ln 4.
 USD_ERROR = {'own': 0.17}
 USD_ERROR_UNCALIBRATED = math.log(2)
+USD_ERROR_UNCALIBRATED_NICHE = math.log(4)
+WELL_PRICED = ('gemma', 'gpt-oss')  # model families with the ln 2 uncalibrated error
+# A trial excursion (Andrew, Sep 28: Macs that can hold large models should try them when demand
+# is higher than usual and sustained, then learn per model) prices an uncalibrated model with the
+# gemma/gpt-oss error again: a public ratio of about 2-2.5x over a calibrated home instead of ~4x.
+# The trial's own ledger row, and the own-credit calibration once this Mac has OWN_MIN_JOBS jobs on
+# the model, then replace this optimism (excursions.py).
+USD_ERROR_TRIAL = math.log(2)
 OWN_IDS_PER_QUERY = 500  # this Mac's provider ids per SQL query (SQLite variable limits)
 # One-sided 95% (two-sided 90%) Student-t quantiles for df = 1..30; beyond, a Cornish-Fisher
 # expansion around z (matches the exact quantile to 4 decimals from df 30).
@@ -60,6 +74,12 @@ T90_ONE_SIDED = (
 )  # fmt: skip
 Z80 = 1.2815516
 SELF_WINDOWS = 48  # ~4 h of this Mac's own windows
+# "Macs like yours" on the Pulse: this Mac's windows over the last BENCH_HOURS against its
+# same-cell, same-model, same-level peers. Hidden in the UI below MIN_PROVIDERS peers or once
+# the newest window is older than BENCH_FRESH_SECONDS (3 missed 5-minute windows).
+BENCH_HOURS = 2
+BENCH_FRESH_SECONDS = 900
+BENCH_CACHE_SECONDS = 60  # the snapshot asks every second; windows close every ~5 min
 NETWORK = '*'  # cell and model of the network-wide row (tokens per request, total req/h)
 # Try the exact cell first, then the same chip with at least as much memory
 # (memory barely changes req/h within a chip), dedicated boxes before mixed ones.
@@ -95,6 +115,15 @@ def t90_one_sided(df):
     return z + (z**3 + z) / (4 * df) + (5 * z**5 + 16 * z**3 + 3 * z) / (96 * df * df)
 
 
+def uncalibrated_error(model):
+    """90% $/request error (log units) of list x the network mix for a model this Mac has no
+    own jobs on: ln 2 for the gemma and gpt-oss families, ln 4 for every other model."""
+    name = model.lower() if isinstance(model, str) else ''
+    if any(family in name for family in WELL_PRICED):
+        return USD_ERROR_UNCALIBRATED
+    return USD_ERROR_UNCALIBRATED_NICHE
+
+
 def cell_of(family, tier, memory):
     """'M5 Pro|48'; base chips have no tier ('M4|32')."""
     memory = number(memory)
@@ -119,7 +148,10 @@ def split_cell(cell):
 
 
 def compact(providers):
-    """id -> (live, current model, advertised set, requests, completion tokens, cell)."""
+    """id -> (live, current model, advertised set, requests, completion tokens, cell, trust).
+
+    trust: True for Darkbloom's 'hardware' trust level, False for any other, None when the
+    field is missing."""
     snap = {}
     for p in providers:
         if not isinstance(p, dict) or not isinstance(p.get('id'), str):
@@ -134,12 +166,14 @@ def compact(providers):
             number(p.get('requests_served')),
             number(p.get('tokens_generated')),
             cell_of(p.get('chip_family'), p.get('chip_tier'), p.get('memory_gb')),
+            None if p.get('trust_level') is None else p.get('trust_level') == 'hardware',
         )
     return snap
 
 
 def diff(prev, cur, seconds, mine):
-    """(cell, model, dedicated) -> [req/h per provider, requests, tokens], and this Mac's entry."""
+    """(cell, model, dedicated) -> [req/h per provider, requests, tokens], and this Mac's entry
+    (key, req/h, requests, trusted)."""
     groups = defaultdict(lambda: [[], 0, 0])
     own = None
     for pid, c in cur.items():
@@ -152,7 +186,7 @@ def diff(prev, cur, seconds, mine):
         key = (c[5], c[1], len(c[2]) == 1)
         rate = dreq * 3600 / seconds
         if pid in mine:
-            own = (key, rate)
+            own = (key, rate, dreq, c[6] if len(c) > 6 else None)
             continue
         g = groups[key]
         g[0].append(rate)
@@ -222,6 +256,7 @@ class NetworkEvidence:
         self.hour, self.acc = None, {}
         self.self_cell = None
         self.self_windows = deque(maxlen=SELF_WINDOWS)
+        self.bench, self.bench_at = None, None
         self.last_window = None
         self.prices, self.fallback_price = {}, None
         self.own_cache, self.own_at = {}, None
@@ -346,7 +381,7 @@ class NetworkEvidence:
                 }
         mine = None
         if own is not None:
-            key, rate = own
+            key, rate, requests, trusted = own
             peers = groups.get(key, [[]])[0]
             below = sum(1 for r in peers if r < rate) + 0.5 * sum(1 for r in peers if r == rate)
             mine = {
@@ -354,8 +389,14 @@ class NetworkEvidence:
                 'model': key[1],
                 'dedicated': key[2],
                 'req_h': rate,
+                'requests': requests,
+                'trusted': trusted,
+                'start': t - seconds,
                 'peers': len(peers),
                 'percentile': below / len(peers) if peers else None,
+                # Same-level peers' rates in this window (numbers only), for the benchmark
+                # and the peer stall signal.
+                'peer_rates': tuple(sorted(peers)),
             }
         return {
             'at': t,
@@ -390,17 +431,8 @@ class NetworkEvidence:
             a['windows'] += 1
         s = window['self']
         if s:
-            self.self_windows.append(
-                (
-                    window['at'],
-                    s['cell'],
-                    s['model'],
-                    s['dedicated'],
-                    s['req_h'],
-                    s['percentile'],
-                    s['peers'],
-                )
-            )
+            self.self_windows.append({**s, 'at': window['at']})
+            self.bench_at = None  # a new window: recompute the benchmark
 
     @staticmethod
     def _row(hour, key, a):
@@ -519,15 +551,22 @@ class NetworkEvidence:
             return None, None
         return (prompt * price[0] + completion * price[1]) / 1e12, 'list'
 
+    def _calibrated(self, model, usd, used, now):
+        """True when this Mac's own credits calibrate `usd` ($/request) for `model`."""
+        if used == 'own':
+            return True
+        own = self._own(now).get(model) or {}
+        return (own.get('jobs') or 0) >= OWN_MIN_JOBS and (own.get('usd') or 0) > 0 and usd > 0
+
     def _usd_error(self, model, usd, used, now):
         """90% error of `usd` ($/request), in log units, calibrated per model when this Mac
-        has enough own jobs on it (see USD_ERROR_UNCALIBRATED)."""
+        has enough own jobs on it (else uncalibrated_error)."""
         if used == 'own':
             return USD_ERROR['own']
-        own = self._own(now).get(model) or {}
-        if (own.get('jobs') or 0) >= OWN_MIN_JOBS and (own.get('usd') or 0) > 0 and usd > 0:
+        if self._calibrated(model, usd, used, now):
+            own = self._own(now)[model]
             return abs(math.log(own['usd'] / usd)) + USD_ERROR['own']
-        return USD_ERROR_UNCALIBRATED
+        return uncalibrated_error(model)
 
     def _level(self, models, cell, rows):
         """First level at which every model has at least MIN_PROVIDERS providers."""
@@ -561,6 +600,7 @@ class NetworkEvidence:
             'req_spread': None,
             'usd_error': None,
             'requests': 0,
+            'calibrated': False,
         }
         if level is None:
             return out
@@ -572,6 +612,7 @@ class NetworkEvidence:
         out['req_spread'] = margin / p['req_h'] if p['req_h'] > 0 else None
         if usd is not None:
             e = out['usd_error'] = self._usd_error(model, usd, used, now)
+            out['calibrated'] = self._calibrated(model, usd, used, now)
             out['usd_per_h'] = p['req_h'] * usd
             out['low'] = max(0.0, p['req_h'] - margin) * usd * math.exp(-e)
             out['high'] = (p['req_h'] + margin) * usd * math.exp(e)
@@ -593,7 +634,10 @@ class NetworkEvidence:
         """$/h on `model` over $/h on `home_model` in the same cell and level, with a 90% interval.
 
         Predicted own $/h on model = own realized $/h on home_model x ratio. Both models are
-        priced on one basis: when only one has this Mac's own $/job, both use list price."""
+        priced on one basis: when only one has this Mac's own $/job, both use list price.
+        calibrated: this Mac's own credits calibrate `model`'s $/request (>= OWN_MIN_JOBS jobs in
+        OWN_DAYS); trial_low: without that, the 90% low with `model`'s $/request error at
+        USD_ERROR_TRIAL (None when calibrated)."""
         now = time.time() if now is None else now
         cell = cell or self.own_cell()
         rows = self._rows(hours, now)
@@ -619,6 +663,8 @@ class NetworkEvidence:
             'dedicated_only': a['dedicated_only'],
             'estimate': a,
             'home_estimate': b,
+            'calibrated': a['calibrated'],
+            'trial_low': None,
         }
         ua, ub = a['usd_per_h'], b['usd_per_h']
         if ua is None or not ub:
@@ -626,14 +672,49 @@ class NetworkEvidence:
         ratio = ua / ub
         if ua > 0:
 
-            def spread(e):
-                return math.hypot(e['req_spread'], e['usd_error'])
+            def spread(e, error=None):
+                return math.hypot(e['req_spread'], e['usd_error'] if error is None else error)
 
             s = math.hypot(spread(a), spread(b))
             out.update(ratio=ratio, low=ratio * math.exp(-s), high=ratio * math.exp(s))
+            if not a['calibrated']:
+                trial = math.hypot(spread(a, min(a['usd_error'], USD_ERROR_TRIAL)), spread(b))
+                out['trial_low'] = ratio * math.exp(-trial)
         else:
             out.update(ratio=0.0, low=0.0, high=a['high'] / ub)
+            if not a['calibrated']:
+                out['trial_low'] = 0.0
         return out
+
+    def dedicated_table(self, models, cell=None, hours=24, now=None, basis=None):
+        """Estimates on dedicated boxes of this exact cell only (no neighbour or mixed fallback)
+        for each of `models` with >= MIN_PROVIDERS providers there ('models'); for the others,
+        the same-chip, more-memory estimate when that level has them ('neighbours'); and the
+        time of the latest window ('updatedAt', None before the first one). Each estimate also
+        counts the clock hours behind it ('hours_seen'). The manager's starting home for a Mac
+        without its own history (manager.network_home)."""
+        now = time.time() if now is None else now
+        cell = cell or self.own_cell()
+        rows = self._rows(hours, now) if cell else []
+        out, near = {}, {}
+        for model in models if cell else ():
+            for scope, found in (('cell', out), ('neighbour', near)):
+                seen = members(rows, model, cell, scope, True)
+                p = pool(seen)
+                if p and p['providers'] >= MIN_PROVIDERS:
+                    e = self._priced(model, cell, hours, (scope, True, p), rows, basis, now)
+                    e['hours_seen'] = len({r['hour'] for r in seen if r['obs']})
+                    found[model] = e
+                    break
+        with self.lock:
+            updated = self.last_window['at'] if self.last_window else None
+        return {
+            'cell': cell,
+            'hours': hours,
+            'updatedAt': updated,
+            'models': out,
+            'neighbours': near,
+        }
 
     def table(self, cell=None, hours=2, now=None, basis=None):
         """Every model with enough evidence for this cell, best expected $/h first (for the UI)."""
@@ -658,21 +739,86 @@ class NetworkEvidence:
         }
 
     def self_percentile(self, hours=4, now=None):
-        """This Mac's req/h percentile among same-cell, same-model providers over recent windows."""
+        """This Mac's req/h percentile among same-cell, same-model providers over recent windows.
+
+        peer_req_h_median: the median of every peer rate in those windows (a typical Mac like
+        this one); peers: the median peer count per window."""
         now = time.time() if now is None else now
         with self.lock:
-            items = [x for x in self.self_windows if x[0] > now - hours * 3600]
+            items = [x for x in self.self_windows if x['at'] > now - hours * 3600]
         if not items:
             return None
-        scope = items[-1][1:4]
-        same = [x for x in items if x[1:4] == scope]
-        ranked = [x for x in same if x[5] is not None]
+        scope = tuple(items[-1][k] for k in ('cell', 'model', 'dedicated'))
+        same = [x for x in items if (x['cell'], x['model'], x['dedicated']) == scope]
+        ranked = [x for x in same if x['percentile'] is not None]
+        rates = [r for x in same for r in x.get('peer_rates', ())]
         return {
             'cell': scope[0],
             'model': scope[1],
             'dedicated': scope[2],
+            'at': same[-1]['at'],
             'windows': len(same),
-            'req_h': sum(x[4] for x in same) / len(same),
-            'percentile': statistics.median(x[5] for x in ranked) if ranked else None,
-            'peers': statistics.median(x[6] for x in ranked) if ranked else 0,
+            'req_h': sum(x['req_h'] for x in same) / len(same),
+            'percentile': statistics.median(x['percentile'] for x in ranked) if ranked else None,
+            'peers': statistics.median(x['peers'] for x in ranked) if ranked else 0,
+            'peer_req_h_median': statistics.median(rates) if rates else None,
+            'peer_p_zero': sum(1 for r in rates if r == 0) / len(rates) if rates else None,
         }
+
+    def own_windows(self, now=None, hours=1):
+        """This Mac's recent windows with its peers' figures, oldest first, for the stall
+        ladder's peer signal (stall_recovery.peer_stall). Numbers only, never ids."""
+        now = time.time() if now is None else now
+        with self.lock:
+            items = [x for x in self.self_windows if now - hours * 3600 < x['at'] <= now + 60]
+        out = []
+        for x in items:
+            rates = x.get('peer_rates', ())
+            out.append(
+                {
+                    'at': x['at'],
+                    'start': x['start'],
+                    'model': x['model'],
+                    'cell': x['cell'],
+                    'dedicated': x['dedicated'],
+                    'requests': x['requests'],
+                    'trusted': x['trusted'],
+                    'peers': len(rates),
+                    'peer_rates': rates,
+                }
+            )
+        return out
+
+    def benchmark(self, now=None, hours=BENCH_HOURS):
+        """The Pulse's "Macs like yours": this Mac's req/h and estimated $/h against the
+        median of its same-cell, same-model, same-level peers (cached BENCH_CACHE_SECONDS).
+        None until this Mac has a window; the UI hides it below MIN_PROVIDERS peers or when
+        `at` is older than BENCH_FRESH_SECONDS."""
+        now = time.time() if now is None else now
+        with self.lock:
+            if self.bench_at is not None and 0 <= now - self.bench_at < BENCH_CACHE_SECONDS:
+                return self.bench
+        s = self.self_percentile(hours, now)
+        out = None
+        if s and s['peer_req_h_median'] is not None:
+            usd, basis = self._usd_per_request(s['model'], None, self._rows(hours, now), None, now)
+            out = {
+                'at': s['at'],
+                'hours': hours,
+                'cell': s['cell'],
+                'model': s['model'],
+                'dedicated': s['dedicated'],
+                'windows': s['windows'],
+                'peers': s['peers'],
+                'percentile': s['percentile'],
+                'reqPerHour': s['req_h'],
+                'peerMedianReqPerHour': s['peer_req_h_median'],
+                'peerZeroShare': s['peer_p_zero'],
+                'usdPerRequest': usd,
+                'usdBasis': basis,
+                'usdPerHour': None if usd is None else s['req_h'] * usd,
+                'peerUsdPerHour': None if usd is None else s['peer_req_h_median'] * usd,
+            }
+        with self.lock:
+            self.bench, self.bench_at = out, now
+        return out

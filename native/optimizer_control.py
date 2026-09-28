@@ -18,8 +18,9 @@ import time
 import uuid
 import manager
 from demand_optimizer import policy as demand_policy
-from model_combinations import members, selection_key
+from model_combinations import members, same_selection, selection_key
 from model_readiness import session_key
+from provider_control import endpoint_setup_notice, multi_model_notice
 
 INTENT_SECONDS = 600
 CACHE_SECONDS = 15
@@ -185,6 +186,19 @@ class OptimizerControl:
                 'raw': {},
             }
             provider_issue = 'Set up Darkbloom on this Mac, then refresh its status.'
+        # Darkbloom set to serve 3+ models: a plain message, never a request to retry. It
+        # blocks On only while Darkbloom serves that list instead of the launch agent's model.
+        several = multi_model_notice(o.home, provider['options'])
+        if provider_issue and several:
+            provider_issue = several
+        following = bool(
+            several
+            and provider['status'] == 'running'
+            and not same_selection(provider['raw'], provider.get('model'))
+        )
+        # An On blocked on the endpoint setup shows today's setup status: nothing once it is set
+        # up, the cause and manual fix after repeated failures.
+        setup = o.endpoint_notice(provider['options'])
         with o.lock:
             state = copy.deepcopy(o.state)
             live = copy.deepcopy(o.live) or {}
@@ -206,9 +220,14 @@ class OptimizerControl:
             if pending:
                 phase = 'starting' if op['status'] == 'starting' else 'waiting'
                 detail = op['detail']
-            elif op and op.get('status') == 'blocked' and not automatic:
+            elif (
+                op
+                and op.get('status') == 'blocked'
+                and not automatic
+                and not (endpoint_setup_notice(op.get('detail')) and setup is None)
+            ):
                 phase = 'blocked'
-                detail = op['detail']
+                detail = setup if endpoint_setup_notice(op.get('detail')) else op['detail']
                 blocker = op.get('blocker')
             elif automatic:
                 phase = (
@@ -260,6 +279,8 @@ class OptimizerControl:
                     )
                 elif provider_issue:
                     problem = (provider_issue, 'provider-setup', 'controller')
+                elif following:
+                    problem = (several, 'multi-model', 'controller')
                 elif provider['status'] not in ('running', 'stopped'):
                     problem = (
                         'Waiting for a fresh provider status. Refresh before turning On.',
@@ -311,6 +332,8 @@ class OptimizerControl:
                     phase = 'waiting' if code == 'operation' else 'blocked'
                     blocker = {'code': code, 'action': action}
                     can_enable = False
+                elif several and phase == 'manual':
+                    detail = several  # its next restart serves the list; say so
             base_version = o.control_version()
             context = {
                 'baseVersion': base_version,
@@ -381,8 +404,17 @@ class OptimizerControl:
 
     def release_pin(self, data):
         """Manager: release the user's pin so the manager chooses home again. Same receipts and
-        control-version check as On/Manual; the return home is a normal, confirmed move."""
-        if set(data) != {'action', 'requestId', 'expectedControl'}:
+        control-version check as On/Manual; the return home is a normal, confirmed move.
+        'keep-current' (with the model) cancels a planned home change by pinning that model."""
+        keep = data.get('action') == 'keep-current'
+        if keep:
+            if set(data) != {'action', 'requestId', 'expectedControl', 'model'} or not isinstance(
+                data.get('model'), str
+            ):
+                raise ValueError(
+                    'Keeping a model takes the model, a request ID and the control version.'
+                )
+        elif set(data) != {'action', 'requestId', 'expectedControl'}:
             raise ValueError('Releasing a pin takes only a request ID and the control version.')
         try:
             request_id = str(uuid.UUID(data.get('requestId', '')))
@@ -400,7 +432,10 @@ class OptimizerControl:
             if not self.context or data.get('expectedControl') != view['controlVersion']:
                 raise ValueError('The control status changed. Refresh it before trying again.')
             o.update_guard.require_available()
-            o.manager.release_pin(time.time())
+            if keep:
+                o.manager.keep_current(data['model'], time.time())
+            else:
+                o.manager.release_pin(time.time())
             before = copy.deepcopy(self.requests)
             self.requests = (self.requests + [{'id': request_id, 'signature': signature}])[-32:]
             try:
@@ -412,12 +447,19 @@ class OptimizerControl:
                 self.view['lastRequestId'] = request_id
                 self.view['controlVersion'] = digest([o.control_version(), request_id])
                 if isinstance(self.view.get('manager'), dict):
-                    self.view['manager'] = {**self.view['manager'], 'pinned': False}
+                    self.view['manager'] = {
+                        **self.view['manager'],
+                        'pinned': keep,
+                        'homeNotice': None,
+                        **({'home': data['model'], 'homeSource': 'manual'} if keep else {}),
+                    }
         self.wake.set()
         return self.snapshot()
 
     def action(self, data, source='mac'):
         """Only validate cached state and persist intent; never inspect or dispatch."""
+        if isinstance(data, dict) and data.get('action') == 'keep-current':
+            return self.release_pin(data)  # same receipts and version check
         allowed = {
             'action',
             'enabled',

@@ -16,6 +16,7 @@ from optimizer import (
     graceful_drain,
 )
 from optimizer_store import OptimizerStore, device_id
+from demand_optimizer import policy
 
 AT = 1788739200  # A fixed, minute-aligned instant.
 
@@ -392,7 +393,7 @@ class ControllerTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_phone_can_start_and_pause_test_without_immediate_provider_restart(self):
-        self.o.state['mode'] = 'observe'
+        self.o.state.update(mode='observe', demandPolicy={**policy(), 'managerStrategy': 0})
         self.o.snapshot.return_value.update(controlError=None, identityVerified=True)
         payload = {
             'action': 'start',
@@ -468,7 +469,8 @@ class ControllerTests(unittest.TestCase):
         self.o.switch.assert_called_once()
 
     def test_start_validates_candidates_and_saves_plan(self):
-        self.o.state['mode'] = 'observe'
+        # Seven-day tests are a legacy strategy (test_start_refuses_legacy_tests_under_the_manager).
+        self.o.state.update(mode='observe', demandPolicy={**policy(), 'managerStrategy': 0})
         self.o.snapshot.return_value.update(controlError=None, identityVerified=True)
         for payload in [
             dict(mode='week', models=['a', 'bad']),
@@ -769,6 +771,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.o.store.sample.call_count, 1)
 
     def test_interrupted_switch_does_not_resume_automatically(self):
+        # Legacy strategy: under the Manager an interrupted switch is recovered (test_manager).
+        self.o.state['demandPolicy'] = {**policy(), 'managerStrategy': 0}
         self.o.state['pending'] = {'model': 'b'}
         self.o.save()
         other = Optimizer(self.h, self.net, self.tmp.name, threading.Event(), Mock())

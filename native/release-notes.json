@@ -1,23 +1,27 @@
 {
-  "id": "bloom-1.36.60-beta41",
-  "version": "1.36.60",
-  "title": "The optimizer is now a manager",
+  "id": "bloom-1.36.61-beta42",
+  "version": "1.36.61",
+  "title": "The manager keeps working on more Macs, and knows how Macs like yours are doing",
   "highlights": [
     {
-      "title": "The optimizer is now a manager",
-      "detail": "It keeps one home model running instead of trying other models to see what pays: the one you pin, or the one that has paid best on this Mac over the last 30 days. On our test Mac the old approach earned about 13–16% less than just staying on Gemma, mostly from time with no model ready. If a switch fails or no model is ready for about 10 minutes, it brings the home model back instead of switching itself off. It moves only when at least 5 Macs like yours clearly earn more on another model for 2 hours, at most 3 times a day, and stops if those moves don't pay off."
+      "title": "Fixes that kept the manager from running",
+      "detail": "Setting up pre-warming no longer loops on \"Provider settings changed\". Bloomkeeper now accepts the launch settings Darkbloom writes for itself. The manager stays on across app and Darkbloom updates, and when it does turn off it says why. It restarts a provider that Darkbloom left drained, works while Darkbloom preloads at startup, handles a new device key, and turns on with a stopped pair. If Darkbloom is set to serve 3 or more models, Bloomkeeper says so and tells you how to pick one. Also works with Darkbloom 0.9.11."
     },
     {
-      "title": "Fewer false alarms",
-      "detail": "\"Run status unavailable\" no longer shows by mistake or sends problem reports on its own. Reputation shows again with Darkbloom 0.9.10, and while Darkbloom preloads at startup it shows as starting, not stopped."
+      "title": "Macs like yours",
+      "detail": "The Pulse shows how this Mac's requests compare with Macs of the same chip and memory on the same model. If they're getting work and this Mac isn't, Bloomkeeper treats it as a stall and recovers sooner."
     },
     {
-      "title": "Ratings from your own Mac",
-      "detail": "Pace and day ratings are judged against this Mac's own history, with no preset earnings goal, and demand is compared with what's usual for the time of day. Statistics keep counting when your Mac offers several models, even if Darkbloom's provider list leaves out a model that isn't in its catalog."
+      "title": "\"It's not you\"",
+      "detail": "When Darkbloom has a network-wide problem, a banner says so, and Bloomkeeper holds off restarts and automatic problem reports until it's over."
     },
     {
-      "title": "Hourly bars, light mode and My Macs",
-      "detail": "The Overview shows hourly $/hour bars beside the Pulse meter, with an estimate for the current hour. Choose System, Light or Dark under More → Appearance. My Macs lists every model, the pace of each, and whether the Manager is on. A one-time card in the Optimizer tab explains what changed."
+      "title": "Smarter excursions",
+      "detail": "Macs that can hold a larger model try it when public data shows it clearly paying more and its demand is high for the time of day, at most once a week per model until Bloomkeeper has its own pay data for it. A model that pays less than home needs stronger evidence for the next two weeks. New Macs start on the model that pays best on Macs like them, with a notice and a one-tap Keep."
+    },
+    {
+      "title": "Network news",
+      "detail": "The Optimizer tab lists models joining or leaving the network and big changes in how many Macs have them loaded, and flags a model your Mac still offers after the network dropped it."
     }
   ]
 }

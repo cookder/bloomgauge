@@ -23,7 +23,8 @@ import urllib.error
 import urllib.request
 from model_combinations import members
 from prewarm import prewarm, WarmupError
-from stall_recovery import assess, EPISODE_LIMIT_SECONDS, BASELINE_SECONDS
+from stall_recovery import assess, EPISODE_LIMIT_SECONDS, BASELINE_SECONDS, PEER_NOTE
+from network_health import stall_wait
 import manager
 
 KEYCHAIN_ACCOUNT = 'bloom'
@@ -207,9 +208,37 @@ class StallControl:
         switches = [e['at'] for e in events if e['kind'] == 'switching']
         return minutes, network, attempts, switches
 
+    def peer_windows(self, now):
+        """This Mac's recent public-counter windows with its peers' rates (network_evidence),
+        or None: no evidence yet, or a network-wide outage (network_health), when Macs like
+        this one are no guide and the peer trigger must stay quiet."""
+        health = getattr(self.o, 'network_health', None)
+        if health is not None:
+            try:
+                if health.outage(now):
+                    return None
+            except Exception:
+                pass  # no outage information
+        evidence = getattr(self.o, 'network_evidence', None)
+        if evidence is None:
+            return None
+        try:
+            windows = evidence.own_windows(now)
+        except Exception:
+            return None
+        return windows if isinstance(windows, list) else None
+
     def evaluate(self, account, device, raw, now):
         minutes, network, attempts, switches = self.observations(account, device, now)
-        return assess(minutes, network, attempts, switches, raw.get('started_at'), now)
+        return assess(
+            minutes,
+            network,
+            attempts,
+            switches,
+            raw.get('started_at'),
+            now,
+            peers=self.peer_windows(now),
+        )
 
     def tick(self, now, settings, live, raw, current, options, environment):
         """Take the next step if one is due. Returns True when a restart was dispatched."""
@@ -228,15 +257,19 @@ class StallControl:
                 self.status, self.status_at = {'status': 'inactive'}, now
             return False
         result = self.evaluate(account, device, raw, now)
+        # A Darkbloom-wide outage: no restart or escape, wait (network_health.py).
+        result = stall_wait(result, getattr(self.o, 'network_health', None), now)
         if result['step'] == 'escape' and manager.active(settings):
             # The manager never escapes to another model. After a nudge or restart the
             # ladder stops (hold); when demand fell as well there is nothing to recover.
             taken = result.get('taken') or []
+            note = PEER_NOTE + ' ' if result.get('trigger') == 'peers' else ''
             result = (
                 {
                     **result,
                     'step': 'hold',
-                    'reason': 'No work after '
+                    'reason': note
+                    + 'No work after '
                     + ' and '.join(taken)
                     + '. Holding the home model; Bloomkeeper has stopped trying. Check Darkbloom (darkbloom doctor, Slack) for a routing problem.',
                 }
@@ -311,6 +344,7 @@ class StallControl:
     def confirm_restart(self, account, device, raw, target, rules, now):
         """Inside the switch preflight: the stall must still call for this restart."""
         result = self.evaluate(account, device, raw, now)
+        result = stall_wait(result, getattr(self.o, 'network_health', None), now)
         if result['step'] != 'restart' or result['model'] not in members(target):
             return None
         self.record(account, device, now, 'restart', result)
@@ -330,6 +364,8 @@ class StallControl:
                     'demandHeld',
                     'episodeStart',
                     'taken',
+                    'trigger',
+                    'peers',
                 )
             },
         }

@@ -24,17 +24,25 @@ from demand_targets import high_earnings, fresh_paid
 from demand_optimizer import (
     DemandOptimizer,
     policy as demand_policy,
-    upgraded_policy,
+    repaired_policy,
     POLICY_REVISION,
 )
 import data_gathering
 import manager
+import network_health
 import logging
 import bloom_log  # noqa: F401  (quiet until the app configures logging)
 
 log = logging.getLogger('bloom.optimizer')
 from update_guard import UpdateGuard
-from provider_control import ProviderControl, endpoint_issue
+from provider_control import (
+    DRAINED,
+    ENDPOINT_SETUP,
+    ProviderControl,
+    endpoint_fix,
+    endpoint_issue,
+    multi_model_notice,
+)
 from manual_selection import ManualSelection
 from optimizer_control import OptimizerControl
 from stall_control import StallControl
@@ -247,8 +255,11 @@ def unknown_flag(token):
     )
 
 
-def launch_options(plist, allow_auto=False):
+def launch_options(plist, allow_auto=False, allow_many=False):
     """Retain the user's endpoint, idle policy, config and coordinator. No shell.
+
+    `allow_many`: three or more --model flags (the start picker's picks) read as no selection
+    (None) instead of an error, for the model controls that replace them with one model.
 
     Flags Bloomkeeper does not know (a newer Darkbloom's) are kept verbatim and in order, so a
     restart passes them on unchanged. `--flag=value` is one token. A bare unknown `--flag`
@@ -293,7 +304,8 @@ def launch_options(plist, allow_auto=False):
             continue
         raise ValueError('This provider uses settings that automatic switching does not support.')
     key = selection_key(selected)
-    if not key and not (allow_auto and not selected):
+    many = allow_many and len(selected) >= 3 and len(set(selected)) == len(selected)
+    if not key and not (allow_auto and not selected) and not many:
         raise ValueError(
             'Select one or two distinct serving models in Darkbloom before enabling experiments.'
         )
@@ -399,16 +411,48 @@ class Optimizer:
         self.state['requestId'] = None
         # A restart cannot turn an old confirmation into a fresh opportunity.
         self.state.pop('demandProposal', None)
+        # A policy saved by another build (an app update or downgrade) is repaired, not a reason
+        # to turn the manager off. Only an unreadable one, or repaired rules under the legacy
+        # strategy (they'd switch on rules the user didn't pick), turn automatic control off.
+        was_on = self.state.get('mode', 'observe') != 'observe'
+        notice = off_reason = None
         try:
-            self.state['demandPolicy'] = upgraded_policy(
+            rules, repaired = repaired_policy(
                 self.state.get('demandPolicy'), self.state.get('demandPolicyRevision', 0)
             )
         except ValueError:
+            rules, repaired = demand_policy(), None
+            off_reason = 'Bloomkeeper could not read its saved optimizer settings when it reopened, so automatic control is off. Your model keeps serving; review the plan and turn it on again.'
+        self.state['demandPolicy'] = rules
+        if repaired and was_on and not manager.enabled(rules):
+            off_reason = 'Some saved optimizer settings no longer fit this version of Bloomkeeper and were moved to the nearest allowed values, so automatic switching is off. Review them, then turn it on again.'
+        elif repaired and was_on:
+            notice = 'Some saved optimizer settings no longer fit this version of Bloomkeeper and were moved to the nearest allowed values. Automatic control stays on.'
+        if off_reason and was_on:
             self.state['mode'] = 'observe'
-            self.state['demandPolicy'] = demand_policy()
         self.state['demandPolicyRevision'] = POLICY_REVISION
+        if manager.enabled(rules) and self.state.get('mode') in ('week', 'optimize', 'combo'):
+            # Seven-day, historical and pair tests are legacy strategies, hidden under the
+            # Manager; a run saved by a pre-manager build (its policy now upgrades to the
+            # Manager) would still pause on any failed switch. The Manager takes it over.
+            self.cancel_combo('The Manager took over automatic control.')
+            self.state['mode'] = 'demand'
+            notice = 'Bloomkeeper now runs automatic control with the Manager, which replaces seven-day tests, historical optimization and pair tests. Automatic control stays on.'
+        if (off_reason and was_on or notice) and self.state.get('account'):
+            self.store.event(
+                self.state['account'],
+                self.state.get('device', ''),
+                time.time(),
+                'manager-notice' if notice and not off_reason else 'paused',
+                self.state.get('expectedModel'),
+                off_reason or notice,
+            )
         self.status = 'observing'
-        self.detail = 'Recording network demand and this Mac’s model performance.'
+        self.detail = (
+            off_reason
+            if off_reason and was_on
+            else 'Recording network demand and this Mac’s model performance.'
+        )
         interrupted = self.state.pop('pending', None)
         if interrupted and manager.active(self.state):
             # Automatic control stays on: the manager checks what is serving and restores.
@@ -484,6 +528,8 @@ class Optimizer:
         self.automatic_control = OptimizerControl(self)
         self.stall = StallControl(self)
         self.network_evidence = None  # collector.NetworkEvidence: public data for excursions
+        self.network_health = None  # collector.NetworkHealth: Darkbloom-wide outages
+        self.outage_logged = {}  # (account, device) -> outage last written to the activity log
         self.manager = ManagerControl(self)
         self.live_projection = OptimizerLive(self)
 
@@ -1413,7 +1459,7 @@ class Optimizer:
             idle_since = self.idle_since
         try:
             _, options, _ = self.read_options()
-            error = endpoint_issue(options)
+            error = self.endpoint_notice(options)
         except Exception as e:
             error = (
                 str(e)
@@ -1654,7 +1700,7 @@ class Optimizer:
             now = time.time()
             live = copy.deepcopy(self.live) or {}
             if endpoint_issue(options):
-                raise ValueError(endpoint_issue(options))
+                raise ValueError(self.endpoint_notice(options))
             if (
                 expected != session_key(raw)
                 or expected != session_key(self.raw)
@@ -1946,7 +1992,15 @@ class Optimizer:
             raise ValueError(
                 'Review strategy and model selection to start a plan. Recorded history is retained.'
             )
-        if self.service_disabled() is not False or not live.get('provider', {}).get('online'):
+        managed = manager.enabled(saved.get('demandPolicy'))
+        # Running but drained, its launch agent still disabled: the manager's watchdog restarts
+        # it (manager.restore), so the manager may turn on; Manual says what happened.
+        drained = drained_idle(raw) and matching_process(process_identity(raw)) is True
+        if drained and not managed:
+            raise ValueError(DRAINED)
+        if (
+            self.service_disabled() is not False and not (managed and drained)
+        ) or not live.get('provider', {}).get('online'):
             raise ValueError(
                 'Open the manual model controls in Optimizer → Overview to start Darkbloom, then wait for Warm and ready before resuming.'
             )
@@ -1965,7 +2019,6 @@ class Optimizer:
                 'The saved plan, provider or account changed. Review it before resuming.'
             )
         # The manager turns on with a dark or cold model: its watchdog restores home.
-        managed = manager.enabled(saved.get('demandPolicy'))
         reason = self.wait_reason(live, now, serving=not managed)
         if reason:
             raise ValueError(reason)
@@ -2197,6 +2250,15 @@ class Optimizer:
             self.state['models'] = list(models)
             self.state['demandPolicy'] = rules
             self.state.pop('demandProposal', None)
+            ended = mode == 'observe' and finite(self.state.get('startedAt')) and (
+                self.state.get('endsAt') is not None
+            )
+            if ended:
+                # A finished or paused seven-day test: On blocks on it ("needs a new plan.
+                # Review its settings"), and these reviewed settings are that new plan. Clearing
+                # the old dates makes the next On a first On with them; without it On asked
+                # for the same review forever.
+                self.state.update(startedAt=None, endsAt=None)
             manager.policy_saved(self.state, previous, rules, now)
             try:
                 self.save()
@@ -2349,6 +2411,11 @@ class Optimizer:
                 'Select two to ' + str(maximum) + ' distinct, locally available models.'
             )
         rules = demand_policy(data.get('demandPolicy', self.state.get('demandPolicy')))
+        if mode != 'demand' and manager.enabled(rules):
+            # Legacy strategies, hidden under the Manager: they'd pause on any failed switch.
+            raise ValueError(
+                'Seven-day tests and historical optimization need the legacy strategy. The Manager replaces them; choose the legacy strategy first.'
+            )
         if mode == 'demand' and snapshot.get('demandAuto', {}).get('controlError'):
             raise ValueError(snapshot['demandAuto']['controlError'])
         allowed = {m['id'] for m in snapshot['models'] if m['available']}
@@ -2473,7 +2540,7 @@ class Optimizer:
             if endpoint_issue(options) and not (
                 manual and self.manual_selection.endpoint_setup_allowed(options)
             ):
-                return endpoint_issue(options)
+                return self.endpoint_notice(options)
         except (OSError, ValueError, KeyError, TypeError, plistlib.InvalidFileException):
             return 'Provider launch settings need review in the manual model controls in Optimizer → Overview on the Mac.'
         return self.environment_reason(live, now, manual, move, target)
@@ -2616,6 +2683,67 @@ class Optimizer:
         finally:
             self.record_decision(now)
 
+    def log_network_outage(self, account, device, now):
+        """One activity-log line when a Darkbloom outage that concerns this Mac starts, and
+        one when it ends (network_health.py; the stall ladder waits it out)."""
+        health = self.network_health
+        if health is None:
+            return
+        try:
+            outage = health.outage(now)
+            signal = health.signal(now) if outage else None
+        except Exception:
+            log.exception('Network health unavailable to the activity log')
+            return
+        logged = self.outage_logged.get((account, device))
+        key = outage and (outage['scope'], outage['key'], outage['since'])
+        if key and key != (logged or {}).get('key'):
+            self.store.event(
+                account,
+                device,
+                now,
+                'network-outage',
+                None,
+                network_health.describe(outage, signal)
+                + (
+                    ' Bloomkeeper won’t restart the provider for it; moving to another model is still allowed.'
+                    if outage['scope'] == 'model'
+                    else ' Nothing to fix on this Mac: Bloomkeeper won’t restart the provider or switch models because of it.'
+                ),
+            )
+            self.outage_logged[(account, device)] = {'key': key, 'since': outage['since']}
+        elif not outage and logged:
+            # "Is over" only on a real recovery. A problem that only went quiet (no fresh
+            # readings on it, or its model left the list) or became the new normal says so;
+            # one still open that no longer concerns this Mac waits for its end.
+            scope, key, since = logged['key']
+            try:
+                status = getattr(health, 'status_of', lambda *a: 'recovered')(scope, key, since)
+            except Exception:
+                log.exception('Network health unavailable to the activity log')
+                return
+            if status == 'open':
+                return
+            began = network_health.clock_time(logged['since'])
+            if status == 'recovered':
+                kind, text = 'network-recovered', (
+                    'The Darkbloom network problem that began at %s is over.' % began
+                )
+            elif status == 'expired':
+                kind, text = 'network-untracked', (
+                    'The Darkbloom network problem that began at %s has lasted %d hours: '
+                    'Bloomkeeper takes it as the new normal and no longer holds restarts or '
+                    'model switches for it.' % (began, network_health.MAX_SECONDS // 3600)
+                )
+            else:
+                kind, text = 'network-untracked', (
+                    'Bloomkeeper stopped tracking the Darkbloom network problem that began at %s: '
+                    'there are no fresh readings on it, so it may not be over. Bloomkeeper no '
+                    'longer holds restarts or model switches for it.' % began
+                )
+            self.store.event(account, device, now, kind, None, text)
+            del self.outage_logged[(account, device)]
+
     def restore_drained(self, settings, live, raw, now):
         """Restart a provider that a failed start left drained, even while paused.
 
@@ -2716,6 +2844,8 @@ class Optimizer:
         if self.restore_drained(settings, live, raw, now):
             return
         if live.get('account') and live.get('device'):
+            self.log_network_outage(live['account'], live['device'], now)
+        if live.get('account') and live.get('device'):
             self.demand_auto.trials.review(
                 live['account'],
                 live['device'],
@@ -2738,9 +2868,32 @@ class Optimizer:
                 self.detail = 'Waiting for the first complete account and provider readings. The saved test schedule is preserved.'
             return
         if account != settings.get('account') or device != settings.get('device'):
-            return self.pause_internal(
-                'The account or device identity changed. Automatic switching is paused.'
+            if account == settings.get('account') and manager.active(settings):
+                # Same account, new Darkbloom device key: hold, re-verify, then continue.
+                return self.manager.device_changed(now, settings, account, device)
+            if account == settings.get('account') and settings['mode'] == 'observe':
+                # Manual, watching a pick that restarted Darkbloom with a new device key: there
+                # is nothing to pause (it was paused every tick, with an event each time). Keep
+                # the new key once the roster matches it, as the manager does.
+                with self.lock:
+                    if (
+                        self.device_identity_ok
+                        and self.identity_device == device
+                        and 0 <= now - self.identity_at < 180
+                        and self.state.get('device') == settings.get('device')
+                    ):
+                        self.state['device'] = device
+                        self.save()
+                return
+            detail = (
+                'This Mac is signed in to a different Darkbloom account, so automatic control is off. Turn it on again to run it for this account.'
+                if account != settings.get('account')
+                else 'The account or device identity changed. Automatic switching is paused.'
             )
+            self.pause_internal(detail)
+            # The event is what the Off card shows as the reason, after a restart too.
+            self.store.event(account, device, now, 'paused', settings.get('expectedModel'), detail)
+            return
         managed = manager.active(settings)
         try:
             current, current_options, current_environment = self.read_options()
@@ -3133,7 +3286,9 @@ class Optimizer:
             self.manager.remember(decision, now)
         if not self.tracking(raw, now)['counting'] and not home_return:
             target = None
-            decision['reason'] = 'Waiting for verified warm readiness before following demand.'
+            decision['reason'] = (
+                managed and self.manager.resting_note(raw, current, options, now)
+            ) or 'Waiting for verified warm readiness before following demand.'
         with self.lock:
             if self.update_guard.active():
                 return
@@ -3970,7 +4125,7 @@ class Optimizer:
             [
                 str(self.binary),
                 'start',
-                *options,
+                *manager.start_options(self.home, options),
                 *[flag for model in models for flag in ('--model', model)],
             ],
             stdin=subprocess.DEVNULL,
@@ -4080,6 +4235,68 @@ class Optimizer:
             *reading,
         )
 
+    def endpoint_notice(self, options):
+        """endpoint_issue, except that once ENDPOINT_FAILURES setups in a row failed for the same
+        reason, the request to set it up again gives way to that reason and the manual fix."""
+        issue = endpoint_issue(options)
+        if issue != ENDPOINT_SETUP:
+            return issue
+        with self.lock:
+            failure = copy.deepcopy(self.state.get('endpointSetupFailure')) or {}
+        fix = endpoint_fix(failure)
+        return failure['cause'] + ' ' + fix if fix else issue
+
+    def setup_result(self, model, success, cause, detail):
+        """After an attempt that was to set up the local endpoint. A failure counts while the
+        launch agent still lacks the endpoint; the same cause twice in a row adds the manual fix
+        to `detail`. A success, or an endpoint that is now set up, clears the count."""
+        try:
+            missing = endpoint_issue(self.read_options(plist_only=True)[1]) == ENDPOINT_SETUP
+        except Exception:
+            missing = True
+        with self.lock:
+            last = self.state.get('endpointSetupFailure') or {}
+            if success or not missing:
+                self.state.pop('endpointSetupFailure', None)
+                return detail
+            if not cause:
+                return detail
+            same = last.get('cause') == cause and last.get('model') == model
+            failure = {
+                'model': model,
+                'cause': cause,
+                'count': (last.get('count', 0) if same else 0) + 1,
+                'at': time.time(),
+            }
+            self.state['endpointSetupFailure'] = failure
+        fix = endpoint_fix(failure)
+        return detail + ' ' + fix if fix else detail
+
+    def started_launch(self, requested, environment):
+        """Our `darkbloom start` just returned: the launch it saved, as the baseline that
+        verification then watches for outside changes.
+
+        Darkbloom doesn't save the argv it was given. It rebuilds the launch agent from its
+        parsed options (0.9.10 LaunchAgent.serviceProgramArguments): `--local-endpoint` always
+        gains `--port` and `--bind` (8000 and 127.0.0.1 by default), `--coordinator-url` is
+        always written, `--idle-timeout` goes to provider.toml instead and the environment keeps
+        only its passthrough variables. A digest of our argv never matched that, so every
+        endpoint setup read as 'Provider settings changed' and was asked for again. What it saved
+        must still carry the `--local-endpoint` Bloomkeeper passed; verify_started checks the
+        selection on every reading. `start` holds Darkbloom's provider-lifecycle lease until the
+        agent is written, so another `start` can't write in between. An unreadable agent keeps
+        the requested launch as the baseline."""
+        for attempt in range(3):
+            try:
+                _, options, saved = self.read_options()
+            except (OSError, ValueError, TypeError, KeyError, plistlib.InvalidFileException):
+                if attempt == 2 or self.stop.wait(1):
+                    return launch_signature(requested, environment)
+                continue
+            if '--local-endpoint' in requested and '--local-endpoint' not in options:
+                raise ExternalChange('Provider settings changed during the switch.')
+            return launch_signature(options, saved)
+
     def verify_started(
         self,
         target,
@@ -4106,6 +4323,8 @@ class Optimizer:
         self.verification_memory = None
         with self.lock:
             expected_device = device_id(self.raw)
+            account = (self.live or {}).get('account')
+        rekeyed = False
         while not self.stop.is_set() and time.time() < deadline:
             try:
                 selection, options, environment = self.read_options()
@@ -4119,8 +4338,35 @@ class Optimizer:
                 ):
                     raise ExternalChange('Provider settings changed during the switch.')
                 d = self.read_state()
-                if device_id(d) != expected_device:
-                    raise ExternalChange('Provider identity changed during the switch.')
+                device = device_id(d)
+                if device != expected_device:
+                    # Darkbloom makes a new attestation key at a start when it can't use its
+                    # keychain key, so the session our own command started may carry a new
+                    # device id. Accept that once, for the same account, after the provider
+                    # roster matches it (refresh; the manager then adopts it: device_changed).
+                    # Any other identity change fails the switch.
+                    if (
+                        rekeyed
+                        or not device
+                        or d.get('started_at') == previous_session
+                        or (self.live or {}).get('account') != account
+                    ):
+                        raise ExternalChange('Provider identity changed during the switch.')
+                    with self.lock:
+                        matched = bool(
+                            self.device_identity_ok
+                            and self.identity_device == device
+                            and 0 <= time.time() - self.identity_at < 180
+                            and self.identity_session == (d.get('started_at'), d.get('pid'))
+                        )
+                        if not matched:
+                            self.next_identity = min(self.next_identity, time.time())
+                            self.status = 'warming'
+                            self.detail = 'Darkbloom started with a new device key. Waiting for the provider roster to match it to this Mac.'
+                    if not matched:
+                        self.stop.wait(2)
+                        continue
+                    expected_device, rekeyed = device, True
                 if (
                     -5 < time.time() - d.get('written_at', 0) < 15
                     and d.get('started_at') != previous_session
@@ -4320,6 +4566,9 @@ class Optimizer:
         known_working = False
         failure_stage = 'preflight'
         failure_record = None
+        written = None  # the launch Darkbloom saved for our start (started_launch)
+        cause = None  # why it failed, for repeated endpoint-setup failures
+        external = False
         with self.lock:
             request_kind = self.state.get('requestedKind') or ''
             request_id = self.state.get('requestId')
@@ -4360,6 +4609,10 @@ class Optimizer:
                 and (self.state.get('selectionRequest') or {}).get('id') == request_id
                 and request_id
                 and request_kind == 'manual'
+            )
+            setup_requested = bool(
+                selected_operation
+                and (self.state.get('selectionRequest') or {}).get('setupEndpoint') is True
             )
         with self.command_lock:
             try:
@@ -4746,11 +4999,12 @@ class Optimizer:
                 self.command(target, options, environment)
                 command_returned = time.time()  # after a >= 0.9.9 drain: the load starts
                 failure_stage = 'verify'
+                written = self.started_launch(options, environment)
                 success = self.verify_started(
                     target,
                     raw.get('started_at'),
                     360,
-                    launch_signature(options, environment),
+                    written,
                     # The manager bounds a pre-warm memory wait, then restores (manager.py).
                     **({'memory_seconds': manager.MEMORY_WAIT_SECONDS} if managed else {}),
                     **({'move': move} if move else {}),
@@ -4793,12 +5047,14 @@ class Optimizer:
                     self.state.pop('demandProposal', None)
                 detail = str(error)
             except ExternalChange as error:
+                external = True
                 with self.lock:
                     # The result text follows the state now: the user may have turned it off.
                     managed = managed and manager.active(self.state)
                 taken = (
                     self.manager.not_taken(target) if attempted and (managed or picked) else None
                 )
+                cause = taken or str(error).strip() or None
                 if taken:
                     # Bloomkeeper's own command did not take: a failed switch, never a user change.
                     failure_record = {
@@ -4844,6 +5100,7 @@ class Optimizer:
                     if code == 'startup-command'
                     else 'The switch could not be verified from current provider readings.'
                 )
+                cause = primary
                 failure_record = {
                     'model': target,
                     'stage': failure_stage,
@@ -4856,7 +5113,7 @@ class Optimizer:
                     'warmup-capacity',
                     'warmup-transport',
                 )
-                expected_launch = launch_signature(options, environment)
+                expected_launch = written or launch_signature(options, environment)
                 if (
                     attempted
                     and late_allowed
@@ -4876,7 +5133,6 @@ class Optimizer:
                     and self.service_disabled() is False
                 ):
                     try:
-                        expected_launch = launch_signature(options, environment)
                         before = self.recovery_ready(previous, target, device, 60, expected_launch)
                         if late_allowed and self.target_serving_after_wait(
                             target, raw.get('started_at'), device, expected_launch
@@ -4962,6 +5218,7 @@ class Optimizer:
                                 )
                                 self.manager.commanded(previous, time.time())
                                 self.command(previous, options, environment)
+                                expected_launch = self.started_launch(options, environment)
                                 recovered = self.verify_started(
                                     previous,
                                     before.get('started_at'),
@@ -4981,13 +5238,15 @@ class Optimizer:
                             + ' is warm and ready. Serving output verified while waiting; no recovery restart was needed.'
                         )
                     elif recovered:
+                        # A pick made under the manager resumes it (manager.resume_manual), so
+                        # its failure says automatic control continues, as the manager's own do.
                         detail = (
                             primary
                             + ' Restored and pre-warmed '
                             + selection_label(previous)
                             + (
                                 '. Automatic control continues.'
-                                if managed
+                                if managed or picked
                                 else '. Automatic switching is paused.'
                             )
                         )
@@ -5007,7 +5266,7 @@ class Optimizer:
                             + recovery_detail
                             + (
                                 ' The manager checks whether it becomes ready, then restores the previous model.'
-                                if managed
+                                if managed or picked
                                 else ' Automatic switching is paused. Review Help & feedback on the Mac.'
                             )
                         )
@@ -5015,16 +5274,21 @@ class Optimizer:
                     failure_record.update(recovery='blocked', recoveryCode='provider-changed')
                     detail = primary + (
                         ' The provider stopped or its launch state is unknown. Automatic control continues; nothing is restarted while it is stopped.'
-                        if managed
+                        if managed or picked
                         else ' The provider stopped or its launch state is unknown. Automatic switching is paused; check Darkbloom on the Mac.'
                     )
                 else:
                     detail = (
                         'The provider became busy or its settings changed before the switch. No restart was sent; the manager retries later.'
-                        if managed
+                        if managed or picked
                         else 'The provider became busy or its settings changed before the switch. No restart was sent; automatic switching is paused.'
                     )
             finally:
+                if setup_requested and not deferred:
+                    detail = self.setup_result(target, success, cause, detail)
+                if not success and not deferred and (attempted or external):
+                    # Darkbloom may follow provider.toml's list, or restore it after a failed start.
+                    detail = multi_model_notice(self.home, options) or detail
                 end = time.time()
                 duration = max(0, end - command_started) if attempted else 0
                 with self.lock:

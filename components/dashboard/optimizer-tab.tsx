@@ -40,6 +40,8 @@ import {
 } from './demand-auto';
 import { OptimizerPlan } from './optimizer-plan';
 import { NetworkEvidencePanel } from './manager-status';
+import { NetworkNews } from './network-news';
+import { modelsNotInCatalog } from '@/lib/network-news';
 import { WhatsChanged } from './whats-changed';
 import {
   excursionsSetting,
@@ -833,8 +835,9 @@ export function OptimizerTab({
         (id): id is string => typeof id === 'string' && id.length > 0,
       )
     : [];
-  const offeredNotInCatalog = (data?.reporting?.models ?? []).filter(
-    (id) => !(data?.models ?? []).some((m) => m.id === id),
+  const offeredNotInCatalog = modelsNotInCatalog(
+    data?.reporting?.models,
+    data?.models,
   );
   const planModels = [
     ...(data?.models ?? []),
@@ -1545,6 +1548,14 @@ export function OptimizerTab({
             names={Object.fromEntries(data.models.map((m) => [m.id, m.name]))}
           />
         )}
+        <NetworkNews
+          offeredNotInCatalog={offeredNotInCatalog}
+          names={
+            data
+              ? Object.fromEntries(data.models.map((m) => [m.id, m.name]))
+              : undefined
+          }
+        />
         <details
           className="quiet-disclosure model-evidence-disclosure"
           onToggle={(event) => setEvidenceOpen(event.currentTarget.open)}

@@ -1,10 +1,17 @@
-# Beta41 tester guide: the optimizer is now a manager
+# Beta42 tester guide: the manager on more Macs
 
-**1.36.60 beta41/build13660 · candidate tester guide · Apple Silicon/macOS 14+**
+**1.36.61 beta42/build13661 · candidate tester guide · Apple Silicon/macOS 14+**
 
-This guide targets beta41 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
+This guide targets beta42 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
 
-## New in beta41
+## New in beta42
+
+- **Manager keeps running.** After updating, the manager should still be on if it was on. With a custom endpoint set up, Bloomkeeper should not loop on "provider settings changed". On Darkbloom 0.9.10 or 0.9.11 it should reach Warm and ready.
+- **Macs like yours.** The Overview should compare your pace with similar Macs, and flag it if they are earning while yours stalls.
+- **It's not you.** During a network-wide outage a banner should say so, and Bloomkeeper should hold restarts and automatic reports.
+- **Network news.** Note whether news items appear and are accurate.
+
+## Carried forward from beta41
 
 - **Manager.** With the optimizer on, it should name a home model and keep it running. After a failed switch or about 10 minutes with no model ready, it should bring the home model back rather than switching itself off. Note any move it makes and the reason it gives.
 - **What's changed card.** After updating, the Optimizer tab should show a one-time card; closing it on the Mac should hide it on the phone too.
@@ -240,7 +247,7 @@ Before updating an older beta, let any model switch or warm-up finish. Beta5/6/7
 
 Use the [support page](https://bloomformac.com/support), the [Bloomkeeper Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN), or [email support](mailto:support@bloomkeeper.io). Opening a contact sends nothing automatically. Read the [privacy notice](https://bloomformac.com/privacy) for the organizer-confirmed release. Local diagnostic export, optional earnings and optional usage sharing remain separate choices.
 
-## Baseline guide carried forward for beta41 verification
+## Baseline guide carried forward for beta42 verification
 
 # Bloomkeeper beta checklist
 

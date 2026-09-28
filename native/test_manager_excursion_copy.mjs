@@ -71,3 +71,15 @@ test('On waits until the strategy is known, and the control status names it', ()
   assert.match(card, /function chooseOn\(\) \{\s+if \(!knownStrategy\) return;/);
   assert.match(card, /!knownStrategy \|\|\s+\(!!isOn && !blocked\)/);
 });
+test('the evidence panel explains trials and lists what past excursions taught', () => {
+  const card = read('../components/dashboard/manager-status.tsx');
+  assert.match(
+    card,
+    /A\s+model this Mac hasn’t served lately gets at most one trial a week,\s+and only when it fits in memory, pays about twice home or more and\s+its demand has been at least\{' '\}\s+\{num\(evidence\.trialDemandRatio \?\? 1\.5, 1\)\}× its usual level for two\s+hours\./,
+  );
+  assert.match(card, /row\.trial\s+\? ' · could be a trial excursion target'/);
+  assert.match(
+    card,
+    /Learned from past excursions:\{' '\}[\s\S]{0,120}lessonText\(lesson, evidence\.home \?\? view\?\.home\?\.model, label\)/,
+  );
+});

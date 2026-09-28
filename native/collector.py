@@ -14,6 +14,8 @@ from urllib.parse import urlsplit, unquote, parse_qs
 from history import History
 from network import Network
 from network_evidence import NetworkEvidence
+from model_catalog_watch import ModelCatalogWatch
+from network_health import NetworkHealth
 from opportunity_lab import OpportunityLab
 from predictive_lab import PredictiveLab
 from earnings_forecast_journal import ForecastJournal
@@ -236,6 +238,22 @@ class Collector:
         )
         self.network.listeners.append(self.network_evidence.on_network)
         self.optimizer.network_evidence = self.network_evidence  # manager excursions
+        # Network news: models joining/leaving and warm-capacity swings, from the same fetches.
+        self.catalog_watch = ModelCatalogWatch(
+            self.history,
+            self.network_evidence,
+            self.optimizer,
+            notify=lambda key, title, body: self.web_push.enqueue_notice(
+                self.account, key, title, body
+            ),
+        )
+        self.network.listeners.append(self.catalog_watch.on_network)
+        # "It's not you": Darkbloom-wide outages, from the same fetches (no extra polling).
+        self.network_health = NetworkHealth(self.history, self.network_health_context)
+        self.network.listeners.append(self.network_health.on_network)
+        self.network.error_listeners.append(self.network_health.on_error)
+        self.optimizer.network_health = self.network_health  # stall ladder, manager
+        self.catalog_watch.health = self.network_health  # no 'left' news during an outage
         self.opportunity_lab = OpportunityLab(self.optimizer.store)
         self.predictive_lab = PredictiveLab(self.optimizer.store, enabled=personal_edition())
         self.earnings_forecast = ForecastJournal(self.optimizer.store, enabled=forecast_enabled)
@@ -323,6 +341,13 @@ class Collector:
             ):
                 return self.optimizer.identity_provider
         return None
+
+    def network_health_context(self):
+        """This Mac's hardware cell and offered models: which model or cell outages concern it."""
+        with self.optimizer.lock:
+            raw = self.optimizer.raw or {}
+            models = observed_models(raw.get('advertised_models'))
+        return self.network_evidence.own_cell(), models
 
     def network_self_ids(self):
         """This Mac's provider ids, to find it in /v1/stats; used in memory only."""
@@ -935,6 +960,11 @@ class Collector:
                 pulse['demand'] = self.pulse_demand.snapshot(pulse.get('models') or [], now)
             except Exception:
                 pulse['demand'] = None  # An overlay must never stop collection.
+            try:
+                # "Macs like yours": public per-cell rates (network_evidence.py), cached 60 s.
+                pulse['peers'] = self.network_evidence.benchmark(now)
+            except Exception:
+                pulse['peers'] = None
             if provider.get('multiModelReporting'):
                 pulse['reporting'] = provider['multiModelReporting']
                 pulse['detail'] = tracking['detail']
@@ -944,6 +974,11 @@ class Collector:
                 }
             self.pulse.record_rate(self.account, pulse)
             traffic = self.traffic.observe(self.account, daemon, session, tracking, now)
+            try:
+                network_health = self.network_health.view(now)
+            except Exception:
+                log.exception('Network health view failed')
+                network_health = None  # A notice must never stop collection.
             self.snapshot = {
                 'at': now,
                 'deviceName': self.machines.name,
@@ -954,6 +989,7 @@ class Collector:
                 'forecast': self.forecast,
                 'pulse': pulse,
                 'traffic': traffic,
+                'networkHealth': network_health,
                 'samples': [s for s in self.samples if s['at'] >= now - 900],
                 'sources': [
                     {
@@ -1239,6 +1275,37 @@ class Handler(BaseHTTPRequestHandler):
             '/api/usage',
         ):
             self.send_error(403)
+            return
+        if urlsplit(self.path).path == '/api/network/news':
+            # The "new model pays well" phone notice: on/off and a week's mute.
+            if not self.permitted() or self.headers.get_all('X-Bloom-Action', []) != [
+                'network-news'
+            ]:
+                self.send_error(403)
+                return
+            if self.remote_view and self.headers.get_all('Origin', []) != [
+                'https://' + self.headers.get('Host', '')
+            ]:
+                self.send_error(403)
+                return
+            try:
+                lengths = self.headers.get_all('Content-Length', [])
+                if len(lengths) != 1:
+                    raise ValueError('Invalid request.')
+                size = int(lengths[0])
+                if (
+                    not 0 < size <= 128
+                    or self.headers.get_all('Content-Type', []) != ['application/json']
+                    or self.headers.get('Transfer-Encoding')
+                ):
+                    raise ValueError('Invalid request.')
+                data = json.loads(self.rfile.read(size))
+                self.respond_json(self.collector.catalog_watch.set_push(data))
+            except (ValueError, TypeError):
+                self.respond_json({'error': 'Choose a valid notification setting.'}, 400)
+            except Exception:
+                log.exception('Request failed: %s', urlsplit(self.path).path)
+                self.respond_json({'error': 'Could not save this setting. Try again.'}, 503)
             return
         if urlsplit(self.path).path == '/api/whats-changed':
             if not self.permitted() or self.headers.get_all('X-Bloom-Action', []) != [
@@ -2066,6 +2133,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(400)
                 return
             self.respond_json(data)
+            return
+        if path == '/api/network/news':
+            try:
+                self.respond_json(self.collector.catalog_watch.view())
+            except Exception:
+                log.exception('Request failed: %s', path)
+                self.respond_json({'error': 'Network news is unavailable right now.'}, 503)
             return
         if path == '/api/network/models':
             try:

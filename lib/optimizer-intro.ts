@@ -22,7 +22,7 @@ export const introPoints: { title: string; text: string }[] = [
 export const managerIntroPoints: { title: string; text: string }[] = [
   {
     title: 'Holds your best model',
-    text: 'Bloomkeeper keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days, judged day by day so one lucky day can’t decide it. It does not run blind trials of other models.',
+    text: 'Bloomkeeper keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days, judged day by day so one lucky day can’t decide it. Until this Mac has 3 days of its own, it starts from what pays best on Macs with the same chip and memory, and tells you before switching. It does not run blind trials of other models.',
   },
   {
     title: 'Recovers by itself',

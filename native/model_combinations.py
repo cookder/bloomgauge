@@ -11,6 +11,16 @@ DEFAULT_RESERVE_GB = 4
 # (drain, prefix cache, MLX cache and memory guard, KV backend, MTP, prefill) and MLX_/METAL_
 # variables don't enter the load gate.
 ADMISSION_ENV = ('DARKBLOOM_MEM_CAP_FRACTION', 'DARKBLOOM_ACTIVATION_RESERVE_GB')
+# provider.toml without `--config` (ConfigManager.defaultConfigPath). Up to Darkbloom 0.9.10
+# the first of these that exists, else the first; from 0.9.11 only the first (no fallback to
+# the legacy locations, no copy from them).
+CONFIG_PATHS = (
+    '.config/darkbloom/provider.toml',
+    'Library/Application Support/darkbloom/provider.toml',
+    '.config/eigeninference/provider.toml',
+    'Library/Application Support/eigeninference/provider.toml',
+)
+CANONICAL_CONFIG_VERSION = (0, 9, 11)
 
 
 def members(selection):
@@ -141,6 +151,29 @@ def pair_candidates(
     )
 
 
+def provider_version(home):
+    """(major, minor, patch) of the provider that last wrote daemon-state.json, else None."""
+    state = pathlib.Path(home) / '.darkbloom/daemon-state.json'
+    try:
+        match = re.match(r'(\d+)\.(\d+)\.(\d+)', json.loads(state.read_text())['version'])
+    except (OSError, ValueError, TypeError, KeyError, IndexError):
+        return None
+    return tuple(int(v) for v in match.groups()) if match else None
+
+
+def default_config_path(home):
+    """The provider.toml Darkbloom reads without `--config`: see CONFIG_PATHS. Only when the
+    canonical file is missing does the version matter; an unknown version keeps the older
+    fallback."""
+    candidates = [pathlib.Path(home) / suffix for suffix in CONFIG_PATHS]
+    if candidates[0].exists():
+        return candidates[0]
+    version = provider_version(home)
+    if version is not None and version >= CANONICAL_CONFIG_VERSION:
+        return candidates[0]
+    return next((p for p in candidates if p.exists()), candidates[0])
+
+
 def provider_settings(home, options):
     """What the load gate uses from provider.toml, never rewriting it: (settings, error).
 
@@ -153,20 +186,7 @@ def provider_settings(home, options):
     paths = [options[i + 1] for i, v in enumerate(options[:-1]) if v in ('--config', '-c')]
     if len(paths) > 1:
         return settings, 'Multiple custom configs need review before pair testing.'
-    defaults = [
-        pathlib.Path(home) / suffix
-        for suffix in (
-            '.config/darkbloom/provider.toml',
-            'Library/Application Support/darkbloom/provider.toml',
-            '.config/eigeninference/provider.toml',
-            'Library/Application Support/eigeninference/provider.toml',
-        )
-    ]
-    path = (
-        pathlib.Path(paths[0]).expanduser()
-        if paths
-        else next((p for p in defaults if p.exists()), defaults[0])
-    )
+    path = pathlib.Path(paths[0]).expanduser() if paths else default_config_path(home)
     if not path.is_absolute():
         return settings, 'Use an absolute provider config path before pair testing.'
     if not path.exists():

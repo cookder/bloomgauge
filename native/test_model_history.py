@@ -337,6 +337,8 @@ class PassiveLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             h = History(':memory:')
             o = Optimizer(h, Mock(), home, threading.Event(), Mock())
+            # Seven-day tests are a legacy strategy; the Manager refuses them.
+            o.state['demandPolicy'] = {**o.state['demandPolicy'], 'managerStrategy': 0}
             raw = {
                 'attestation_public_key': 'key',
                 'pid': 123,

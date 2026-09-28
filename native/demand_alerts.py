@@ -19,6 +19,15 @@ FRESH_SECONDS = 90
 COOLDOWN_SECONDS = 2 * 3600
 REARM_SECONDS = 10 * 60
 MIN_BASELINE_SAMPLES = 240  # Two hours of distinct, valid 30-second observations.
+# A spike: load and pressure per warm provider both >= SPIKE_RATIO x usual, with load >=
+# SPIKE_MIN_LOAD. At 2x the old usual (a mean of the same daytype +-1 h) this fired 339 times
+# in a 15.4-day replay of Andrew's opt_network (Sep 13-28; within 3 of the logged alerts for each
+# model but Qwen3.8, which was not always eligible). The time-of-day median usual (Sep 27) sits
+# below that mean (x1.2 for gemma, gpt-oss and qwen3.6-vl, x3-4 for nemotron and Qwen3.5-9B), and
+# 2x it fired 500 times (x1.47). 2.8x fires 339 again (22 a day); a higher load minimum changed
+# <= 6 of them. calibration-2026-09-28.md (c).
+SPIKE_RATIO = 2.8
+SPIKE_MIN_LOAD = 1
 
 
 def _number(value):
@@ -178,7 +187,11 @@ def current_row(row, observation, now):
                 detail='Earlier demand is too small for a finite pressure comparison.',
             )
         else:
-            candidate = row['load'] >= 1 and row['loadRatio'] >= 2 and row['pressureRatio'] >= 2
+            candidate = (
+                row['load'] >= SPIKE_MIN_LOAD
+                and row['loadRatio'] >= SPIKE_RATIO
+                and row['pressureRatio'] >= SPIKE_RATIO
+            )
             row.update(
                 status='watching' if candidate else 'normal',
                 detail='Checking sustained concurrent active/queued demand and pressure per warm provider; these are not completed requests per minute.',

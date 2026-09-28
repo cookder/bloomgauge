@@ -41,6 +41,7 @@ export type EarningsPulseData = {
   sessionMicroUsd: number | null;
   events: PulseCredit[];
   demand?: PulseDemand | null;
+  peers?: PulseBenchmark | null;
 };
 export type PulseCursor = { key: string; at: number; ids: number[] };
 
@@ -232,6 +233,97 @@ export function pulseDemandView(
         ? `${requests} · usual level still being measured`
         : requests,
     hint,
+  };
+}
+
+/** "Macs like yours" (native/network_evidence.py `benchmark`): this Mac's requests per hour
+ * on its model against the median of same-cell, same-model, same-level (dedicated or mixed)
+ * Macs in Darkbloom's public counters, over the last `hours`. */
+export type PulseBenchmark = {
+  at: number;
+  hours: number;
+  cell: string;
+  model: string;
+  dedicated: boolean;
+  windows: number;
+  peers: number;
+  percentile: number | null;
+  reqPerHour: number;
+  peerMedianReqPerHour: number;
+  peerZeroShare: number | null;
+  usdPerRequest: number | null;
+  usdBasis: 'own' | 'list' | null;
+  usdPerHour: number | null;
+  peerUsdPerHour: number | null;
+};
+/** Below this many peers a median says little (network_evidence.MIN_PROVIDERS). */
+export const PEER_BENCHMARK_MIN = 5;
+/** Windows close every ~5 minutes; three missed ones make the comparison stale. */
+export const PEER_BENCHMARK_FRESH_SECONDS = 900;
+
+const ordinal = (n: number) => {
+  const tens = n % 100;
+  const suffix =
+    tens >= 11 && tens <= 13
+      ? 'th'
+      : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th');
+  return `${n}${suffix}`;
+};
+const perHour = (n: number) =>
+  n >= 100 ? String(Math.round(n)) : n >= 10 ? n.toFixed(0) : n.toFixed(1);
+
+/** The Pulse's benchmark line, or null to hide it: too few peers, stale windows, a model
+ * that isn't serving now, or a malformed payload. */
+export function pulseBenchmarkView(
+  value: unknown,
+  now: number,
+  serving: string[] = [],
+) {
+  if (!value || typeof value !== 'object') return null;
+  const b = value as Record<string, unknown>;
+  if (
+    typeof b.model !== 'string' ||
+    typeof b.cell !== 'string' ||
+    typeof b.dedicated !== 'boolean' ||
+    !ok(b.at) ||
+    !ok(b.hours) ||
+    !ok(b.peers) ||
+    !ok(b.reqPerHour) ||
+    !ok(b.peerMedianReqPerHour) ||
+    !(b.percentile === null || (ok(b.percentile) && b.percentile <= 1)) ||
+    !(b.usdPerHour == null || ok(b.usdPerHour)) ||
+    !(b.peerUsdPerHour == null || ok(b.peerUsdPerHour))
+  )
+    return null;
+  if ((b.peers as number) < PEER_BENCHMARK_MIN) return null;
+  if (now - (b.at as number) > PEER_BENCHMARK_FRESH_SECONDS) return null;
+  if (serving.length && !serving.includes(b.model)) return null;
+  const pct =
+    b.percentile == null
+      ? null
+      : Math.min(99, Math.max(1, Math.round((b.percentile as number) * 100)));
+  const own = b.reqPerHour as number,
+    median = b.peerMedianReqPerHour as number,
+    peers = Math.round(b.peers as number);
+  const level = b.dedicated ? 'dedicated' : 'mixed';
+  return {
+    percentile: pct == null ? null : `${ordinal(pct)} percentile`,
+    // Well above / below the median: 25% either way.
+    tone:
+      median > 0 && own >= median * 1.25
+        ? ('above' as const)
+        : own <= median * 0.75
+          ? ('below' as const)
+          : ('typical' as const),
+    requests: `${perHour(own)} req/h vs ${perHour(median)} median`,
+    peers: `${peers} Mac${peers === 1 ? '' : 's'}`,
+    usdPerHour: (b.usdPerHour as number | null) ?? null,
+    peerUsdPerHour: (b.peerUsdPerHour as number | null) ?? null,
+    title:
+      `This Mac against ${peers} other ${b.cell.replace('|', ' · ')} GB Macs serving the same model (${level}) in Darkbloom’s public counters, over the last ${b.hours} h. ` +
+      (b.usdBasis === 'own'
+        ? 'Dollars use this Mac’s own recent pay per request.'
+        : 'Dollars are estimates: list price × the network’s tokens per request.'),
   };
 }
 

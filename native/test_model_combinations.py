@@ -235,6 +235,8 @@ class CombinationControllerTests(unittest.TestCase):
         self.clock.start()
         self.o.live['hardware']['memoryAvailableGB'] = 40
         self.o.state.update(startedAt=self.now - 100, endsAt=self.now + 100)
+        # Pair tests follow a seven-day test: a legacy strategy (the Manager takes these over).
+        self.o.state['demandPolicy'] = {**self.o.state['demandPolicy'], 'managerStrategy': 0}
 
     def tearDown(self):
         self.clock.stop()

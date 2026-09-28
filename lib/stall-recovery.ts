@@ -31,8 +31,24 @@ const EPISODE_SECONDS = 3 * 3600;
 const RECENT_SECONDS = 86400;
 const RECENT_CARD_SECONDS = 3600;
 
+/** Macs like this one (same chip and memory, model and level) in Darkbloom's public
+ * counters while this Mac got no work (native/stall_recovery.py peer_stall). */
+export type StallPeers = {
+  busy: boolean;
+  peers: number;
+  peerReqPerHour: number;
+  seconds: number;
+  windows: number;
+};
+// native/stall_recovery.py PEER_NOTE: the peer trigger in plain words.
+export const PEER_NOTE = 'Macs like yours are getting work; this one isn’t.';
+const PEER_NOTE_ASCII = "Macs like yours are getting work; this one isn't.";
+
 export type StallSnapshot = {
   status?: string;
+  /** What started the episode: this Mac's own steady work stopping, or its peers. */
+  trigger?: string | null;
+  peers?: StallPeers | null;
   step?: string | null;
   reason?: string | null;
   model?: string | null;
@@ -55,7 +71,11 @@ export type StallEvent = {
 
 export function validStallSnapshot(v: unknown): v is StallSnapshot {
   if (!record(v) || !finite(v.at) || typeof v.fresh !== 'boolean') return false;
-  if (!['status', 'step', 'reason', 'model'].every((k) => optional(v[k], text)))
+  if (
+    !['status', 'step', 'reason', 'model', 'trigger'].every((k) =>
+      optional(v[k], text),
+    )
+  )
     return false;
   if (
     ![
@@ -93,6 +113,29 @@ export type StallView = {
 };
 
 const minutes = (seconds: number) => Math.max(1, Math.round(seconds / 60));
+
+/** The peer evidence, or null when it is missing or malformed (it never hides the card). */
+export function stallPeers(v: unknown): StallPeers | null {
+  if (!record(v) || typeof v.busy !== 'boolean') return null;
+  const nonNegative = (x: unknown): x is number => finite(x) && x >= 0;
+  return nonNegative(v.peers) &&
+    nonNegative(v.peerReqPerHour) &&
+    nonNegative(v.seconds) &&
+    nonNegative(v.windows)
+    ? {
+        busy: v.busy,
+        peers: v.peers,
+        peerReqPerHour: v.peerReqPerHour,
+        seconds: v.seconds,
+        windows: v.windows,
+      }
+    : null;
+}
+const withoutPeerNote = (reason: string) =>
+  [PEER_NOTE, PEER_NOTE_ASCII].reduce(
+    (text, note) => (text.startsWith(note) ? text.slice(note.length).trim() : text),
+    reason,
+  );
 
 /**
  * What to show, or null when there is nothing to report: no stall now, and the last
@@ -202,6 +245,21 @@ export function stallView(
     const silence = finite(s!.silenceSeconds)
       ? `${minutes(s!.silenceSeconds)} min`
       : 'several minutes';
+    const peers = stallPeers(s!.peers);
+    if (s!.trigger === 'peers' && peers?.busy) {
+      // Macs like this one are getting work: say so first, in plain words.
+      const reason = withoutPeerNote(s!.reason ?? '');
+      return {
+        state: 'active',
+        model,
+        since: s!.episodeStart ?? null,
+        steps,
+        headline: PEER_NOTE,
+        detail: /similar Macs/.test(reason)
+          ? reason
+          : `No work here for ${silence} while ${Math.round(peers.peers)} similar Macs got a median of ${Math.round(peers.peerReqPerHour)} requests an hour.${reason ? ` ${reason}` : ''}`,
+      };
+    }
     const rate = finite(s!.baselineJobsPerMinute)
       ? ` after about ${Math.round(s!.baselineJobsPerMinute)} jobs a minute`
       : '';

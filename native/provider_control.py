@@ -28,11 +28,31 @@ from model_combinations import (
 )
 from model_readiness import session_key
 from provider_sessions import matching_process, process_identity
+from provider_reporting import state_fresh
 from prewarm import local_request, WarmupError
 
 # `darkbloom stop` returns in seconds on older providers. From 0.9.9 it drains first
 # (600 s default deadline; a timeout leaves the service draining), like `start`.
 STOP_SECONDS = 60
+ENDPOINT_SETUP = 'Open Optimizer → Overview on the Mac. In the manual model controls, select a model and use Prepare, Start or Switch to set up pre-warming.'
+# After this many setups in a row failed for the same reason, the notice gives that reason and
+# the Terminal command instead of asking for the same setup again.
+ENDPOINT_FAILURES = 2
+ENDPOINT_FIX = '`darkbloom start --local-endpoint --model '
+# A drain disables launchd recovery until the start that follows it; with none, Darkbloom runs
+# drained (refusing work) with its launch agent disabled.
+DRAINED = (
+    'Darkbloom finished draining but was not started again, so it serves nothing. Pick a model '
+    'in the model controls or turn the manager on to start it again, or run `darkbloom start` '
+    'in Terminal.'
+)
+
+
+def fenced_drain(status, disabled, raw):
+    """Running, drained and serving nothing, with launchd recovery still disabled (DRAINED)."""
+    from optimizer import drained_idle
+
+    return status == 'running' and disabled is True and drained_idle(raw)
 
 
 def endpoint_issue(options):
@@ -42,8 +62,48 @@ def endpoint_issue(options):
     if host not in ('127.0.0.1', 'localhost', '::1'):
         return 'Pre-warming needs a loopback endpoint. Review Darkbloom’s bind setting on the Mac.'
     if '--local-endpoint' not in options:
-        return 'Open Optimizer → Overview on the Mac. In the manual model controls, select a model and use Prepare, Start or Switch to set up pre-warming.'
+        return ENDPOINT_SETUP
     return None
+
+
+def endpoint_fix(failure):
+    """The manual fix once ENDPOINT_FAILURES setups in a row failed for the same reason, else
+    None. `failure`: the optimizer's endpointSetupFailure record."""
+    failure = failure if isinstance(failure, dict) else {}
+    count, model = failure.get('count'), failure.get('model')
+    if (
+        not isinstance(count, int)
+        or count < ENDPOINT_FAILURES
+        or not isinstance(model, str)
+        or not isinstance(failure.get('cause'), str)
+    ):
+        return None
+    return (
+        'Setting up pre-warming failed %s this way. To set it up yourself, run %s%s` in '
+        'Terminal, then refresh Bloomkeeper.'
+        % ('twice' if count == 2 else '%d times' % count, ENDPOINT_FIX, model)
+    )
+
+
+def endpoint_setup_notice(detail):
+    """A status that asks for the endpoint setup, or gives its manual fix."""
+    return isinstance(detail, str) and (detail == ENDPOINT_SETUP or ENDPOINT_FIX in detail)
+
+
+def multi_model_notice(home, options):
+    """provider.toml's [backend] enabled_models lists three or more models. Darkbloom 0.9.10's
+    launchd child serves that list, not the launch agent's --model
+    (StartCommand.usesPinnedModelSelection), and a failed `start` puts it back
+    (ProviderModelSelection.withReplacement). Bloomkeeper runs one model or a pair, so it says
+    so plainly rather than waiting or retrying. A `darkbloom start --model` from the model
+    controls replaces the list."""
+    count = len(set(manager.toml_models(home, options) or []))
+    if count < 3:
+        return None
+    return (
+        'Darkbloom is set to serve %d models. Run `darkbloom start` in Terminal and pick one '
+        'model, or use Bloomkeeper’s model controls.' % count
+    )
 
 
 class ProviderControl:
@@ -67,7 +127,7 @@ class ProviderControl:
 
         o = self.o
         plist = plistlib.loads(o.plist_path.read_bytes())
-        model, options = launch_options(plist, allow_auto=True)
+        model, options = launch_options(plist, allow_auto=True, allow_many=True)
         if pathlib.Path(plist['ProgramArguments'][0]).resolve() != o.binary.resolve():
             raise ValueError(
                 'The installed provider executable changed. Review Darkbloom on the Mac.'
@@ -83,10 +143,10 @@ class ProviderControl:
             raw = {}
         process = matching_process(process_identity(raw))
         disabled = o.service_disabled()
-        fresh = (
-            isinstance(raw.get('written_at'), (int, float))
-            and -5 < time.time() - raw['written_at'] < 15
-        )
+        # 0.9.10 preloads its startup models before it registers and writes its state only
+        # every 30 s meanwhile (state_fresh allows 45 s then). A fixed 15 s read the loading
+        # provider as 'unknown', so On from a stopped provider failed right after its Start.
+        fresh = state_fresh(raw, time.time())
         status = (
             'running' if process is True and fresh else 'stopped' if process is False else 'unknown'
         )
@@ -102,7 +162,13 @@ class ProviderControl:
         return {
             'version': version,
             'status': status,
-            'model': model or selection_key(raw.get('advertised_models')),
+            # Three or more --model picks are the launch agent's selection, never the daemon's.
+            'model': model
+            or (
+                None
+                if plist['ProgramArguments'].count('--model') >= 3
+                else selection_key(raw.get('advertised_models'))
+            ),
             'options': options,
             'environment': environment,
             'raw': raw,
@@ -132,7 +198,7 @@ class ProviderControl:
                 and o.warmup_worker.is_alive()
                 or o.update_guard.active()
             )
-        issue = endpoint_issue(v['options'])
+        issue = o.endpoint_notice(v['options'])
         endpoint = 'ready'
         if issue:
             endpoint = 'setup'
@@ -169,6 +235,8 @@ class ProviderControl:
             'endpointDetail': issue,
             'detail': 'Controls are temporarily unavailable while a switch, warm-up or update finishes.'
             if blocked
+            else DRAINED
+            if fenced_drain(v['status'], v['disabled'], v['raw'])
             else 'Running in the background. Closing this window does not stop Darkbloom.'
             if v['status'] == 'running'
             else 'Stopped. Start it in Optimizer → Overview; automatic control stays on.'

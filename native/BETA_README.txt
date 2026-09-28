@@ -1,7 +1,7 @@
-Bloomkeeper — 1.36.60 beta41 · The optimizer is now a manager
+Bloomkeeper — 1.36.61 beta42 · The manager keeps working on more Macs
 
 CHANGES IN THIS UPDATE
-The optimizer is now a manager: it keeps one home model running (the one you pin, or the best payer on this Mac over 30 days), brings it back after a failed switch or about 10 minutes with no model ready, and moves only when at least 5 similar Macs clearly earn more elsewhere for 2 hours, at most 3 times a day. "Run status unavailable" no longer shows by mistake, reputation shows with Darkbloom 0.9.10, ratings come from this Mac's own history, the Overview has hourly $/hour bars, there is a light mode under More → Appearance, and My Macs lists every model. Previous beta40 change: statistics count for the models loaded right now when your provider offers several.
+Fixes that kept the manager from running (endpoint-setup loop, staying on across updates, drained provider, Darkbloom 0.9.10 preload and 0.9.11, new device key, stopped pairs, 3+ model setups). Adds a Macs like yours benchmark with peer stall detection, an "It's not you" banner during network outages that holds restarts and automatic reports, smarter excursions to larger models on sustained demand, and network news. Previous beta41 change: the optimizer became a manager that keeps one home model running.
 
 FEATURES RETAINED
 Arrange the Earnings dashboard with separate phone and desktop layouts saved in each browser. Compare experimental one-hour earnings baselines with clearer evidence, saved forecast windows and local accuracy tracking. Optimizer trial reviews now close unresolvable comparisons at their deadline, require a supported paid benchmark and explain the paid alternative; confirmation can pause through a brief data gap without counting unseen time.

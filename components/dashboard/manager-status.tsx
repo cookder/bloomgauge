@@ -14,8 +14,10 @@ import {
   duration,
   evidenceTable,
   excursionProgress,
+  homeNoticeText,
   homeSource,
   ledgerText,
+  lessonText,
   managerHeadline,
   managerSentence,
   withoutCircularHint,
@@ -23,6 +25,7 @@ import {
   type Readiness,
 } from '@/lib/optimizer-manager';
 import { age, money, num, shortModel } from './shared';
+import { Button } from '@/components/ui/button';
 import { useAppNavigation } from './app-navigation';
 
 /** Catalog display names ("Qwen 3.8 27B") when known, else the short id. */
@@ -84,15 +87,21 @@ export function ManagerStatusCard({
   readiness,
   now,
   names,
+  onKeepCurrent,
+  busy = false,
 }: {
   view: ManagerView;
   currentModel?: string | null;
   readiness: Readiness;
   now: number;
   names?: ModelNames;
+  /** "Keep current" on a planned home change (pins the model); absent: shown without it. */
+  onKeepCurrent?: (model: string) => void;
+  busy?: boolean;
 }) {
   const label = labeler(names);
   const headline = managerHeadline(view, currentModel, label, now);
+  const notice = !view.pinned ? (view.homeNotice ?? null) : null;
   const sentence = managerSentence(view);
   const decision = withoutCircularHint(view.reason);
   const homeModel = view.home?.model ?? null;
@@ -129,6 +138,31 @@ export function ManagerStatusCard({
           home must wait) still matters. */}
       {decision && decision !== sentence && (
         <p className="manager-status-reason secondary">{decision}</p>
+      )}
+      {notice && (
+        <div
+          className="notice provider-confirm manager-home-notice"
+          role="group"
+          aria-label="Planned model change"
+        >
+          <p>{homeNoticeText(notice, label)}</p>
+          <small>
+            {notice.until > now
+              ? `Keep ${label(notice.from)} to stay on it: it becomes your pick and Bloomkeeper won’t switch away from it.`
+              : 'Switching on the next check if the evidence still holds.'}
+          </small>
+          {onKeepCurrent && (
+            <div className="provider-actions">
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => onKeepCurrent(notice.from)}
+              >
+                Keep {label(notice.from)}
+              </Button>
+            </div>
+          )}
+        </div>
       )}
       <dl className="manager-facts">
         <div>
@@ -371,7 +405,9 @@ export function NetworkEvidencePanel({
                   {row.home
                     ? ' · home model'
                     : row.eligible === true
-                      ? ' · could be an excursion target'
+                      ? row.trial
+                        ? ' · could be a trial excursion target'
+                        : ' · could be an excursion target'
                       : row.why
                         ? ` · ${row.why.replace(/\.$/, '')}`
                         : ''}
@@ -382,11 +418,28 @@ export function NetworkEvidencePanel({
           <p className="footnote">
             Estimated earnings per hour for a Mac of this class, from the last
             couple of hours of public network counters; the range is a 90%
-            interval. Your own history decides the home model; these estimates
-            only decide excursions.
+            interval. Your own history decides the home model once a model has
+            paid here on 3 separate days; until then the model that pays best on
+            at least 5 Macs like this one serving it alone can be home (a change
+            is announced first). These estimates also decide excursions. A
+            model this Mac hasn’t served lately gets at most one trial a week,
+            and only when it fits in memory, pays about twice home or more and
+            its demand has been at least{' '}
+            {num(evidence.trialDemandRatio ?? 1.5, 1)}× its usual level for two
+            hours.
             {evidence.homeUsdPerHour != null &&
               ` This Mac earns about ${money(evidence.homeUsdPerHour)}/h on its home model.`}
           </p>
+          {!!evidence.lessons?.length && (
+            <p className="footnote">
+              Learned from past excursions:{' '}
+              {evidence.lessons
+                .map((lesson) =>
+                  lessonText(lesson, evidence.home ?? view?.home?.model, label),
+                )
+                .join(' ')}
+            </p>
+          )}
         </>
       )}
     </details>

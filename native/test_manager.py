@@ -104,7 +104,7 @@ class PolicyMigrationTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 policy({'managerStrategy': bad})
 
-    def test_reopened_demand_plan_stays_on_and_unknown_keys_still_turn_it_off(self):
+    def test_reopened_demand_plan_stays_on_and_unknown_keys_are_dropped(self):
         f = fixtures.ControllerTests('setUp')
         f.setUp()
         self.addCleanup(f.tearDown)
@@ -116,10 +116,15 @@ class PolicyMigrationTests(unittest.TestCase):
             reopened.state['demandPolicy'], {**SAVED, 'managerStrategy': 1, 'managerExcursions': 1}
         )
         self.assertEqual(reopened.state['demandPolicyRevision'], 3)
+        # A key this build doesn't know (another build saved it) no longer turns the manager
+        # off after an update: it is dropped and every known choice kept (test_field_reports).
         f.o.state['demandPolicy'] = {**SAVED, 'futureKey': 1}
         f.o.save()
         reopened = Optimizer(f.h, f.net, f.tmp.name, threading.Event(), Mock())
-        self.assertEqual(reopened.state['mode'], 'observe')
+        self.assertEqual(reopened.state['mode'], 'demand')
+        self.assertEqual(
+            reopened.state['demandPolicy'], {**SAVED, 'managerStrategy': 1, 'managerExcursions': 1}
+        )
 
 
 class HomeTests(unittest.TestCase):

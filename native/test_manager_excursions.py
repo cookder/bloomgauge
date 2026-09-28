@@ -197,7 +197,7 @@ class ArmingTests(unittest.TestCase):
                 why = rows_by_model(d[1])[QWEN]['why']
                 self.assertEqual(why, 'mixed boxes' if name == 'mixed boxes' else 'no evidence')
 
-    def test_gain_must_clear_half_home_and_the_amortized_round_trip_cost(self):
+    def test_gain_must_clear_home_and_the_amortized_round_trip_cost(self):
         s = state()
         dead = {QWEN: 179, GEMMA: 115}  # this Mac's command -> first paid job
         ctx = context(candidates=[evidence(ratio=1.45, low=1.1, latest=1.45)], deadSeconds=dead)
@@ -213,7 +213,11 @@ class ArmingTests(unittest.TestCase):
             + (0.047 + 0.01) * 9 / 60 * (0.108 + 16 / 720)
         )
         self.assertAlmostEqual(r['costUsd'], cost, places=4)
-        self.assertAlmostEqual(r['needUsdPerHour'], cost / 2 + 0.04, places=4)
+        # Home's own $/h binds here: max(1.0 x 0.108, cost / 2 + $0.01).
+        self.assertAlmostEqual(r['needUsdPerHour'], max(HOME_RATE, cost / 2 + 0.01), places=4)
+        self.assertAlmostEqual(r['needUsdPerHour'], HOME_RATE, places=4)
+        # On a slow home the amortized round trip plus the $0.01 floor binds instead.
+        self.assertAlmostEqual(ex.required_gain(0.01, 0.04), 0.04 / 2 + 0.01)
         # Without switch history both legs assume 5 minutes to the first paid job.
         plain = context(candidates=[evidence(ratio=1.45, low=1.1, latest=1.45)])
         r = rows_by_model(decide(s, plain, NOW))[QWEN]
@@ -226,6 +230,20 @@ class ArmingTests(unittest.TestCase):
         old = context(candidates=[evidence(ratio=1.85, low=1.25, latest=1.85)], deadSeconds=dead)
         r = rows_by_model(decide(s, old, NOW))[QWEN]
         self.assertEqual(r['why'], 'gain too small')
+
+    def test_gain_bar_is_one_out_of_sample_error_of_the_1h_gain(self):
+        """calibration-2026-09-28.md (a), public /v1/stats poll Sep 26-28: where a candidate looked
+        better (1.1 <= ratio < 2), the next hour's gain missed its prediction by 0.96 x home $/h on
+        average with a gemma home (paying no more than home in 51% of those hours) and 0.69 x with
+        a gpt-oss home; in $/h by $0.011-0.031 on homes under $0.04/h. So the bar is home's own
+        $/h, with a $0.01/h floor over the amortized round trip (was 0.5 x home and $0.04/h)."""
+        bar = (ex.MIN_GAIN_SHARE, ex.TAU_USD_PER_HOUR, ex.AMORTIZE_HOURS)
+        self.assertEqual(bar, (1.0, 0.01, 2))
+        # Andrew's $0.108 gemma home: the gain must reach home's own rate (a ratio of 2).
+        self.assertAlmostEqual(ex.required_gain(0.108, 0.10), 0.108)
+        # A $0.015/h home with a $0.022 round trip needs $0.021/h (the measured error at that
+        # level is $0.020/h), not the old max(0.0075, 0.011 + 0.04) = $0.051/h.
+        self.assertAlmostEqual(ex.required_gain(0.015, 0.022), 0.021)
 
     def test_switch_cost_parameters(self):
         self.assertEqual(ex.failure_chance(GEMMA, 40, 48, False), 0.01)
@@ -328,6 +346,169 @@ class GateTests(unittest.TestCase):
             (d['manager']['evidence'], d['manager']['arming'], d['manager']['ledger']),
             (None, None, None),
         )
+
+
+def uncalibrated(ratio=3.0, low=0.8, trial=1.25, latest=3.0, **kw):
+    """A model this Mac has not calibrated: ln 4 fails, the ln 2 trial bound passes."""
+    return evidence(ratio=ratio, low=low, latest=latest, calibrated=False, trialLow=trial, **kw)
+
+
+def reading(*ratios, load=10.0):
+    """ExcursionData.demand: each of the last two hours' median load over its usual level."""
+    return {
+        'ratio': min(ratios),
+        'hours': [{'ratio': r, 'load': load, 'usualLoad': load / r} for r in ratios],
+    }
+
+
+class TrialTests(unittest.TestCase):
+    """Andrew, Sep 28: Macs that can hold large models try them when demand is higher than usual
+    and sustained, then learn per model."""
+
+    def test_trial_constants(self):
+        from network_evidence import USD_ERROR_TRIAL
+
+        self.assertAlmostEqual(USD_ERROR_TRIAL, math.log(2))
+        self.assertEqual(
+            (ex.TRIAL_DEMAND_RATIO, ex.TRIAL_DEMAND_HOURS, ex.TRIAL_EVERY_SECONDS),
+            (1.5, 2, 7 * 86400),
+        )
+
+    def test_an_uncalibrated_model_that_fits_arms_on_its_trial_bound_with_sustained_demand(self):
+        s = state()
+        ctx = lambda t: context(candidates=[uncalibrated()], demand={QWEN: reading(2.0, 1.8)})
+        first, second = watch(self, s, ctx, (NOW, NOW + 3600))
+        self.assertIsNone(first['target'])
+        self.assertEqual(first['manager']['arming']['checks'], 1)
+        row = rows_by_model(first)[QWEN]
+        self.assertEqual((row['why'], row['trial'], row['trialLow'], row['demandRatio']), (None, True, 1.25, 1.8))
+        self.assertEqual((second['target'], second['kind']), (QWEN, 'excursion'))
+        p = second['manager']['proposal']
+        self.assertEqual(
+            {k: p['evidence'][k] for k in ('trial', 'trialLow', 'demandRatio', 'lessonFactor')},
+            {'trial': True, 'trialLow': 1.25, 'demandRatio': 1.8, 'lessonFactor': None},
+        )
+        self.assertAlmostEqual(p['predictedUsdPerHour'], HOME_RATE * 3.0, places=4)
+        self.assertIn('a trial of a model this Mac has not served lately', second['reason'])
+        self.assertIn('3.0x %s (90%% low 1.25x at the trial margin)' % GEMMA, second['reason'])
+        self.assertIn('demand at 1.8x its usual level', second['reason'])
+        # A normal pass needs no demand gate and is no trial.
+        d = decide(state(), context(candidates=[evidence(calibrated=False, trialLow=1.9)]), NOW)
+        self.assertEqual((rows_by_model(d)[QWEN]['why'], rows_by_model(d)[QWEN]['trial']), (None, False))
+
+    def test_unsustained_demand_a_calibrated_model_one_that_does_not_fit_or_a_recent_try_stay_home(self):
+        recent = [[QWEN, NOW - 3 * 86400, NOW - 3 * 86400 + 7200]]
+        cases = {
+            'one high hour': ({}, {QWEN: reading(2.0, 1.2)}, [uncalibrated()], None, 'demand not high enough'),
+            'no reading': ({}, {}, [uncalibrated()], None, 'demand not high enough'),
+            'under one request': ({}, {QWEN: reading(3.0, 3.0, load=0.5)}, [uncalibrated()], None, 'demand not high enough'),
+            'calibrated': ({}, {QWEN: reading(2, 2)}, [evidence(ratio=3.0, low=0.8, latest=3.0, calibrated=True, trialLow=None)], None, 'weak evidence'),
+            'trial bound too low': ({}, {QWEN: reading(2, 2)}, [uncalibrated(trial=0.95)], None, 'weak evidence'),
+            'does not fit': ({}, {QWEN: reading(2, 2)}, [uncalibrated()], [row(GEMMA, required=22), row(QWEN, after=20)], 'memory'),
+            'tried 3 days ago': ({'excursionWindows': recent}, {QWEN: reading(2, 2)}, [uncalibrated()], None, 'tried this week'),
+        }
+        for name, (m, demand, candidates, rows, why) in cases.items():
+            with self.subTest(name):
+                s = state(**copy.deepcopy(m))
+                ctx = lambda t: context(candidates=candidates, rows=rows, demand=demand)
+                d = watch(self, s, ctx, (NOW, NOW + 3600))
+                self.assertIsNone(d[1]['target'])
+                self.assertIsNone(d[1]['manager']['arming'])
+                self.assertEqual(rows_by_model(d[1])[QWEN]['why'], why)
+        # A week later it may try again.
+        old = [[QWEN, NOW - 8 * 86400, NOW - 8 * 86400 + 7200]]
+        d = decide(state(excursionWindows=old), context(candidates=[uncalibrated()], demand={QWEN: reading(2, 2)}), NOW)
+        self.assertTrue(rows_by_model(d)[QWEN]['trial'])
+
+    def test_demand_gate_needs_every_hour_at_one_and_a_half_times_usual(self):
+        self.assertTrue(ex.demand_high(reading(1.5, 4.0)))
+        self.assertFalse(ex.demand_high(reading(1.49, 4.0)))
+        self.assertFalse(ex.demand_high(reading(2.0)))  # one hour is not both checks
+        self.assertFalse(ex.demand_high({'ratio': None, 'hours': [{'ratio': None, 'load': 3}] * 2}))
+        self.assertFalse(ex.demand_high(None))
+
+
+def ledger_row(ended, realized=0.05, cf=0.108, code='faded', model=QWEN, started=None):
+    return {
+        'model': model,
+        'from': GEMMA,
+        'startedAt': ended - 3 * 3600 if started is None else started,
+        'endedAt': ended,
+        'realizedUsdPerHour': realized,
+        'homeCounterfactualUsdPerHour': cf,
+        'endCode': code,
+    }
+
+
+class LessonTests(unittest.TestCase):
+    def test_a_losing_row_raises_the_bar_by_its_shortfall_up_to_x2_fading_over_fourteen_days(self):
+        self.assertEqual((ex.LESSON_SECONDS, ex.LESSON_MAX), (14 * 86400, math.log(2)))
+        end = NOW - 3600
+        # Paid $0.05/h against $0.108/h: the shortfall (x2.16) is capped at one ledger noise, x2.
+        self.assertAlmostEqual(ex.lessons([ledger_row(end)], end)[QWEN]['factor'], 2.0)
+        self.assertAlmostEqual(ex.lessons([ledger_row(end)], end + 7 * 86400)[QWEN]['factor'], 2 ** 0.5)
+        self.assertEqual(ex.lessons([ledger_row(end)], end + 14 * 86400), {})
+        # A small shortfall moves the bar a little; an early exit always the full x2.
+        self.assertAlmostEqual(ex.lessons([ledger_row(end, 0.09, 0.10)], end)[QWEN]['factor'], 0.10 / 0.09)
+        self.assertAlmostEqual(ex.lessons([ledger_row(end, 0.2, 0.1, 'early-exit')], end)[QWEN]['factor'], 2.0)
+        # No lesson from a win or from an excursion the user, an outside change or a failed load ended.
+        for r in (
+            ledger_row(end, 0.2, 0.1),
+            ledger_row(end, code='manual'),
+            ledger_row(end, code='external'),
+            ledger_row(end, code='changed'),
+            ledger_row(end, code='off'),
+            ledger_row(end, cf=None),
+        ):
+            self.assertEqual(ex.lessons([r], end), {}, r['endCode'])
+        # Losses add up; the latest one describes the lesson; other models are untouched.
+        two = ex.lessons([ledger_row(end - 86400), ledger_row(end), ledger_row(end, model=BIG, realized=0.2)], end)
+        self.assertEqual(set(two), {QWEN})
+        self.assertAlmostEqual(two[QWEN]['factor'], 2 * 2 ** (1 - 1 / 14))
+        self.assertEqual((two[QWEN]['endedAt'], two[QWEN]['until']), (end, end + 14 * 86400))
+
+    def test_a_lesson_holds_back_a_model_that_would_pass_and_says_why(self):
+        end = NOW - 3600
+        taught = ex.lessons([ledger_row(end)], NOW)
+        d = watch(self, state(), lambda t: context(lessons=taught), (NOW, NOW + 3600))
+        self.assertIsNone(d[1]['target'])
+        row = rows_by_model(d[1])[QWEN]
+        self.assertEqual(row['why'], 'paid less before')
+        self.assertAlmostEqual(row['lessonFactor'], 2 ** (1 - 1 / 24 / 14), places=3)
+        self.assertEqual(row['ratio'], 2.4)  # the public figures are shown as they are
+        # A small lesson (x1.1) only discounts the prediction: 2.4x still clears the bar.
+        small = ex.lessons([ledger_row(NOW, 0.1, 0.11)], NOW)
+        d = watch(self, state(), lambda t: context(lessons=small), (NOW, NOW + 3600))
+        self.assertEqual(d[1]['target'], QWEN)
+        p = d[1]['manager']['proposal']
+        self.assertAlmostEqual(p['predictedUsdPerHour'], HOME_RATE * 2.4 / 1.1, places=3)
+        self.assertAlmostEqual(p['evidence']['lessonFactor'], 1.1, places=2)
+        # A trial too: after a loss, a 3x regime at the trial margin (low 1.25) is not enough.
+        ctx = context(candidates=[uncalibrated()], demand={QWEN: reading(2, 2)}, lessons=taught)
+        self.assertEqual(rows_by_model(decide(state(), ctx, NOW))[QWEN]['why'], 'paid less before')
+
+    def test_the_evidence_view_names_each_lesson_in_plain_words(self):
+        from datetime import datetime
+
+        started = datetime(2026, 9, 28, 10, 0).timestamp()
+        rows = [ledger_row(started + 3 * 3600, started=started)]
+        now = started + 5 * 3600
+        view = decide(state(), context(lessons=ex.lessons(rows, now)), now)['manager']['evidence']
+        self.assertEqual(view['trialDemandRatio'], 1.5)
+        (lesson,) = view['lessons']
+        self.assertEqual(
+            lesson['text'],
+            '%s: tried Sep 28, paid less than %s; needs stronger evidence until Oct 12.' % (QWEN, GEMMA),
+        )
+        self.assertEqual(
+            {k: lesson[k] for k in ('model', 'home', 'code', 'realizedUsdPerHour', 'homeUsdPerHour')},
+            {'model': QWEN, 'home': GEMMA, 'code': 'faded', 'realizedUsdPerHour': 0.05, 'homeUsdPerHour': 0.108},
+        )
+        self.assertEqual((lesson['triedAt'], lesson['until']), (started, started + 3 * 3600 + 14 * 86400))
+        early = [ledger_row(started + 3 * 3600, started=started, code='early-exit')]
+        view = decide(state(), context(lessons=ex.lessons(early, now)), now)['manager']['evidence']
+        self.assertIn('tried Sep 28, ended early, paying less than %s;' % GEMMA, view['lessons'][0]['text'])
+        self.assertEqual(decide(state(), context(), now)['manager']['evidence']['lessons'], [])
 
 
 def away(started, predicted=HOME_RATE * 2.4, **changes):
@@ -969,15 +1150,18 @@ def fresh_decision(test):
 
 class Sep9ReplayTests(tm.Harness):
     """Andrew's M5 Pro 48 GB on gemma (~$0.108 per ready hour). Public data shows dedicated
-    qwen3.5-35b-a3b boxes in his cell earning 3x dedicated gemma for hours (on Sep 9 his own
+    qwen3.5-35b-a3b boxes in his cell earning 4.5x dedicated gemma for hours (on Sep 9 his own
     qwen3.5-35b paid 2-2.8x gemma), then the regime ends. Expected: one excursion after two
     hourly checks and the 5-minute confirmation, pay tracked against what home would have
     paid, a return home when the evidence fades, a ledger row, and no second excursion.
     This Mac's gemma jobs paid list x the network's tokens (a calibrated home); it never
-    served qwen3.5-35b, so that side carries the uncalibrated ln 2 $/request error."""
+    served qwen3.5-35b, so that side carries the uncalibrated ln 4 $/request error of a model
+    outside the gemma and gpt-oss families on a normal check: 4.5x clears it, and a 3x regime arms
+    only as a trial, when qwen3.5-35b fits memory and its demand has held above 1.5x usual for two
+    hours (test_a_sustained_3x_regime_with_high_demand_arms_one_trial)."""
 
     CELL = 'M5 Pro|48'
-    REGIME = 3.0
+    REGIME = 4.5
 
     def setUp(self):
         super().setUp()
@@ -1202,8 +1386,8 @@ class Sep9ReplayTests(tm.Harness):
         self.assertEqual(self.commands, [])
 
     def test_a_1_85x_regime_priced_at_list_alone_does_not_arm(self):
-        # The old fixture: 1.85x public ratio. With an uncalibrated qwen3.5-35b (ln 2) the 90%
-        # low is 1.85 x e^-0.72 ~ 0.9, and a round trip from a $0.108 home needs ~1.9x anyway.
+        # The old fixture: 1.85x public ratio. With an uncalibrated qwen3.5-35b (ln 4) the 90%
+        # low is 1.85 x e^-1.4 ~ 0.46, and a gain from a $0.108 home must reach 2x anyway.
         self.regime(1.85)
         view = fresh_decision(self)['manager']
         row = {r['model']: r for r in view['evidence']['rows']}[QWEN]
@@ -1212,6 +1396,107 @@ class Sep9ReplayTests(tm.Harness):
         self.assertEqual(row['why'], 'weak evidence')
         self.run_for(2.5)
         self.assertEqual(self.commands, [])
+
+    def demand_history(self, high_from, high_to, usual=4.0, high=12.0):
+        """Public capacity samples for qwen3.5-35b every 30 s (opt_network): its usual load at
+        this time of day on the same weekday 1-3 weeks ago, and today `high` between
+        `high_from` and `high_to` seconds from now (else usual)."""
+        rows = []
+        for days in (7, 14, 21):
+            base = int(self.now) - days * 86400
+            rows += [(t, QWEN, usual, 0, 20, 20) for t in range(base - 4 * 3600, base + 7 * 3600, 30)]
+        start = int(self.now)
+        rows += [
+            (t, QWEN, high if high_from <= t - start < high_to else usual, 0, 20, 20)
+            for t in range(start - 3 * 3600, start + 7 * 3600, 30)
+        ]
+        with self.h.lock:
+            self.h.db.executemany('INSERT OR REPLACE INTO opt_network VALUES(?,?,?,?,?,?)', rows)
+            self.h.db.commit()
+        self.o.manager.excursions.invalidate()
+
+    def test_a_sustained_3x_regime_with_high_demand_arms_one_trial(self):
+        """calibration-2026-09-28.md (b) still holds for a normal check: list x the network mix
+        missed Andrew's realized $/job by more than 2x on 5 of 18 model-days outside gemma and
+        gpt-oss, so a model this Mac never served carries ln 4 and a 3x public ratio is weak
+        evidence there. Andrew (Sep 28): a Mac that can hold it should still try it when demand is
+        higher than usual and sustained. qwen3.5-35b fits this 48 GB Mac and its demand has been 3x
+        usual for two hours, so the trial bound (ln 2) arms it once; it pays, and a week passes
+        before another trial."""
+        self.regime(3.0)
+        self.demand_history(-2 * 3600, 7 * 3600)
+        one = self.ne.relative(QWEN, GEMMA, now=self.now, basis='list')
+        self.assertAlmostEqual(one['estimate']['usd_error'], math.log(4))
+        self.assertAlmostEqual(one['home_estimate']['usd_error'], 0.17, places=3)  # calibrated home
+        self.assertFalse(one['calibrated'])
+        self.assertLess(one['low'], 1)
+        a, b = one['estimate'], one['home_estimate']
+        trial = math.hypot(a['req_spread'], math.log(2), b['req_spread'], b['usd_error'])
+        self.assertAlmostEqual(one['trial_low'], one['ratio'] * math.exp(-trial))
+        self.assertGreater(one['trial_low'], 1.4)  # the same ratio at the ln 2 margin
+        row = {r['model']: r for r in fresh_decision(self)['manager']['evidence']['rows']}[QWEN]
+        self.assertAlmostEqual(row['ratio'], 3.0, places=3)
+        self.assertLess(row['ratioLow'], 1)
+        self.assertEqual((row['why'], row['trial'], row['demandRatio']), (None, True, 3.0))
+        self.run_for(6)
+        m = self.o.state['manager']
+        self.assertEqual([c[0] for c in self.commands], [QWEN, GEMMA])
+        last = m['lastExcursion']
+        self.assertEqual((last['target'], last['endCode']), (QWEN, 'faded'))
+        self.assertTrue(last['reason'].startswith('a trial of a model this Mac has not served lately'))
+        rows = self.o.manager.excursions.ledger.records('acct', self.live['device'], 0)
+        self.assertEqual(len(rows), 1)
+        self.assertGreater(rows[0]['gainUsd'], 0)  # $0.19/h against gemma's $0.108/h: no lesson
+        self.assertEqual(fresh_decision(self)['manager']['evidence']['lessons'], [])
+        # Replay the same regime and demand without the fade's hour of cooldown. The trial's paid
+        # jobs (>= OWN_MIN_JOBS) now calibrate qwen3.5-35b from this Mac's own credits: no trial
+        # bound any more.
+        m.pop('excursionHolds')
+        self.o.manager.excursions.invalidate()
+        self.ne.own_at = None
+        row = {r['model']: r for r in fresh_decision(self)['manager']['evidence']['rows']}[QWEN]
+        self.assertEqual((row['calibrated'], row['trialLow'], row['trial']), (True, None, False))
+        # Without those jobs it would still wait a week for another trial.
+        with self.h.lock:
+            self.h.db.execute('DELETE FROM opt_credits WHERE model=?', (QWEN,))
+            self.h.db.commit()
+        self.ne.own_at = None
+        self.o.manager.excursions.invalidate()
+        row = {r['model']: r for r in fresh_decision(self)['manager']['evidence']['rows']}[QWEN]
+        self.assertEqual((row['calibrated'], row['why']), (False, 'tried this week'))
+
+    def test_a_3x_regime_without_sustained_demand_does_not_arm(self):
+        self.regime(3.0)
+        row = {r['model']: r for r in fresh_decision(self)['manager']['evidence']['rows']}[QWEN]
+        self.assertEqual((row['why'], row['demandRatio']), ('demand not high enough', None))
+        self.demand_history(-3600, 0)  # one hour at 3x usual, then usual again
+        row = {r['model']: r for r in fresh_decision(self)['manager']['evidence']['rows']}[QWEN]
+        self.assertEqual((row['why'], row['demandRatio']), ('demand not high enough', 1.0))
+        self.run_for(2.5)
+        self.assertEqual(self.commands, [])
+
+    def test_own_jobs_calibrate_the_model_and_replace_the_trial_bar(self):
+        """With OWN_MIN_JOBS (50) own jobs on qwen3.5-35b in 7 days its $/request error comes from
+        this Mac's credits (|ln(own / list)| + 0.17), no trial bound is needed or offered, and a
+        3x regime arms on a normal check without the demand gate."""
+        self.regime(3.0)
+        with self.h.lock:
+            self.h.db.executemany(
+                'INSERT INTO opt_credits VALUES(?,?,?,?,?,?,?)',
+                [('acct', 30_000_000 + i, 'p', self.now - 86400, QWEN, 106, 10) for i in range(60)],
+            )
+            self.h.db.commit()
+        self.ne.own_at = None
+        one = self.ne.relative(QWEN, GEMMA, now=self.now, basis='list')
+        self.assertTrue(one['calibrated'])
+        self.assertAlmostEqual(one['estimate']['usd_error'], 0.17, places=3)
+        self.assertIsNone(one['trial_low'])
+        self.assertGreater(one['low'], 2)
+        row = {r['model']: r for r in fresh_decision(self)['manager']['evidence']['rows']}[QWEN]
+        self.assertEqual((row['calibrated'], row['trial'], row['trialLow'], row['why']), (True, False, None, None))
+        self.run_for(2.5)
+        self.assertEqual([c[0] for c in self.commands], [QWEN])
+        self.assertTrue(self.o.state['manager']['excursion']['reason'].startswith('public data for Macs'))
 
     def test_poor_realized_pay_ends_it_after_an_hour_past_its_ramp_and_holds_it_a_day(self):
         self.qwen_rate = 0.05
@@ -1232,6 +1517,14 @@ class Sep9ReplayTests(tm.Harness):
         view = self.o.last_demand_decision['manager']
         self.assertEqual({r['model']: r['why'] for r in view['evidence']['rows']}[QWEN], 'cooling down')
         self.assertLess(self.o.manager.excursions.ledger.records('acct', self.live['device'], 0)[0]['gainUsd'], 0)
+        # Its ledger row teaches a lesson: stronger evidence for two weeks (x2 now, fading).
+        later = self.now + 4 * 3600
+        view = Optimizer.demand_decision(self.o, later)['manager']['evidence']
+        (lesson,) = view['lessons']
+        self.assertEqual((lesson['model'], lesson['code'], lesson['home']), (QWEN, 'early-exit', GEMMA))
+        self.assertAlmostEqual(lesson['factor'], 2.0, places=1)
+        self.assertAlmostEqual(lesson['until'], m['lastExcursion']['endedAt'] + 14 * 86400, delta=300)
+        self.assertIn('ended early, paying less than %s; needs stronger evidence until' % GEMMA, lesson['text'])
 
     def test_kill_switch_pauses_excursions_and_pushes_a_notice(self):
         ledger = self.o.manager.excursions.ledger
@@ -1346,6 +1639,7 @@ class ControlEndpointTests(tm.Harness):
                 'active': True,
                 'home': 'a',
                 'homeSource': 'history',
+                'homeNotice': None,
                 'pinned': False,
                 'action': 'hold',
                 'reason': 'Holding home model a.',

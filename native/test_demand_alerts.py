@@ -133,6 +133,19 @@ class DemandAlertTests(unittest.TestCase):
         self.assertEqual(a['pressureRatio'], 1)
         self.assertEqual(a['status'], 'normal')
 
+    def test_a_spike_is_2_8x_the_time_of_day_median(self):
+        """calibration-2026-09-28.md (c): replaying Andrew's opt_network (Sep 13-28), 2x the old
+        mean "usual" fired 339 alerts, 2x the time-of-day median 500 (x1.47) and 2.8x the median
+        339 again (22 a day)."""
+        from demand_alerts import SPIKE_MIN_LOAD, SPIKE_RATIO
+
+        self.assertEqual((SPIKE_RATIO, SPIKE_MIN_LOAD), (2.8, 1))
+        self.baseline(load=2, warm=4)
+        self.recent(load=5.5, warm=4)  # 2.75x usual: normal now (a spike under the old 2x)
+        self.assertEqual(self.scan()['models'][0]['status'], 'normal')
+        self.recent(NOW + 60, load=5.6, warm=4)  # 2.8x
+        self.assertEqual(self.scan(NOW + 60)['models'][0]['status'], 'watching')
+
     def test_meaningful_load_and_queued_work_are_distinct_from_completed_requests(self):
         self.baseline(load=0.1)
         self.recent(load=0.5)

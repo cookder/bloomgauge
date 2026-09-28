@@ -141,6 +141,44 @@ def upgraded_policy(value=None, revision=0):
     return policy(result)
 
 
+def nearest(key, value):
+    """The allowed value of `key` closest to a saved one; None when it isn't a number."""
+    if not number(value):
+        return None
+    if key in CHOICES:
+        return min(CHOICES[key], key=lambda choice: (abs(choice - value), choice))
+    low, high, step = RANGES[key]
+    # Every range spans a whole number of steps, so this stays within it.
+    result = low + round((min(max(value, low), high) - low) / step) * step
+    return result if type(low) is int and type(step) is int else round(result, 6)
+
+
+def repaired_policy(value=None, revision=0):
+    """upgraded_policy, or a repair of a saved policy that no longer validates (an update
+    changed a range, or another build saved a key this one doesn't know): valid choices are
+    kept, unknown keys dropped, numbers moved to the nearest allowed value and missing ones
+    defaulted. Returns (policy, repaired keys); ValueError only when there is nothing to read."""
+    try:
+        return upgraded_policy(value, revision), []
+    except (TypeError, ValueError):
+        if not isinstance(value, dict):
+            raise ValueError('The saved demand-switching controls are unreadable.') from None
+    result, repaired = {}, {key for key in value if key not in POLICY}
+    for key, default in POLICY.items():
+        fixed = nearest(key, value[key]) if key in value else default
+        result[key] = default if fixed is None else fixed
+        if key in value and (result[key] != value[key] or not number(value[key])):
+            repaired.add(key)
+    if result['confirmationMinutes'] > result['minRunMinutes']:
+        result['confirmationMinutes'] = result['minRunMinutes']
+        repaired.add('confirmationMinutes')
+    try:
+        result = upgraded_policy(result, revision)
+    except ValueError:  # an old-default upgrade that no longer fits: keep the repaired values
+        result = policy(result)
+    return result, sorted(repaired)
+
+
 def quantile(values, fraction):
     values = sorted(values)
     if not values:

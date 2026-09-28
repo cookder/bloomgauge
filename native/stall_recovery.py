@@ -15,10 +15,19 @@ or the local engine. Bloomkeeper escalates one step at a time, waiting after eac
 When the model's own network demand collapsed as well, the flow stopping is
 explained by demand, so Bloomkeeper goes straight to the escape.
 
+Two triggers start the ladder. The first is this Mac's own history: steady work
+that suddenly stops. The second is Macs like this one (same chip and memory,
+same model, dedicated or mixed; network_evidence.py): they are clearly getting
+work in the public counters while this Mac, warm and trusted, gets none. It
+catches stalls the first misses, at rates below its steady-work bar, and it
+means demand for this hardware held even when the model's demand readings fell.
+
 This module is pure: it reads observations and returns the next step.
 """
 
 import math
+import statistics
+from model_combinations import members
 
 BASELINE_SECONDS = 20 * 60
 MIN_ACTIVE_MINUTES = 12  # of the 20 before the silence
@@ -46,6 +55,26 @@ EPISODE_LIMIT_SECONDS = 3 * 3600  # after this, a silence is ordinary quiet, not
 # took up to ~5 s on real switches (Sep 2026).
 HANDOVER_MARGIN_SECONDS = 120
 
+# Peer trigger ("Macs like yours are getting work; this one isn't"). Measured on the public
+# /v1/stats poll of Sep 27 09:14 - Sep 28 08:34 CDT (10-minute windows, ~1,150 providers,
+# dedicated boxes, Andrew's Mac left out): once a provider got nothing while at least 5 same-cell
+# peers on its model had a median of >= 60 requests an hour, the silence lasted another 10+
+# minutes 47% of the time after 10 minutes (n=171), 66% after 20 (n=73) and 82% after 30 (n=44).
+# At a >= 30 req/h bar the same figures were 39/62/82%, at >= 120 req/h 66/80/87%. So: a test
+# request after 10 minutes (the own trigger probes at 31%) and a restart after 20 (it restarts at
+# 71%). Andrew's own 23 h in that poll never had a 10-minute window without work; his longest
+# gap was two 5-minute windows (Sep 28 01:30-01:40) that ended by itself, which at most
+# earns a test request. Filtering on the peers' share of empty windows (<= 0.25 or <= 0.10)
+# didn't sharpen these figures, so the median bar is the only one.
+PEER_MIN_PEERS = 5  # network_evidence.MIN_PROVIDERS
+PEER_MIN_REQ_H = 60.0  # peers' median: ~5 requests per 5-minute window, P(none) < 1% at that rate
+PEER_SILENCE_SECONDS = 10 * 60  # two 5-minute windows: first step
+PEER_RESTART_SILENCE_SECONDS = 20 * 60  # four windows
+PEER_FRESH_SECONDS = 15 * 60  # newest window (they close every ~5 min, up to ~6 min late)
+PEER_NOTE = "Macs like yours are getting work; this one isn't."
+# A test request routed to this Mac reaches it up to its 90 s reply timeout after the step.
+PROBE_LAG_SECONDS = 120
+
 
 def finite(v):
     return type(v) in (int, float) and math.isfinite(v)
@@ -64,13 +93,71 @@ def demand(samples, start, end):
     return {'load': load, 'pressure': load / max(1, warm), 'samples': len(rows)}
 
 
-def assess(minutes, network, attempts, switches, session_start, now, probe_available=True):
+def peer_stall(windows, model, now, probes=()):
+    """The latest unbroken run of this Mac's public-counter windows on `model` with no work,
+    and what its same-level peers got meanwhile; None without such a run.
+
+    windows: network_evidence.own_windows() [{'at', 'start', 'model', 'requests', 'trusted',
+    'peers', 'peer_rates'}]; a window exists only while this Mac was live with `model` loaded
+    in both snapshots. probes: times of this episode's test requests, whose own request is not
+    network work. 'busy' is the trigger: enough peers, clearly getting work, still now."""
+    names = set(members(model)) or {model}
+    run = []
+    for w in sorted(windows or (), key=lambda w: -w['at']):
+        allowed = sum(1 for t in probes if w['start'] - PROBE_LAG_SECONDS <= t <= w['at'])
+        if (
+            w.get('model') not in names
+            or not finite(w.get('requests'))
+            or w['requests'] > allowed
+            or w.get('trusted') is False  # 'hardware' trust; None: the field is missing
+            or (run and abs(run[-1]['start'] - w['at']) > 1)  # a gap: the run ends there
+        ):
+            break
+        run.append(w)
+    if not run or not 0 <= now - run[0]['at'] <= PEER_FRESH_SECONDS:
+        return None
+    rates = [r for w in run for r in w.get('peer_rates') or ()]
+    latest = run[0].get('peer_rates') or ()
+    peers = int(statistics.median(w.get('peers') or 0 for w in run))  # a typical window's count
+    median = statistics.median(rates) if rates else 0.0
+    return {
+        'since': run[-1]['start'],
+        'seconds': run[0]['at'] - run[-1]['start'],
+        'windows': len(run),
+        'peers': peers,
+        'peerReqPerHour': median,
+        'peerZeroShare': sum(1 for r in rates if r == 0) / len(rates) if rates else None,
+        'cell': run[0].get('cell'),
+        'dedicated': run[0].get('dedicated'),
+        'busy': bool(
+            peers >= PEER_MIN_PEERS
+            and median >= PEER_MIN_REQ_H
+            and latest
+            and statistics.median(latest) > 0
+        ),
+    }
+
+
+def peer_sentence(peer, silence):
+    """The peer trigger in plain words, for the stall card and the decision log."""
+    return (
+        PEER_NOTE
+        + ' %d similar Macs got a median of %d requests an hour; none reached this one in %d min.'
+        % (peer['peers'], round(peer['peerReqPerHour']), max(1, round(silence / 60)))
+    )
+
+
+def assess(
+    minutes, network, attempts, switches, session_start, now, probe_available=True, peers=None
+):
     """Next recovery step for the current episode, or none.
 
     minutes: this Mac's warm minutes [{'at', 'model', 'seconds', 'jobs'}], any model.
     network: {model: [{'at', 'active', 'queued', 'warm'}]} network capacity samples.
     attempts: recovery steps already taken [{'at', 'step', 'model'}].
     switches: times Bloomkeeper started a model switch (any reason).
+    peers: this Mac's recent public-counter windows with its peers' rates (see peer_stall),
+    or None (no evidence, or a network-wide outage: the peer trigger stays quiet).
     """
     probes = {int(a['at'] // 60) * 60 for a in attempts if a.get('step') == 'probe'}
     # A probe's own one-token job is not network work.
@@ -92,6 +179,8 @@ def assess(minutes, network, attempts, switches, session_start, now, probe_avail
         'model': None,
         'episodeStart': None,
         'taken': [],
+        'trigger': None,
+        'peers': None,
     }
     if not worked:
         result.update(status='quiet', reason='No recent steady work to compare against.')
@@ -116,14 +205,27 @@ def assess(minutes, network, attempts, switches, session_start, now, probe_avail
     result.update(
         model=model, silenceSeconds=silence, baselineJobsPerMinute=rate, episodeStart=last
     )
-    if active < MIN_ACTIVE_MINUTES or rate < MIN_JOBS_PER_MINUTE:
+    peer = peer_stall(
+        peers,
+        model,
+        now,
+        [a['at'] for a in attempts if a.get('step') == 'probe' and a['at'] >= last],
+    )
+    if peer:
+        result['peers'] = {k: v for k, v in peer.items() if k != 'since'}
+    steady = active >= MIN_ACTIVE_MINUTES and rate >= MIN_JOBS_PER_MINUTE
+    # Macs like this one are getting work: this Mac's silence isn't the network's quiet time.
+    by_peers = bool(peer and peer['busy'] and peer['seconds'] >= PEER_SILENCE_SECONDS)
+    if not steady and not by_peers:
         result.update(
             status='quiet',
             reason='Work before this quiet period was not steady enough to call it a stall.',
         )
         return result
-    result['requiredSeconds'] = SILENCE_SECONDS
-    if silence < SILENCE_SECONDS:
+    result['trigger'] = 'own' if steady else 'peers'
+    required = SILENCE_SECONDS if steady else PEER_SILENCE_SECONDS
+    result['requiredSeconds'] = required
+    if silence < required:
         return result
     if now - last > EPISODE_LIMIT_SECONDS:
         result.update(
@@ -182,7 +284,9 @@ def assess(minutes, network, attempts, switches, session_start, now, probe_avail
     restart_allowed = len(day) < RESTARTS_PER_DAY and all(
         now - a['at'] >= RESTART_SPACING_SECONDS for a in day
     )
-    if held is False and 'escape' not in taken:
+    # Peers on this model still getting work overrule a fall in its demand readings: demand
+    # for Macs like this one held.
+    if held is False and not by_peers and 'escape' not in taken:
         step, reason = (
             'escape',
             "Work stopped and this model's network demand fell as well. Moving on without waiting for the usual idle time.",
@@ -195,12 +299,17 @@ def assess(minutes, network, attempts, switches, session_start, now, probe_avail
     ):
         step, reason = (
             'probe',
-            'Work stopped abruptly while network demand held. Sending a test request to nudge routing.',
+            peer_sentence(peer, silence) + ' Sending a test request to nudge routing.'
+            if by_peers
+            else 'Work stopped abruptly while network demand held. Sending a test request to nudge routing.',
         )
     elif 'restart' not in taken and 'escape' not in taken and restart_allowed:
         step, reason = (
             'restart',
-            'Still no work while network demand held. Restarting the provider on the same model for a fresh session.',
+            peer_sentence(peer, silence)
+            + ' Restarting the provider on the same model for a fresh session.'
+            if by_peers
+            else 'Still no work while network demand held. Restarting the provider on the same model for a fresh session.',
         )
     elif 'escape' not in taken:
         step, reason = (
@@ -226,8 +335,11 @@ def assess(minutes, network, attempts, switches, session_start, now, probe_avail
                 + '. Bloomkeeper has stopped trying; check Darkbloom for a routing problem.'
             ),
         )
-    if step == 'restart' and silence < RESTART_SILENCE_SECONDS:
-        result.update(reason='Waiting for 8 minutes of silence before restarting.')
+    restart_silence = RESTART_SILENCE_SECONDS if steady else PEER_RESTART_SILENCE_SECONDS
+    if step == 'restart' and silence < restart_silence:
+        result.update(
+            reason='Waiting for %d minutes of silence before restarting.' % (restart_silence // 60)
+        )
         return result
     if step == 'restart' and not (recent and recent['pressure'] >= RESTART_MIN_PRESSURE):
         # The gate skips the restart, not the ladder: the escape (then hold) still follows.
@@ -243,5 +355,7 @@ def assess(minutes, network, attempts, switches, session_start, now, probe_avail
             + (' and '.join(taken) if taken else 'waiting')
             + '. Letting the optimizer try another model now.',
         )
+    if by_peers and not reason.startswith(PEER_NOTE):
+        reason = PEER_NOTE + ' ' + reason
     result.update(step=step, reason=reason)
     return result
