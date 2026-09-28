@@ -16,10 +16,15 @@ import time
 import urllib.request
 from urllib.parse import urlsplit
 
+from manager import enabled as manager_enabled
+
 LIMIT = 10
 MAX_READS = 6
 HOURS = (1, 24, 168)
 ID = re.compile(r'[a-f0-9]{32}')
+NAMES = 4  # model names a summary lists; older peers reject more
+RATED = 8  # per-model paces a summary carries
+MODES = ('observe', 'demand', 'week', 'optimize', 'combo')
 
 
 def origin(value):
@@ -62,6 +67,27 @@ def text(value, limit=100):
     return value[:limit] if isinstance(value, str) else ''
 
 
+def model_rates(h, account, device, models, rate, window):
+    """Split this Mac's 5-minute pace by the models its credits name, or None when the
+    split is unknown. Pace comes from confirmed credits, and each credit carries its model."""
+    start, end = (number((window or {}).get(k)) for k in ('start', 'end'))
+    if rate is None or not models or start is None or end is None:
+        return None
+    marks = ','.join('?' for _ in models)
+    rows = h.db.execute(
+        f"SELECT c.model, SUM(c.micro_usd) FROM opt_credits c WHERE c.account=? AND c.at>? AND c.at<=? AND c.model IN ({marks}) AND EXISTS(SELECT 1 FROM opt_identity i WHERE i.device=? AND i.provider=c.provider) GROUP BY c.model",
+        (account, start, end, *models, device),
+    ).fetchall()
+    earned = {m: micro for m, micro in rows if micro and micro > 0}
+    total = sum(earned.values())
+    if not total:
+        return [] if rate == 0 else None
+    return sorted(
+        ({'model': m, 'ratePerHour': rate * micro / total} for m, micro in earned.items()),
+        key=lambda r: (-r['ratePerHour'], r['model']),
+    )[:RATED]
+
+
 def local_summary(collector, hours, now=None):
     now = time.time() if now is None else now
     if type(hours) is not int or hours not in HOURS:
@@ -74,6 +100,9 @@ def local_summary(collector, hours, now=None):
     with collector.optimizer.lock:
         mode = collector.optimizer.state.get('mode', 'observe')
         switching = bool(collector.optimizer.state.get('pending'))
+        managed = mode == 'demand' and manager_enabled(
+            collector.optimizer.state.get('demandPolicy')
+        )
     known = None
     covered = 0
     matched = False
@@ -111,11 +140,16 @@ def local_summary(collector, hours, now=None):
         and -10 <= now - earn_at <= 120
         and (snap.get('earnings') or {}).get('status') == 'ok'
     )
-    rate = (
-        number(((pulse.get('windows') or {}).get('300') or {}).get('ratePerHour'))
-        if fresh and pulse.get('status') == 'live'
-        else None
-    )
+    window = (pulse.get('windows') or {}).get('300') or {}
+    rate = number(window.get('ratePerHour')) if fresh and pulse.get('status') == 'live' else None
+    names = [text(m, 160) for m in (pulse.get('models') or []) if isinstance(m, str)][:64]
+    rates = None
+    if matched and rate is not None:
+        with h.lock:
+            rates = model_rates(h, account, device, names, rate, window)
+    # Earning models first, so the names a summary lists are the ones that pay.
+    order = {r['model']: i for i, r in enumerate(rates or [])}
+    names.sort(key=lambda m: order.get(m, len(order)))
     return {
         'schema': 1,
         'installation': collector.installation,
@@ -129,12 +163,13 @@ def local_summary(collector, hours, now=None):
         'name': collector.machines.name,
         'chip': text(hw.get('chip')),
         'memoryGB': number(hw.get('memoryTotalGB')),
-        'models': [text(m, 160) for m in (pulse.get('models') or [])[:4] if isinstance(m, str)],
+        'models': names[:NAMES],
+        'modelCount': len(names),
+        'modelRates': rates,
+        'strategy': 'manager' if managed else None,
         'ready': bool(fresh and tracking.get('counting')),
         'switching': switching,
-        'optimizer': mode
-        if mode in ('observe', 'demand', 'week', 'optimize', 'combo')
-        else 'observe',
+        'optimizer': mode if mode in MODES else 'observe',
         'pro': True,  # Bloom 1.36.45 and older require this key from peers.
         'cpuPercent': number(hw.get('cpuPercent')) if fresh else None,
         'gpuPercent': number(hw.get('gpuPercent')) if fresh else None,
@@ -220,16 +255,59 @@ def validate_summary(value, hours):
             raise ValueError('Invalid Mac state.')
     if (
         not isinstance(value['models'], list)
-        or len(value['models']) > 4
+        or len(value['models']) > NAMES
         or any(not isinstance(m, str) or len(m) > 160 for m in value['models'])
     ):
         raise ValueError('Invalid model list.')
-    if value['optimizer'] not in ('observe', 'demand', 'week', 'optimize', 'combo'):
+    if value['optimizer'] not in MODES:
         raise ValueError('Invalid optimizer mode.')
     for key, limit in (('name', 48), ('chip', 100), ('scope', 150)):
         if not isinstance(value[key], str) or len(value[key]) > limit:
             raise ValueError('Invalid summary text.')
-    return {k: value[k] for k in keys}  # Never relay extra fields/secrets from peers.
+    # Newer summaries add these; older peers leave them out and read as before.
+    count = value.get('modelCount', len(value['models']))
+    rates = value.get('modelRates')
+    strategy = value.get('strategy')
+    if type(count) is not int or not len(value['models']) <= count <= 64:
+        raise ValueError('Invalid model count.')
+    if rates is not None and (
+        not isinstance(rates, list)
+        or len(rates) > RATED
+        or any(
+            not isinstance(r, dict)
+            or set(r) != {'model', 'ratePerHour'}
+            or not isinstance(r['model'], str)
+            or len(r['model']) > 160
+            or number(r['ratePerHour']) is None
+            for r in rates
+        )
+        or len({r['model'] for r in rates}) != len(rates)
+    ):
+        raise ValueError('Invalid model pace.')
+    if strategy not in (None, 'manager'):
+        raise ValueError('Invalid optimizer strategy.')
+    # Never relay extra fields/secrets from peers.
+    return {
+        **{k: value[k] for k in keys},
+        'modelCount': count,
+        'modelRates': [dict(r) for r in rates] if rates is not None else None,
+        'strategy': strategy,
+    }
+
+
+def split(report):
+    """{model: pace} for one Mac, from the models its credits name; None when unknown.
+    One model takes the whole pace. A set whose split is unknown (an older peer,
+    or no matching credits) adds no per-model pace rather than a guessed even split."""
+    rate = report.get('ratePerHour')
+    if rate is None:
+        return None
+    if report.get('modelRates') is not None:
+        return {r['model']: r['ratePerHour'] for r in report['modelRates']}
+    names = report.get('models') or []
+    if len(names) == 1 and report.get('modelCount', 1) == 1:
+        return {names[0]: rate}
+    return None
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -426,16 +504,16 @@ class Machines:
             r = row['report']
             if not r or row['status'] not in ('connected', 'stale'):
                 continue
-            names = r['models'] or []
+            rates = split(r)
+            names = list(r['models'] or [])
+            names += [m for m in rates or {} if m not in names]
             for m in names:
                 item = models.setdefault(
                     m, {'model': m, 'macs': [], 'ratePerHour': None, 'demand': None}
                 )
                 item['macs'].append(row['installation'])
-                rate = r['ratePerHour'] if row['status'] == 'connected' else None
-                if rate is not None:
-                    # A pair shares one pace; split it evenly so the model totals add up to the fleet pace.
-                    item['ratePerHour'] = (item['ratePerHour'] or 0) + rate / len(names)
+                if row['status'] == 'connected' and rates is not None:
+                    item['ratePerHour'] = (item['ratePerHour'] or 0) + rates.get(m, 0)
         for item in models.values():
             item['demand'] = self.demand(item['model'], now)
         return {

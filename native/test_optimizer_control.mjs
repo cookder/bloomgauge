@@ -45,6 +45,12 @@ test('lightweight status accepts unavailable saved models without requiring anal
   );
 });
 
+test('control status may name the effective strategy', () => {
+  assert.equal(validOptimizerControl({ ...fixture(), strategy: 'manager' }), true);
+  assert.equal(validOptimizerControl({ ...fixture(), strategy: 'legacy' }), true);
+  assert.equal(validOptimizerControl({ ...fixture(), strategy: 'boost' }), false);
+});
+
 test('malformed nested control data never replaces the last confirmed status', () => {
   const changes = [
     { at: NaN },
@@ -131,10 +137,13 @@ test('reopening and retrying preserve exact UUID payload despite changing versio
     'null',
     JSON.stringify({ ...request, requestId: 'bad' }),
     JSON.stringify({ ...request, enabled: false }),
-    JSON.stringify({ ...request, models: ['current'] }),
+    JSON.stringify({ ...request, models: [] }),
     JSON.stringify({ ...request, unknown: true }),
   ])
     assert.equal(readAutomaticRequest(bad), null);
+  // The manager can hold one model (the backend keeps two for legacy plans).
+  const one = { ...request, models: ['current'] };
+  assert.deepEqual(readAutomaticRequest(JSON.stringify(one)), one);
 });
 
 test('only matching receipts acknowledge a lost response, never a healthy or same-mode GET', () => {

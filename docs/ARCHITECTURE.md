@@ -71,6 +71,7 @@ Vite, React 19 and TypeScript. The app uses only `vite.local.config.ts`: `pnpm r
 - **`components/dashboard/*`**: one file per panel or screen (optimizer, earnings, network, phone access, My Macs, support, sharing settings). `components/ui/*` holds shadcn/Base UI primitives.
 - **`lib/*`**: validators that check API responses before rendering (for example `optimizer-response.ts`, `network-response.ts`) and pure logic for polling, formatting and charts. `lib/*.test.mjs` and `native/test_*.mjs` test them, importing the `.ts` files directly under `node --test`.
 - **`app/globals.css`**: the single stylesheet (Tailwind v4 imports plus hand-written classes).
+- **Themes**: System (default), Light or Dark, chosen in the header or on the More screen and saved in `localStorage` (`lib/theme.ts`); `public/theme-boot.js` applies it before the first paint, and the Mac window follows it through the `bloomAppearance` message handler. Colours are tokens named after their dark value (`var(--c-35584a)`), with both values in the generated `app/theme-palette.css`; run `node tools/theme-palette.mjs` after adding a colour (`lib/theme.test.mjs` fails on raw hex).
 - `public/`: icons, the web app manifest, and `push-sw.js`, the service worker for phone notifications.
 
 ## Build, test and release

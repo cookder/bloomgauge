@@ -270,7 +270,7 @@ export function StudyChart({
             >
               <CartesianGrid
                 vertical={false}
-                stroke="#27303c"
+                stroke="var(--c-27303c)"
                 strokeDasharray="2 6"
               />
               <XAxis
@@ -281,7 +281,7 @@ export function StudyChart({
                 axisLine={false}
                 tickLine={false}
                 minTickGap={55}
-                tick={{ fill: '#96a6b8', fontSize: 11 }}
+                tick={{ fill: 'var(--c-96a6b8)', fontSize: 11 }}
                 tickFormatter={(v) =>
                   new Date(v * 1000).toLocaleString(
                     [],
@@ -295,15 +295,15 @@ export function StudyChart({
                 width={64}
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: '#96a6b8', fontSize: 11 }}
+                tick={{ fill: 'var(--c-96a6b8)', fontSize: 11 }}
                 tickFormatter={(v) =>
                   unit.includes('USD') ? money(v) : num(v, 1)
                 }
               />
               <Tooltip
                 contentStyle={{
-                  background: '#171d27',
-                  border: '1px solid #354153',
+                  background: 'var(--c-171d27)',
+                  border: '1px solid var(--c-354153)',
                   borderRadius: 10,
                   fontSize: 12,
                 }}
@@ -320,7 +320,7 @@ export function StudyChart({
                   <ReferenceLine
                     key={m.at}
                     x={m.at}
-                    stroke="#ad9aff"
+                    stroke="var(--c-ad9aff)"
                     strokeOpacity={0.5}
                     strokeDasharray="3 4"
                   />
@@ -460,14 +460,14 @@ function SupplyDemand({
                 {
                   key: 'rawActive',
                   label: 'Sampled active',
-                  color: '#96a6b8',
+                  color: 'var(--c-96a6b8)',
                   faint: true,
                 },
               ]
             : []),
-          { key: 'active', label: 'Active requests', color: '#91bcff' },
-          { key: 'warm', label: 'Warm providers', color: '#82efb5' },
-          { key: 'queued', label: 'Queued', color: '#f3c57e' },
+          { key: 'active', label: 'Active requests', color: 'var(--c-91bcff)' },
+          { key: 'warm', label: 'Warm providers', color: 'var(--c-82efb5)' },
+          { key: 'queued', label: 'Queued', color: 'var(--c-f3c57e)' },
         ]}
         from={from}
         to={to}
@@ -490,7 +490,7 @@ function SupplyDemand({
               {
                 key: 'usdPerWarmHour',
                 label: 'Confirmed inference',
-                color: '#82efb5',
+                color: 'var(--c-82efb5)',
               },
             ]}
             from={from}
@@ -508,7 +508,7 @@ function SupplyDemand({
               {
                 key: 'requestsPerMinute',
                 label: 'Local requests',
-                color: '#b49cff',
+                color: 'var(--c-b49cff)',
               },
             ]}
             from={from}
@@ -1054,6 +1054,7 @@ type Lab = {
     improvementPercent: number | null;
   }[];
   portfolios: Portfolio[];
+  targetUsdPerHour?: number | null;
 };
 const validLab = (d: Lab) =>
   !!d &&
@@ -1239,9 +1240,9 @@ function PredictiveLabPanel({ paused }: { paused: boolean }) {
       </p>
       <h3>One model or a pair?</h3>
       <p className="footnote">
-        Bloomkeeper supports trials of two resident models. Automatic demand selection
-        still ranks solo models. These are measured outcomes for each exact
-        serving set; solo rates are never added to predict pair income.
+        Bloomkeeper supports trials of two resident models. Automatic demand
+        selection still ranks solo models. These are measured outcomes for each
+        exact serving set; solo rates are never added to predict pair income.
       </p>
       <div className="predictive-portfolios">
         {data?.portfolios.map((p) => (
@@ -1265,9 +1266,11 @@ function PredictiveLabPanel({ paused }: { paused: boolean }) {
                 ? 'not enough joint / repeated history'
                 : `${money(p.stddevUSDPerHour)} / hr standard deviation`}
               .{' '}
-              {p.belowTargetPercent == null
-                ? 'No complete blocks yet.'
-                : `${num(p.belowTargetPercent, 0)}% of complete blocks below $0.12/hr.`}
+              {data.targetUsdPerHour == null
+                ? ''
+                : p.belowTargetPercent == null
+                  ? 'No complete blocks yet.'
+                  : `${num(p.belowTargetPercent, 0)}% of complete blocks below your ${money(data.targetUsdPerHour)}/hr goal.`}
             </p>
             {p.members.length > 1 && (
               <p className="footnote">

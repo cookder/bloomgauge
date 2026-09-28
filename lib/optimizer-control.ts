@@ -30,6 +30,10 @@ export type OptimizerControlState = {
     };
   };
   warmup?: { status?: string; detail?: string };
+  /** Compact manager status (lib/optimizer-manager.ts readManagerSummary); null under legacy. */
+  manager?: Record<string, unknown> | null;
+  /** The effective strategy (native/optimizer_control.py); absent on older backends. */
+  strategy?: 'manager' | 'legacy' | null;
 };
 
 export function validOptimizerControl(
@@ -95,7 +99,11 @@ export function validOptimizerControl(
     (v.warmup == null ||
       (record(v.warmup) &&
         (v.warmup.status == null || typeof v.warmup.status === 'string') &&
-        (v.warmup.detail == null || typeof v.warmup.detail === 'string')))
+        (v.warmup.detail == null ||
+          typeof v.warmup.detail === 'string'))) &&
+    // Read field by field later (readManagerSummary): only its shape is checked here.
+    (v.manager == null || record(v.manager)) &&
+    (v.strategy == null || v.strategy === 'manager' || v.strategy === 'legacy')
   );
 }
 
@@ -117,6 +125,23 @@ export type AutomaticRequest = {
   demandPolicy?: Record<string, number>;
 };
 export const automaticRequestKey = 'bloom-optimizer-pending-v1';
+
+/** Manager: release the pinned model; the manager chooses the home model again. */
+export type ReleasePinRequest = {
+  action: 'release-pin';
+  requestId: string;
+  expectedControl: string;
+};
+export function releasePinRequest(
+  state: OptimizerControlState,
+  requestId: string,
+): ReleasePinRequest {
+  return {
+    action: 'release-pin',
+    requestId,
+    expectedControl: state.controlVersion,
+  };
+}
 
 export function initialOptimizerModels(state: OptimizerControlState): string[] {
   // The stopped/warming current model remains part of the reviewed first plan.
@@ -180,8 +205,9 @@ export function readAutomaticRequest(
       ) ||
       (v.expectedProvider !== undefined &&
         typeof v.expectedProvider !== 'string') ||
+      // The manager can hold one model; the backend enforces two for legacy plans.
       (v.models !== undefined &&
-        (!modelIds(v.models, 16) || v.models.length < 2)) ||
+        (!modelIds(v.models, 16) || v.models.length < 1)) ||
       (v.demandPolicy !== undefined &&
         (!record(v.demandPolicy) ||
           !Object.values(v.demandPolicy).every(

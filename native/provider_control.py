@@ -3,6 +3,10 @@
 Uses the optimizer's command lock, pending marker and update reservation. Request
 IDs survive lost responses; version tokens cover both service settings and the
 observed process. Endpoint configuration remains Mac-only.
+
+Stop pauses automatic control. Under the manager, Start and endpoint setup do not:
+like a manual pick, automatic control continues once the command is done (the
+pending marker keeps the manager out while it runs).
 """
 
 import copy
@@ -14,10 +18,21 @@ import subprocess
 import threading
 import time
 import uuid
-from model_combinations import members, selection_key, pair_budget, combination_config_error
+import manager
+from model_combinations import (
+    members,
+    selection_key,
+    pair_budget,
+    combination_config_error,
+    configured_reserve_gb,
+)
 from model_readiness import session_key
 from provider_sessions import matching_process, process_identity
 from prewarm import local_request, WarmupError
+
+# `darkbloom stop` returns in seconds on older providers. From 0.9.9 it drains first
+# (600 s default deadline; a timeout leaves the service draining), like `start`.
+STOP_SECONDS = 60
 
 
 def endpoint_issue(options):
@@ -156,6 +171,8 @@ class ProviderControl:
             if blocked
             else 'Running in the background. Closing this window does not stop Darkbloom.'
             if v['status'] == 'running'
+            else 'Stopped. Start it in Optimizer → Overview; automatic control stays on.'
+            if v['status'] == 'stopped' and manager.active(o.state)
             else 'Stopped. Choose a model and start that selection in Optimizer → Overview; automatic switching stays paused.'
             if v['status'] == 'stopped'
             else 'Waiting for a fresh provider status. Refresh before sending a command.',
@@ -254,10 +271,11 @@ class ProviderControl:
                     )
             # Persist admission before dispatch; no command follows a failed save.
             before = copy.deepcopy(o.state)
-            o.pause_internal(
-                'Manual provider control paused automatic switching.',
-                keep_automatic_intent=automatic_id,
-            )
+            if kind == 'provider-stop' or automatic_id is not None or not manager.active(o.state):
+                o.pause_internal(
+                    'Manual provider control paused automatic switching.',
+                    keep_automatic_intent=automatic_id,
+                )
             o.state['providerRequests'] = (
                 o.state.get('providerRequests', [])
                 + [{'id': request_id, 'action': kind, 'version': v['version']}]
@@ -312,6 +330,8 @@ class ProviderControl:
                         'The provider changed before the command. Refresh the model controls; no command was sent.'
                     )
                 if kind == 'provider-stop':
+                    from optimizer import DRAIN_SECONDS, graceful_drain
+
                     with o.lock:
                         o.warmup = {}
                     o.runner(
@@ -319,7 +339,9 @@ class ProviderControl:
                         stdin=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
-                        timeout=60,
+                        timeout=DRAIN_SECONDS + STOP_SECONDS
+                        if graceful_drain(current['raw'])
+                        else STOP_SECONDS,
                         check=True,
                     )
                 else:
@@ -358,18 +380,29 @@ class ProviderControl:
                             raise ValueError(
                                 'Waiting for memory estimates for every saved model. Refresh models before starting.'
                             )
+                        # The user's own Start: provider.toml's memory_reserve_gb is the reserve,
+                        # and knobs that hold only Bloomkeeper's voluntary moves don't refuse it.
+                        reserve = configured_reserve_gb(o.home, current['options'])
                         if len(models) == 2:
                             reason = combination_config_error(
-                                o.home, current['options'], current['environment']
+                                o.home, current['options'], current['environment'], voluntary=False
                             )
                             if reason:
                                 raise ValueError(reason)
                             budget = pair_budget(
-                                live.get('hardware', {}), {'memoryGB': 0}, models, weights
+                                live.get('hardware', {}),
+                                {'memoryGB': 0},
+                                models,
+                                weights,
+                                config_reserve=reserve,
                             )
                         else:
                             budget = memory_budget(
-                                live.get('hardware', {}), {'memoryGB': 0}, models[0], weights[0]
+                                live.get('hardware', {}),
+                                {'memoryGB': 0},
+                                models[0],
+                                weights[0],
+                                config_reserve=reserve,
                             )
                         if not budget or budget['afterUnloadGB'] < budget['requiredGB']:
                             raise ValueError(
@@ -426,7 +459,11 @@ class ProviderControl:
                             except WarmupError:
                                 continue
                         outcome = 'completed'
-                        detail = 'Darkbloom started. Waiting for model readiness; automatic switching remains paused.'
+                        detail = (
+                            'Darkbloom started. Waiting for model readiness; automatic control continues.'
+                            if manager.active(o.state)
+                            else 'Darkbloom started. Waiting for model readiness; automatic switching remains paused.'
+                        )
                         break
         except ValueError as error:
             detail = str(error)
@@ -442,7 +479,7 @@ class ProviderControl:
                 }
                 if (o.state.get('pending') or {}).get('requestId') == request_id:
                     o.state.pop('pending', None)
-                o.status = 'observing'
+                o.status = 'optimizing' if manager.active(o.state) else 'observing'
                 o.detail = detail
                 o.next_identity = 0
                 o.next_discovery = 0

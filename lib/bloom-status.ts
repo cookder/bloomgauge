@@ -5,6 +5,8 @@ export type BloomHealthSnapshot = {
     status: string;
     updatedAt: number | null;
     error?: string | null;
+    /** The collector's earnings poll interval (live_earnings.POLL_SECONDS). */
+    pollSeconds?: number;
   };
   provider?: {
     online: boolean;
@@ -12,7 +14,41 @@ export type BloomHealthSnapshot = {
   };
   pulse?: { status: string };
 };
-export type BloomHealth = { tone: BloomTone; detail: string; urgent?: boolean };
+export type BloomHealth = {
+  tone: BloomTone;
+  detail: string;
+  urgent?: boolean;
+  /** Replaces the tone's usual label (a steady pause is not "Paused" or "Background"). */
+  label?: string;
+};
+
+// Statistics pauses that last as long as the Mac's situation does, not an update in
+// progress: Darkbloom unloaded an idle model, a 3+ model Mac waiting for work, per-model
+// statistics on a 3+ model set, or a Mac not matched to the provider roster. The backend
+// sends no reason code (tracking.status is only 'paused'), so these read its fixed details
+// (native/model_readiness.py, provider_reporting.py; pinned by lib/bloom-status.test.mjs).
+export const steadyPauseDetails = [
+  "isn't loaded right now",
+  'Not loaded now:',
+  'are loaded yet',
+  'waiting to observe fresh serving output',
+  'Per-model statistics need one model or a pair',
+  'to the provider roster',
+];
+
+/** The backend's reason when statistics pause for a steady state; null otherwise. */
+export function steadyPause(data: BloomHealthSnapshot): string | null {
+  const tracking = data.provider?.tracking;
+  const detail = typeof tracking?.detail === 'string' ? tracking.detail : '';
+  if (
+    tracking?.counting === false &&
+    steadyPauseDetails.some((d) => detail.includes(d))
+  )
+    return detail;
+  if (tracking?.counting !== false && data.pulse?.status === 'unmatched')
+    return 'Pace waits until Darkbloom’s provider roster matches this Mac’s session.';
+  return null;
+}
 export type BloomStatusState = {
   tone: BloomTone;
   candidate: BloomTone;
@@ -61,6 +97,15 @@ export function bloomHealth(
     };
   const earnings = data.earnings,
     earningsAge = earnings?.updatedAt == null ? null : now - earnings.updatedAt;
+  // The backend's own freshness: two polls plus 5 s (45 s at the usual 20 s poll).
+  const poll =
+    typeof earnings?.pollSeconds === 'number' &&
+    Number.isFinite(earnings.pollSeconds) &&
+    earnings.pollSeconds > 0
+      ? earnings.pollSeconds
+      : 20;
+  const earningsFresh = 2 * poll + 5,
+    earningsAttention = Math.max(300, 15 * poll);
   if (
     earningsAge !== null &&
     (!Number.isFinite(earningsAge) || earningsAge < -5)
@@ -71,7 +116,7 @@ export function bloomHealth(
       detail:
         'The earnings reading has an invalid time. Check the clocks on this device and the Mac.',
     };
-  if (earningsAge !== null && earningsAge >= 300)
+  if (earningsAge !== null && earningsAge >= earningsAttention)
     return {
       tone: 'red',
       urgent: true,
@@ -90,7 +135,7 @@ export function bloomHealth(
     earnings.status !== 'ok' ||
     !!earnings.error ||
     earningsAge === null ||
-    earningsAge > 60
+    earningsAge > earningsFresh
   )
     return {
       tone: 'yellow',
@@ -102,6 +147,13 @@ export function bloomHealth(
       tone: 'yellow',
       detail:
         'Bloomkeeper is connected. Darkbloom is stopped or its provider reading is not yet available; check model controls if this is unexpected.',
+    };
+  const steady = steadyPause(data);
+  if (steady)
+    return {
+      tone: 'neutral',
+      label: 'Connected',
+      detail: `Readings are current. ${steady}`,
     };
   if (
     data.provider.tracking?.counting === false ||

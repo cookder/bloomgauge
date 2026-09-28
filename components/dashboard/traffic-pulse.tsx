@@ -39,7 +39,7 @@ export function TrafficPulse({
   );
   previous.current = { key, scale: dial.scale };
   const unit = metric === 'tokens' ? 'tokens / sec' : 'requests / min';
-  const color = comparison ? dial.color : '#91bcff';
+  const color = comparison ? dial.color : 'var(--c-91bcff)';
   const referenceSeconds =
     traffic?.baseline?.[
       metric === 'tokens' ? 'tokensSeconds' : 'requestsSeconds'

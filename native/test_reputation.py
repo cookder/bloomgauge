@@ -104,19 +104,60 @@ class ReputationTests(unittest.TestCase):
         self.assertEqual(result['score'], 0)
         self.assertIsNone(result['totalJobs'])
 
-    def test_malformed_scores_and_counters_are_rejected(self):
+    def test_malformed_scores_and_counters_are_unknown_not_a_rejected_reading(self):
         for score in (None, -1, 1.1, float('nan'), float('inf'), True, '0.9'):
-            with self.assertRaises(ValueError):
-                normalize(provider(score=score))
-        for value in (-1, 0.5, float('nan'), True):
+            result = normalize(provider(score=score))
+            self.assertIsNone(result['score'])
+            self.assertEqual(result['totalJobs'], 100)
+        for value in (-1, 0.5, float('nan'), True, '7'):
             p = provider()
             p['reputation']['successful_jobs'] = value
-            with self.assertRaises(ValueError):
-                normalize(p)
+            result = normalize(p)
+            self.assertIsNone(result['successfulJobs'])
+            self.assertEqual((result['totalJobs'], result['failedJobs']), (100, 1))
+            self.assertEqual(result['score'], 0.93)
+
+    def test_darkbloom_0_9_10_reading_without_a_score_is_kept(self):
+        # coordinator/api/me_handlers.go myReputation: counts only, no composite score.
+        row = provider()
+        del row['reputation']['score']
+        result = self.ingest(providers=[row])
+        self.assertEqual(result['status'], 'ok')
+        self.assertIsNone(result['data']['score'])
+        self.assertEqual(result['data']['successfulJobs'], 99)
+        self.assertEqual(result['data']['challengesPassed'], 9)
+        # Saved like any reading: a restart shows it as the last reading.
+        self.assertIsNone(Reputation(self.h, self.home).snapshot(1001)['data']['score'])
+        self.assertEqual(Reputation(self.h, self.home).snapshot(1001)['data']['totalJobs'], 100)
+
+    def test_merged_counters_that_disagree_null_the_total_only(self):
+        # The coordinator adds stored counters to live ones; the parts can exceed the total.
         p = provider()
         p['reputation']['successful_jobs'] = 101
-        with self.assertRaises(ValueError):
-            normalize(p)
+        result = normalize(p)
+        self.assertIsNone(result['totalJobs'])
+        self.assertEqual((result['successfulJobs'], result['failedJobs']), (101, 1))
+        self.assertEqual(result['challengesFailed'], 1)
+        p['reputation'] = 'not-an-object'
+        self.assertIsNone(normalize(p)['score'])
+
+    def test_a_row_without_reputation_is_unavailable_and_keeps_the_last_reading(self):
+        self.ingest()
+        for sequence, reputation in ((2, None), (3, {}), (4, {'score': 'x', 'total_jobs': -1})):
+            row = provider()
+            if reputation is None:
+                del row['reputation']
+            else:
+                row['reputation'] = reputation
+            result = self.ingest(sequence=sequence, providers=[row])
+            self.assertEqual(result['status'], 'unavailable')
+            self.assertEqual(result['data']['successfulJobs'], 99)
+            self.assertEqual(result['data']['updatedAt'], 1000)
+        # Not saved over the good reading either.
+        saved = Reputation(self.h, self.home).snapshot(1001)['data']
+        self.assertEqual((saved['totalJobs'], saved['score']), (100, 0.93))
+        # A real reading afterwards is taken as usual.
+        self.assertEqual(self.ingest(sequence=5)['status'], 'ok')
 
     def test_no_daemon_identity_does_not_use_an_account_wide_guess(self):
         (self.home / '.darkbloom/daemon-state.json').unlink()

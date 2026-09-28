@@ -202,6 +202,17 @@ class ConcurrencyHistoryTests(unittest.TestCase):
         self.assertEqual(self.report(session=2)['observations'], 2)
         self.assertEqual(self.report(model='missing')['observations'], 0)
 
+    def test_readings_without_a_score_are_recorded(self):
+        # Darkbloom 0.9.10 sends no reputation score; the counts still record.
+        for at in (600, 630):
+            d = concurrency(at)
+            d['data']['score'] = None
+            self.add(d)
+        r = self.report()
+        self.assertEqual(r['observations'], 2)
+        self.assertIsNone(r['latest']['score'])
+        self.assertEqual(r['latest']['running'], 2)
+
     def test_pair_filter_cannot_attribute_provider_reservations_to_one_model(self):
         self.add(concurrency(models=['a', 'b']))
         r = self.report(model='a')

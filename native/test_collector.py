@@ -231,6 +231,53 @@ class SessionSnapshotTests(unittest.TestCase):
         self.assertIsNone(b['tokensPerSecond'])
         self.assertEqual((b['sessionJobs'], b['sessionTokens']), (5, 60))
 
+    def test_startup_preload_with_30_s_writes_reads_starting_never_offline(self):
+        # Darkbloom 0.9.10 preloads its models at every start and, until it registers,
+        # rewrites daemon-state only every 30 s (ProviderLoop+StartupPreload.swift).
+        self.raw.update(
+            started_at=995,
+            warm_models=[],
+            startup_preload_pending_models=['a'],
+            stats={'requests_served': 0, 'tokens_generated': 0},
+        )
+        del self.raw['trust']  # not registered yet
+        seen = []
+        for at in range(1000, 1150):
+            if (at - 1000) % 30 == 0:
+                self.raw['written_at'] = at
+                self.path.write_text(json.dumps(self.raw))
+            self.c.collect(at)
+            p = self.c.snapshot['provider']
+            seen.append((p['online'], p['starting'], p['session']['status']))
+            self.assertFalse(p['tracking']['counting'])
+        self.assertEqual(set(seen), {(True, True, 'active')})
+        self.assertIn('starting', p['tracking']['detail'])
+        # Preload done: the usual ~2 s writes, and the measured 15 s window again.
+        self.raw['startup_preload_pending_models'] = []
+        p = self.collect(1150)
+        self.assertEqual((p['online'], p['starting']), (True, False))
+        self.c.collect(1166)
+        self.assertFalse(self.c.snapshot['provider']['online'])
+        self.assertEqual(self.c.snapshot['provider']['session']['status'], 'stale')
+
+    def test_a_registered_provider_is_not_starting_while_a_slow_preload_lingers(self):
+        # Darkbloom registers at the preload timeout and serves, but keeps the pending
+        # list until the slow load finishes (StartupPreload.swift): not "starting".
+        self.raw.update(startup_preload_pending_models=['b'], written_at=1000)
+        self.path.write_text(json.dumps(self.raw))
+        self.c.collect(1001)
+        p = self.c.snapshot['provider']
+        self.assertEqual((p['online'], p['starting']), (True, False))
+
+    def test_a_preload_that_stops_writing_goes_offline(self):
+        self.raw.update(startup_preload_pending_models=['a'], written_at=1000)
+        self.path.write_text(json.dumps(self.raw))
+        self.c.collect(1044)
+        self.assertTrue(self.c.snapshot['provider']['online'])
+        self.c.collect(1046)
+        self.assertFalse(self.c.snapshot['provider']['online'])
+        self.assertFalse(self.c.snapshot['provider']['starting'])
+
     def test_same_model_restart_resets_visible_totals_and_history(self):
         a = self.collect(1000)
         b = self.collect(
@@ -269,6 +316,158 @@ class RunViewTests(unittest.TestCase):
         self.assertNotIn('history', view['demandAuto'])
         self.assertEqual(view['currentModel'], 'a')
         self.assertLess(len(json.dumps(view)), 1000)
+
+    def test_run_view_output_is_the_ui_contract_fixture(self):
+        """native/test_optimizer_response.mjs feeds this fixture to the run chip's reader.
+        After changing run_view, regenerate it from native/:
+        python3 -c "import json, test_collector as t; t.RUN_VIEW_FIXTURE.write_text(json.dumps(t.run_view_outputs(), indent=1) + chr(10))"
+        """
+        self.assertEqual(json.loads(RUN_VIEW_FIXTURE.read_text()), run_view_outputs())
+
+
+RUN_VIEW_FIXTURE = pathlib.Path(__file__).with_name('optimizer_run_view_fixture.json')
+
+
+def run_view_outputs():
+    """run_view() of two full /api/optimizer responses shaped like the live ones (field
+    for field, Sep 27): the manager holding its home model, and a legacy trial running."""
+    at = 1790555345.5
+    run = {
+        'id': 141,
+        'at': at - 900,
+        'previousModel': 'gpt-oss-20b',
+        'model': 'gemma-4-26b-qat-4bit',
+        'reservedSeconds': 160.6,
+        'completedAt': at - 830,
+        'result': 'switched',
+        'downtime': 69.1,
+        'decision': {
+            'kind': 'explore',
+            'reason': 'Measure gemma-4-26b-qat-4bit while the network is busy.',
+            'explorationTrigger': 'demand_spike',
+            'planningMinutes': 60,
+            'trialMinutes': 15,
+            'candidate': {'model': 'gemma-4-26b-qat-4bit', 'signal': {}, 'selected': True},
+            'outcome': None,
+            'spikeTrial': True,
+            'learningTrial': None,
+        },
+    }
+    trial = {
+        'runId': 141,
+        'model': 'gemma-4-26b-qat-4bit',
+        'current': True,
+        'status': 'running',
+        'paymentSeen': True,
+        'competitive': None,
+        'clock': {},
+        'occupancy': None,
+        'learning': None,
+        'warmSeconds': 420.0,
+        'trialMinutes': 15,
+        'warmStartedAt': at - 420,
+        'windowEnd': at + 480,
+        'firstTrafficSeconds': 61.0,
+        'rampSeconds': 61.0,
+        'steadyUsdPerHour': 0.09,
+        'requests': 13.0,
+        'tokens': 858.0,
+        'idlePercent': 71.2,
+        'paidWarmSeconds': 360.0,
+        'usd': 0.009,
+        'paidJobs': 13,
+        'usdPerHour': 0.081,
+        'cooldownUntil': None,
+        'pressure': 0.13,
+        'load': 51.8,
+        'evaluatedAt': at - 5,
+        'complete': False,
+        'settled': False,
+        'coveragePercent': 93.3,
+        'settlementDeadline': at + 780,
+        'partial': False,
+    }
+
+    def full(mode_detail, auto):
+        return {
+            'at': at,
+            'mode': 'demand',
+            'status': 'optimizing',
+            'detail': mode_detail,
+            'selected': ['gemma-4-26b-qat-4bit', 'gpt-oss-20b'],
+            'blockHours': 2,
+            'controlVersion': 'c0ffee',
+            'canManage': True,
+            'busy': False,
+            'currentModel': 'gemma-4-26b-qat-4bit',
+            'currentModels': ['gemma-4-26b-qat-4bit'],
+            'originalModel': 'gpt-oss-20b',
+            'requestedModel': None,
+            'requestedKind': None,
+            'controlError': None,
+            'discoveryError': None,
+            'nextSwitchAt': None,
+            'warmup': {
+                'model': 'gemma-4-26b-qat-4bit',
+                'status': 'ready',
+                'detail': 'Warm and ready · serving output verified.',
+                'verifiedAt': at - 60,
+                'attempts': 0,
+            },
+            'reporting': None,
+            'lastSwitchResult': {'at': at - 830, 'outcome': 'recovered'},
+            'models': [{'id': 'gpt-oss-20b', 'available': True, 'evidence': {'hours': 3}}],
+            'events': [{'at': at - 830, 'detail': 'Restored gemma-4-26b-qat-4bit.'}],
+            'startedAt': at - 86400,
+            'endsAt': None,
+            'resumeDemand': {'hasSavedPlan': True, 'available': False, 'selectedCount': 2},
+            'memory': {'cacheRecovery': None},
+            'demandAuto': {
+                'at': at,
+                'enabled': True,
+                'policy': {'minRunMinutes': 30, 'managerStrategy': 1},
+                'limits': {'switchesUsed': 1, 'switchLimit': 24},
+                'opportunities': [{'model': 'gpt-oss-20b', 'signal': {}}],
+                'execution': {'history': [{'id': n} for n in range(30)]},
+                'manager': {'action': 'hold'},
+                **auto,
+                'runs': [{**run, 'id': 140, 'result': 'recovered'}, run],
+            },
+        }
+
+    hold = full(
+        'Holding home model gemma-4-26b-qat-4bit.',
+        {
+            'trial': {**trial, 'current': False, 'status': 'productive', 'complete': True},
+            'paidAlternative': None,
+            'spikeReview': None,
+        },
+    )
+    legacy = full(
+        'Measuring gemma-4-26b-qat-4bit.',
+        {
+            'trial': trial,
+            'paidAlternative': {
+                'model': 'gpt-oss-20b',
+                'eligible': False,
+                'reason': 'The trial is still measuring.',
+                'at': at - 3,
+            },
+            'spikeReview': {
+                'runId': 141,
+                'incumbent': 'gpt-oss-20b',
+                'status': 'measuring',
+                'reason': 'Measuring paid work during the demand spike.',
+                'at': at - 5,
+                'deadline': at + 480,
+                'referenceRate': 0.05,
+                'trialRate': 0.081,
+                'liveRate': None,
+                'rateBasis': 'settled_inference_per_warm_hour_after_first_work',
+            },
+        },
+    )
+    return [run_view(hold), run_view(legacy)]
 
 
 class SampleScheduleTests(unittest.TestCase):

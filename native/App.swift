@@ -36,7 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var reputationConnection: ReputationConnection?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        // The dashboard's Appearance choice (System, Light or Dark), saved when the
+        // page last reported it, so the window opens in the right colours.
+        NSApp.appearance = bloomAppearanceName(UserDefaults.standard.string(forKey:appearanceDefaultsKey)).flatMap{NSAppearance(named:$0)}
         #if BLOOM_UPDATE_TESTING
         if Bundle.main.bundleIdentifier?.hasPrefix("local.bloom.dashboard.updater-test.") == true { updates = BloomUpdates() }
         #else
@@ -95,7 +97,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.isReleasedWhenClosed=false
         window.minSize=NSSize(width:700,height:540)
         window.setFrameAutosaveName("BloomDashboardMainWindow")
-        window.backgroundColor=NSColor(calibratedRed:0.039,green:0.051,blue:0.071,alpha:1)
+        // Matches the page background of each theme until the dashboard paints.
+        window.backgroundColor=NSColor(name:nil){appearance in
+            appearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua
+                ? NSColor(calibratedRed:0.039,green:0.051,blue:0.071,alpha:1)
+                : NSColor(calibratedRed:0.953,green:0.961,blue:0.973,alpha:1)
+        }
         window.center()
         let configuration=WKWebViewConfiguration()
         // Dashboard preferences (layout, dismissed notices, graph style) persist across
@@ -106,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         configuration.userContentController.add(self,name:"bloomAccount")
         configuration.userContentController.add(self,name:"bloomDiagnostics")
         configuration.userContentController.add(self,name:"bloomUpdates")
+        configuration.userContentController.add(self,name:"bloomAppearance")
         webView=WKWebView(frame:window.contentView!.bounds,configuration:configuration)
         webView.autoresizingMask=[.width,.height]
         webView.navigationDelegate=self
@@ -207,6 +215,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if command.action=="set-automatic",let enabled=command.enabled{updates.setAutomaticChecks(enabled)}
             }
             publishUpdateStatus(command.requestId);return
+        }
+        if message.name=="bloomAppearance" {
+            guard message.webView === webView,message.frameInfo.isMainFrame,
+                  let url=message.frameInfo.request.url,url.scheme=="http",url.host=="127.0.0.1",url.port==localURL?.port,
+                  let choice=message.body as? String,["system","light","dark"].contains(choice) else{return}
+            NSApp.appearance = bloomAppearanceName(choice).flatMap{NSAppearance(named:$0)}
+            if !setupPreview {UserDefaults.standard.set(choice,forKey:appearanceDefaultsKey)}
+            return
         }
         if message.name=="bloomDiagnostics" {
             guard message.webView === webView,message.frameInfo.isMainFrame,
@@ -398,6 +414,18 @@ func bloomSessionCookie(url:URL, token:String) -> HTTPCookie? {
                                   HTTPCookiePropertyKey("HttpOnly"):"TRUE", .sameSitePolicy:HTTPCookieStringPolicy.sameSiteStrict])
 }
 // END session cookie policy.
+
+// BEGIN appearance policy (compiled directly by its regression test).
+let appearanceDefaultsKey = "BloomAppearance"
+/// "light" or "dark" pins the app's appearance; anything else follows macOS.
+func bloomAppearanceName(_ choice:String?)->NSAppearance.Name? {
+    switch choice {
+    case "light": return .aqua
+    case "dark": return .darkAqua
+    default: return nil
+    }
+}
+// END appearance policy.
 
 // BEGIN help link policy (compiled directly by its regression test).
 func isBloomHelpLink(_ url:URL)->Bool {

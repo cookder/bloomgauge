@@ -2,24 +2,25 @@
 
 `pressure` is requests (active + queued) per warm provider, the same measure the
 optimizer uses. The overlay compares the latest capacity reading with this
-model's typical pressure over the last week, so it lines up with the earnings
-needle (pace vs its own reference). High demand with a low needle points at
-routing; both low means the network is quiet.
+model's usual pressure for this time of day (`demand_alerts.usual_levels`, the
+one definition the app uses), so it lines up with the earnings needle (pace vs
+its own reference). High demand with a low needle points at routing; both low
+means the network is quiet. Until the time-of-day level exists there is no ratio.
 
 This runs inside the collector's once-a-second locked path, so it only reads a
-cached capacity snapshot, and it recomputes the week's typical pressure at most
-every 10 minutes through a separate read-only connection.
+cached capacity snapshot, and it recomputes the usual level at most every 10
+minutes (and on each new local hour) through a separate read-only connection.
 """
 
 import math
 import threading
+from datetime import datetime
+from demand_alerts import usual_levels
 from demand_baselines import read_view
 
-TYPICAL_SECONDS = 7 * 86400
 TYPICAL_REFRESH_SECONDS = 600
 CAPACITY_REFRESH_SECONDS = 15
 FRESH_SECONDS = 120
-MIN_TYPICAL_SAMPLES = 60
 
 
 def finite(v):
@@ -43,7 +44,9 @@ class PulseDemand:
     def typical_for(self, model, now):
         cached = self.typical.get(model)
         if (
-            cached is None or now - cached[0] >= TYPICAL_REFRESH_SECONDS
+            cached is None
+            or not 0 <= now - cached[0] < TYPICAL_REFRESH_SECONDS
+            or datetime.fromtimestamp(now).hour != datetime.fromtimestamp(cached[0]).hour
         ) and model not in self.pending:
             self.pending.add(model)
             threading.Thread(target=self.refresh, args=(model, now), daemon=True).start()
@@ -52,14 +55,14 @@ class PulseDemand:
     def refresh(self, model, now):
         try:
             with read_view(self.store) as view:
-                row = view.h.db.execute(
-                    """SELECT AVG((active+queued)/MAX(1,warm)) AS pressure,AVG(active+queued) AS load,
-                    COUNT(*) AS samples FROM opt_network WHERE model=? AND at>=? AND at<=?""",
-                    (model, now - TYPICAL_SECONDS, now),
-                ).fetchone()
+                usual = usual_levels(view.h.db, [model], now)[model]
             value = (
-                {'pressure': row['pressure'], 'load': row['load'], 'samples': row['samples']}
-                if row and row['samples'] >= MIN_TYPICAL_SAMPLES and finite(row['pressure'])
+                {
+                    'pressure': usual['baselinePressure'],
+                    'load': usual['baselineLoad'],
+                    'samples': round(usual['baselineHours'] * 120),
+                }
+                if usual['baselineScope'] == 'daytype_hour' and finite(usual['baselinePressure'])
                 else None
             )
             with self.lock:

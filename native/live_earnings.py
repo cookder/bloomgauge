@@ -4,23 +4,29 @@ The upstream account response is cached for 20 seconds. Local display time can
 advance every second, but it must never turn a pace estimate into paid money.
 """
 
-import copy, hashlib, math, time, uuid
+import copy, hashlib, json, math, sqlite3, time, uuid
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from history import epoch
 from forecast import hour_start, monitor_hour_start
 from optimizer_store import device_id
+from model_combinations import selection_key
 
 POLL_SECONDS = 20
 CACHE_SECONDS = 20
+# Until earlier sessions give a model set 30 minutes, the running session's settled
+# minutes build its first baseline once they are this old, so the live 5-minute
+# reading is never compared with itself.
+CURRENT_SESSION_LAG = 600
 
 
 def historical_baseline(rows, models, now):
     """Choose a sufficiently observed local-time comparison, then fall back.
 
     Callers supply settled, covered, exact-model warm minutes from earlier
-    sessions only. Clock matching uses the Mac's local timezone at each actual
-    timestamp, including DST, rather than assuming every date is 24 hours long.
+    sessions or, while those are under 30 minutes, also this session's minutes
+    older than CURRENT_SESSION_LAG. Clock matching uses the Mac's local timezone
+    at each actual timestamp, including DST, rather than assuming every date is 24 hours long.
     A single busy date cannot establish a daily pattern: contextual comparisons
     require at least three dates and two hours, and cap each date's weight.
     """
@@ -44,15 +50,15 @@ def historical_baseline(rows, models, now):
         'timezone': local_now.tzname() or 'Local',
         'dayWeightCapHours': None,
         'detail': (
-            'All hours for this exact model set in earlier sessions, over the last 30 days. '
+            'All hours for this exact model set over the last 30 days. '
             'Includes verified warm idle time. Time/day adjustment needs at least 2 comparable '
             'warm hours across 3 dates, with at least 30 minutes on each date.'
         ),
     }
     if total_seconds < 1800:
         result['detail'] = (
-            'Learning this exact model set. At least 30 minutes of settled, covered, '
-            'verified warm runtime in earlier sessions is needed.'
+            'Building a baseline for this exact model set. It needs 30 minutes of settled, '
+            'covered, verified warm runtime; this session counts after 10 minutes.'
         )
         return result
 
@@ -491,6 +497,81 @@ class EarningsPulse:
             key=lambda r: (r['receivedAt'], r['at'], r['id']),
         )[-128:]
 
+    def set_minutes(self, account, device, models, now):
+        """Warm minutes for a set the optimizer store doesn't key (three or more models).
+
+        Built from this device's sessions that served exactly this set: their verified
+        ready intervals, inside credit-poll coverage and settled, with this set's
+        credits from those sessions' providers. The same shape as store evidence.
+        """
+        start, end, want = now - 30 * 86400, now - 120, sorted(models)
+        try:
+            with self.h.lock:
+                db = self.h.db
+                providers = {}
+                for sid, provider in db.execute(
+                    'SELECT session,provider FROM pulse_connections WHERE account=? AND device=?',
+                    (account, device),
+                ):
+                    providers.setdefault(sid, set()).add(provider)
+                marks = ','.join('?' for _ in providers)
+                sessions = {}
+                for sid, data in (
+                    db.execute(
+                        f'SELECT id,data FROM provider_sessions WHERE id IN ({marks})',
+                        list(providers),
+                    )
+                    if providers
+                    else []
+                ):
+                    try:
+                        served = json.loads(data).get('models')
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+                    if isinstance(served, list) and sorted(served) == want:
+                        sessions[sid] = providers[sid]
+                if not sessions:
+                    return []
+                ready = [
+                    (sid, a, b)
+                    for sid in sessions
+                    for a, b in db.execute(
+                        'SELECT start,end FROM session_ready_intervals WHERE session=? AND end>? AND start<?',
+                        (sid, start, end),
+                    )
+                ]
+                coverage = db.execute(
+                    'SELECT start,end FROM opt_coverage WHERE account=? AND end>? AND start<?',
+                    (account, start, end),
+                ).fetchall()
+                credits = db.execute(
+                    f"""SELECT at,provider,micro_usd FROM opt_credits WHERE account=? AND at>? AND at<=?
+                    AND model IN ({','.join('?' for _ in models)})""",
+                    (account, start, end, *models),
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        minutes = {}
+        for sid, a, b in ready:
+            for c, d in coverage:
+                lo, hi = max(a, c, start), min(b, d, end)
+                if hi <= lo:
+                    continue
+                at = lo
+                while at < hi:
+                    minute = int(at // 60) * 60
+                    stop = min(hi, minute + 60)
+                    row = minutes.setdefault(minute, {'at': minute, 'seconds': 0, 'usd': 0})
+                    row['seconds'] += stop - at
+                    at = stop
+                for when, provider, micro in credits:
+                    if lo < when <= hi and provider in sessions[sid]:
+                        # A credit stamped on a boundary belongs to the minute it ends.
+                        minute = (math.ceil(when / 60) - 1) * 60
+                        minutes.setdefault(minute, {'at': minute, 'seconds': 0, 'usd': 0})
+                        minutes[minute]['usd'] += micro / 1e6
+        return [minutes[k] for k in sorted(minutes) if minutes[k]['seconds'] > 0]
+
     def snapshot(self, account, raw, session, earnings, connection_id, now):
         models = (session or {}).get('models', [])
         device = device_id(raw)
@@ -510,13 +591,23 @@ class EarningsPulse:
         baseline_key = (*key, clock.date(), clock.hour, clock.utcoffset(), clock.tzname())
         if baseline_key != self.baseline_key or now - self.baseline_at >= 60:
             rows = (
-                self.projection.evidence(account, device, models, now, shared=True)
-                if account and device and models
-                else []
+                []
+                if not (account and device and models and session)
+                else self.projection.evidence(account, device, models, now, shared=True)
+                if selection_key(models)
+                else self.set_minutes(account, device, models, now)
             )
             # Normal means earlier matched runtime for this exact model set,
             # including idle time, rather than this minute's burst or fleet demand.
-            rows = [r for r in rows if r['at'] + 60 <= (session or {}).get('startedAt', 0)]
+            # A set without 30 earlier minutes builds its first baseline from this
+            # session's settled minutes; the live window itself is never part of it.
+            started = (session or {}).get('startedAt', 0)
+            earlier = [r for r in rows if r['at'] + 60 <= started]
+            rows = (
+                earlier
+                if sum(r['seconds'] for r in earlier) >= 1800
+                else [r for r in rows if r['at'] + 60 <= now - CURRENT_SESSION_LAG]
+            )
             self.baseline = historical_baseline(rows, models, now)
             self.baseline_key, self.baseline_at = baseline_key, now
         fresh = bool(

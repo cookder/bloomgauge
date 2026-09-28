@@ -75,6 +75,7 @@ class ManualTimeoutTests(unittest.TestCase):
             self.raw['started_at'],
             360,
             launch_signature(['--local-endpoint', '--port', '8000'], {}),
+            move='manual',
         )
         self.assertEqual(self.o.state['manualResult']['id'], payload['requestId'])
         self.assertEqual(self.o.state['manualResult']['status'], 'completed')
@@ -171,12 +172,12 @@ class ManualTimeoutTests(unittest.TestCase):
         self.queue()
         settings = copy.deepcopy(self.o.state)
         self.o.switch = Mock()
+        # Battery power and the 95 °C line don't hold an explicit pick (test_manager_control_path).
         for guard in [
             'offline',
             'stale',
             'identity',
             'hardware',
-            'battery',
             'heat',
             'memory',
             'catalog',
@@ -195,8 +196,6 @@ class ManualTimeoutTests(unittest.TestCase):
                     self.o.identity_ok = False
                 elif guard == 'hardware':
                     self.o.live['hardware'].pop('cpuTemp')
-                elif guard == 'battery':
-                    self.o.on_ac_power.return_value = False
                 elif guard == 'heat':
                     self.o.live['hardware']['thermal'] = 'Critical'
                 elif guard == 'memory':
@@ -278,7 +277,7 @@ class ManualTimeoutTests(unittest.TestCase):
     def test_final_hardware_power_memory_and_online_guards_still_block(self):
         self.queue()
         settings = copy.deepcopy(self.o.state)
-        for guard in ['hardware', 'battery', 'heat', 'memory', 'offline', 'stale-live', 'identity']:
+        for guard in ['hardware', 'heat', 'memory', 'offline', 'stale-live', 'identity']:
             with self.subTest(guard=guard):
                 self.o.state = copy.deepcopy(settings)
                 self.o.live = copy.deepcopy(self.live)
@@ -287,10 +286,8 @@ class ManualTimeoutTests(unittest.TestCase):
                 self.arm()
                 if guard == 'hardware':
                     self.o.live['hardware']['gpuTemp'] = None
-                elif guard == 'battery':
-                    self.o.on_ac_power.return_value = False
                 elif guard == 'heat':
-                    self.o.live['hardware']['gpuTemp'] = 99
+                    self.o.live['hardware']['thermal'] = 'Serious'
                 elif guard == 'memory':
                     self.o.live['hardware']['memoryAvailableGB'] = 0
                 elif guard == 'offline':

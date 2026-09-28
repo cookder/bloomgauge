@@ -11,6 +11,7 @@ import {
   type DataGathering,
   type DemandRules,
 } from './demand-auto';
+import { planMinimum, type Strategy } from '@/lib/optimizer-manager';
 import {
   applyStyle,
   optimizerStyles,
@@ -40,6 +41,8 @@ const sameSet = (a: string[], b: string[]) =>
 /** Follow demand's plan, edited in place on the optimizer card. */
 export function OptimizerPlan({
   on,
+  strategy = null,
+  excursions = null,
   models,
   currentModel,
   selected,
@@ -58,6 +61,9 @@ export function OptimizerPlan({
   children,
 }: {
   on: boolean;
+  /** Manager: only the model pool and a few safety limits apply; legacy knobs are hidden. */
+  strategy?: Strategy | null;
+  excursions?: boolean | null;
   models: PlanModel[];
   currentModel?: string;
   selected: string[];
@@ -87,10 +93,14 @@ export function OptimizerPlan({
         id,
         name: id,
         available: false,
-        reason: 'Not in the current catalog',
+        reason: id.startsWith('@combo:')
+          ? 'A model pair Bloomkeeper holds'
+          : 'Not in the current catalog',
       })),
   ];
-  const tooFew = selected.length < 2;
+  // The strategy being saved sets the minimum, as the backend checks it.
+  const fewest = planMinimum(strategy, rules);
+  const tooFew = selected.length < fewest;
   const confirmTooLong = rules.confirmationMinutes > rules.minRunMinutes;
   const style = styleIndex(rules);
   const shownStyle = style ?? 2;
@@ -100,7 +110,46 @@ export function OptimizerPlan({
         ? selected.filter((m) => m !== id)
         : [...selected, id],
     );
-  if (!on && !editing && !dirty) {
+  const managed = strategy === 'manager';
+  if (managed && !editing && !dirty) {
+    const count =
+      savedSelected.length || models.filter((m) => m.available).length;
+    return (
+      <div className="optimizer-plan-summary">
+        <span>
+          {on ? 'Bloomkeeper keeps' : 'When on, Bloomkeeper keeps'} the best of{' '}
+          <strong>{count ? `${count} models` : 'your models'}</strong> running,{' '}
+          <strong>restores it automatically</strong> after a failure
+          {excursions === true ? (
+            <>
+              {' '}
+              and <strong>moves only on strong network evidence</strong>
+            </>
+          ) : excursions === false ? (
+            <>
+              {' '}
+              and <strong>does not move for network evidence</strong>
+            </>
+          ) : null}
+          {excursions === false ? (
+            '.'
+          ) : (
+            <>
+              . At most <strong>3 evidence-based switches</strong> a day.
+            </>
+          )}
+        </span>
+        <button
+          type="button"
+          className="text-link"
+          onClick={() => setEditing(true)}
+        >
+          Edit
+        </button>
+      </div>
+    );
+  }
+  if (!managed && !on && !editing && !dirty) {
     return (
       <div className="optimizer-plan-summary">
         <span>
@@ -166,89 +215,102 @@ export function OptimizerPlan({
           );
         })}
       </div>
-      <div className="optimizer-plan-grid">
-        <NumberSetting
-          id="protect-level"
-          label="Protect earnings above"
-          unit="USD / hour"
-          disabled={!editable}
-          hint="While the current model pays at least this, Bloomkeeper won’t interrupt it to learn. Confident upgrades can still switch."
-          value={rules.protectUsdPerHour}
-          range={tuningRanges.protectUsdPerHour}
-          onChange={(next) =>
-            onRules({
-              ...rules,
-              protectUsdPerHour: snap('protectUsdPerHour', next),
-            })
-          }
-        />
-        <label>
-          Learning time
-          <Choice
-            value={String(rules.learningMinutesPerDay)}
+      {!managed && (
+        <div className="optimizer-plan-grid">
+          <NumberSetting
+            id="protect-level"
+            label="Protect earnings above"
+            unit="USD / hour"
             disabled={!editable}
-            label="Learning time per day"
+            hint="While the current model pays at least this, Bloomkeeper won’t interrupt it to learn. Confident upgrades can still switch."
+            value={rules.protectUsdPerHour}
+            range={tuningRanges.protectUsdPerHour}
             onChange={(next) =>
-              onRules({ ...rules, learningMinutesPerDay: Number(next) })
+              onRules({
+                ...rules,
+                protectUsdPerHour: snap('protectUsdPerHour', next),
+              })
             }
-            options={[
-              ...new Set([...learningChoices, rules.learningMinutesPerDay]),
-            ]
-              .sort((a, b) => a - b)
-              .map((v) => ({ value: String(v), label: learningLabel(v) }))}
           />
-          <small className="plan-hint">
-            Time Bloomkeeper may spend measuring other models while pace is below your
-            protect level, so it knows where to go when the current model fades.
-          </small>
-        </label>
-        <DataGatheringControl
-          compact
-          value={gathering}
-          onSet={onGathering}
-          disabled={busy || !on}
-        />
-      </div>
-      <div className="optimizer-style">
-        <div className="optimizer-style-head">
-          <label htmlFor="optimizer-style">How actively Bloomkeeper switches</label>
-          <strong>
-            {style === null ? 'Custom' : optimizerStyles[style].label}
-          </strong>
+          <label>
+            Learning time
+            <Choice
+              value={String(rules.learningMinutesPerDay)}
+              disabled={!editable}
+              label="Learning time per day"
+              onChange={(next) =>
+                onRules({ ...rules, learningMinutesPerDay: Number(next) })
+              }
+              options={[
+                ...new Set([...learningChoices, rules.learningMinutesPerDay]),
+              ]
+                .sort((a, b) => a - b)
+                .map((v) => ({ value: String(v), label: learningLabel(v) }))}
+            />
+            <small className="plan-hint">
+              Time Bloomkeeper may spend measuring other models while pace is
+              below your protect level, so it knows where to go when the current
+              model fades.
+            </small>
+          </label>
+          <DataGatheringControl
+            compact
+            value={gathering}
+            onSet={onGathering}
+            disabled={busy || !on}
+          />
         </div>
-        <input
-          id="optimizer-style"
-          type="range"
-          min={0}
-          max={optimizerStyles.length - 1}
-          step={1}
-          value={shownStyle}
-          disabled={!editable}
-          aria-valuetext={
-            style === null ? 'Custom settings' : optimizerStyles[style].label
-          }
-          onChange={(event) =>
-            onRules(applyStyle(rules, Number(event.target.value)))
-          }
-        />
-        <div className="optimizer-style-scale" aria-hidden="true">
-          <span>Passive</span>
-          <span>Balanced</span>
-          <span>Aggressive</span>
+      )}
+      {!managed && (
+        <div className="optimizer-style">
+          <div className="optimizer-style-head">
+            <label htmlFor="optimizer-style">
+              How actively Bloomkeeper switches
+            </label>
+            <strong>
+              {style === null ? 'Custom' : optimizerStyles[style].label}
+            </strong>
+          </div>
+          <input
+            id="optimizer-style"
+            type="range"
+            min={0}
+            max={optimizerStyles.length - 1}
+            step={1}
+            value={shownStyle}
+            disabled={!editable}
+            aria-valuetext={
+              style === null ? 'Custom settings' : optimizerStyles[style].label
+            }
+            onChange={(event) =>
+              onRules(applyStyle(rules, Number(event.target.value)))
+            }
+          />
+          <div className="optimizer-style-scale" aria-hidden="true">
+            <span>Passive</span>
+            <span>Balanced</span>
+            <span>Aggressive</span>
+          </div>
+          <p className="footnote">
+            {style === null
+              ? 'You have changed individual settings under Fine-tune. Move the slider to apply a style to all of them.'
+              : optimizerStyles[style].summary}{' '}
+            Safety checks, memory headroom and your protect level always apply.
+          </p>
         </div>
+      )}
+      {managed && (
         <p className="footnote">
-          {style === null
-            ? 'You have changed individual settings under Fine-tune. Move the slider to apply a style to all of them.'
-            : optimizerStyles[style].summary}{' '}
-          Safety checks, memory headroom and your protect level always apply.
+          The manager uses these models for its home model and any excursion.
+          Memory headroom and the daily move limit under Fine-tune always apply.
         </p>
-      </div>
+      )}
       {!editable && lockedReason && <p className="footnote">{lockedReason}</p>}
       {(dirty || tooFew || confirmTooLong) && editable && (
         <div className="optimizer-plan-save" role="status">
           <span>
             {tooFew
-              ? 'Choose at least two models.'
+              ? `Choose at least ${fewest === 1 ? 'one model' : 'two models'}.`
               : confirmTooLong
                 ? 'Confirmation time must be no longer than the minimum run.'
                 : on
@@ -270,15 +332,28 @@ export function OptimizerPlan({
           </Button>
         </div>
       )}
+      {managed && editing && !dirty && (
+        <div className="optimizer-plan-save">
+          <span>{editable ? 'No unsaved changes.' : ''}</span>
+          <Button variant="ghost" onClick={() => setEditing(false)}>
+            Done
+          </Button>
+        </div>
+      )}
       <details className="optimizer-plan-fine-tune">
-        <summary>Fine-tune limits and other strategies</summary>
+        <summary>
+          {managed
+            ? 'Fine-tune limits and strategy'
+            : 'Fine-tune limits and other strategies'}
+        </summary>
         <DemandSettings
           flat
           value={rules}
           onChange={onRules}
           disabled={!editable}
+          strategy={strategy}
         />
-        {children}
+        {!managed && children}
       </details>
     </div>
   );

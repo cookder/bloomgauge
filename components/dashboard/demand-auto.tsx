@@ -12,6 +12,7 @@ import type {
 import { Choice, money, num, shortModel, age, plural } from './shared';
 import { useAppNavigation } from './app-navigation';
 import { snap, tuningRanges, type TunedKey } from '@/lib/optimizer-tuning';
+import { EXCURSIONS_PER_DAY, excursionsInDay } from '@/lib/optimizer-manager';
 
 export type DemandRules = {
   minRunMinutes: number;
@@ -30,6 +31,10 @@ export type DemandRules = {
   baselineLearningEnabled: number;
   protectUsdPerHour: number;
   learningMinutesPerDay: number;
+  /** 1 manager (hold, recover, move on evidence), 0 legacy demand following. Absent on older backends. */
+  managerStrategy?: number;
+  /** 1: the manager may make evidence-armed excursions. Absent until the backend supports it. */
+  managerExcursions?: number;
 };
 export const defaultDemandRules: DemandRules = {
   minRunMinutes: 30,
@@ -191,6 +196,8 @@ type Trial = {
 export type DemandAutoData = {
   at: number;
   enabled: boolean;
+  /** native/manager.py view(); read with readManager() (lib/optimizer-manager.ts). */
+  manager?: unknown;
   currentModel?: string;
   target?: string | null;
   reason: string;
@@ -630,11 +637,14 @@ export function DemandSettings({
   onChange,
   disabled,
   flat = false,
+  strategy = null,
 }: {
   value: DemandRules;
   onChange: (next: DemandRules) => void;
   disabled: boolean;
   flat?: boolean;
+  /** Manager: only the limits it applies (min run, confirmation, memory, daily moves). */
+  strategy?: 'manager' | 'legacy' | null;
 }) {
   const control = (
     key: keyof DemandRules,
@@ -667,6 +677,54 @@ export function DemandSettings({
     />
   );
   const confirmTooLong = value.confirmationMinutes > value.minRunMinutes;
+  // The strategy choice appears once the backend saves it (managerStrategy).
+  const strategyChoice =
+    value.managerStrategy === 0 || value.managerStrategy === 1
+      ? control('managerStrategy', 'Optimizer strategy', [1, 0], (v) =>
+          v
+            ? 'Manager · hold the best model, recover, move on evidence'
+            : 'Legacy · follow demand with trials and learning',
+        )
+      : null;
+  if (strategy === 'manager')
+    return (
+      <div className="demand-auto-settings">
+        <div className="demand-rule-grid">
+          {strategyChoice}
+          {number(
+            'minRunMinutes',
+            'Stay on a model at least',
+            'min',
+            'Before the manager starts an excursion after a switch.',
+          )}
+          {number(
+            'confirmationMinutes',
+            'Confirm network evidence for',
+            'min',
+            confirmTooLong
+              ? 'Must be no longer than the minimum run.'
+              : 'How long evidence must hold right before an excursion.',
+          )}
+          {number(
+            'memoryHeadroomGB',
+            'Extra memory above load requirement',
+            'GB',
+            'Safety margin. Never below 1 GB.',
+          )}
+          {number(
+            'maxSwitchesPerDay',
+            'Maximum automatic moves in 24 hours',
+            'moves',
+            `Only excursions count. Returns home and restores don’t. The manager also starts no more than ${EXCURSIONS_PER_DAY} a day.`,
+          )}
+        </div>
+        <p className="footnote">
+          Learning trials, protect level, spike trials and the earnings goal
+          belong to the legacy strategy and are not used by the manager. Their
+          saved values are kept.
+        </p>
+      </div>
+    );
   const advanced = (
     <div className="demand-rule-grid">
       {number(
@@ -761,6 +819,7 @@ export function DemandSettings({
     return (
       <div className="demand-auto-settings">
         <div className="demand-rule-grid">
+          {strategyChoice}
           {control(
             'baselineLearningEnabled',
             'Learn payment baselines during low earnings',
@@ -843,9 +902,12 @@ export function DemandSettings({
 export function DemandAutoPanel({
   data,
   stale,
+  managed = false,
 }: {
   data?: DemandAutoData;
   stale: boolean;
+  /** Under the manager only excursions count toward the daily limit. */
+  managed?: boolean;
 }) {
   const navigation = useAppNavigation();
   const [comparisonModel, setComparisonModel] = useState('');
@@ -863,6 +925,9 @@ export function DemandAutoPanel({
     alternatives[0];
   const baseline = data.baseline;
   const now = Date.now() / 1000;
+  const excursions = managed
+    ? excursionsInDay(data.runs, data.limits.switchLimit, now)
+    : null;
   const confirmation = data.confirmation;
   const required =
     confirmation?.requiredSeconds ?? data.policy.confirmationMinutes * 60;
@@ -1540,7 +1605,9 @@ export function DemandAutoPanel({
 
       <div className="demand-auto-limits small muted">
         <span>
-          {data.limits.switchesUsed} / {data.limits.switchLimit} attempts in 24h
+          {excursions
+            ? `${excursions.used} / ${excursions.limit} excursions in 24h`
+            : `${data.limits.switchesUsed} / ${data.limits.switchLimit} attempts in 24h`}
         </span>
         <span>
           {num(data.limits.downtimeMinutesUsed, 1)} /{' '}
@@ -1575,26 +1642,46 @@ export function DemandAutoPanel({
             {timingScope(best)}.
           </p>
         )}
-        <p>
-          <strong>Demand:</strong> ten minutes of sustained load per warm
-          provider can qualify a trial during poor earnings or quiet periods.
-          Ordinary demand cannot, by itself, replace productive paid work;
-          exceptional spikes can qualify for bounded learning trials. Raw
-          request counts are concurrent work across the network, not this Mac’s
-          arriving jobs or earnings.
-        </p>
+        {managed ? (
+          <p>
+            <strong>Demand:</strong> the manager holds its home model and runs
+            no trials. With evidence moves on, it leaves home only when at least
+            5 Macs like this one have clearly earned more on another model for
+            two hours. Raw request
+            counts are concurrent work across the network, not this Mac’s
+            arriving jobs or earnings.
+          </p>
+        ) : (
+          <p>
+            <strong>Demand:</strong> ten minutes of sustained load per warm
+            provider can qualify a trial during poor earnings or quiet periods.
+            Ordinary demand cannot, by itself, replace productive paid work;
+            exceptional spikes can qualify for bounded learning trials. Raw
+            request counts are concurrent work across the network, not this
+            Mac’s arriving jobs or earnings.
+          </p>
+        )}
         <p>
           <strong>Memory:</strong> space after unloading must cover model
           weights, the provider’s OS and inference reserves, plus{' '}
           {data.policy.memoryHeadroomGB} GB of extra Bloomkeeper margin.
         </p>
-        <p>
-          <strong>Bloomkeeper retry waits:</strong> {data.policy.trialCooldownMinutes}{' '}
-          minutes after an unpaid trial; 15 minutes after a load failure.
-          Successful loads have no added retry cooldown. The normal observation
-          period is {data.policy.minRunMinutes} minutes, and earnings
-          comparisons confirm for {data.policy.confirmationMinutes} minutes.
-        </p>
+        {managed ? (
+          <p>
+            <strong>Bloomkeeper retry waits:</strong> a model that fails to load
+            as an automatic move is skipped for 24 hours, then 48 and 96 hours if
+            it fails again. Your own picks are never skipped.
+          </p>
+        ) : (
+          <p>
+            <strong>Bloomkeeper retry waits:</strong>{' '}
+            {data.policy.trialCooldownMinutes} minutes after an unpaid trial; 15
+            minutes after a load failure. Successful loads have no added retry
+            cooldown. The normal observation period is{' '}
+            {data.policy.minRunMinutes} minutes, and earnings comparisons
+            confirm for {data.policy.confirmationMinutes} minutes.
+          </p>
+        )}
         <p>
           <strong>Daily limits:</strong> {data.limits.switchLimit} automatic
           attempts and {data.limits.downtimeMinutesLimit} minutes of downtime
@@ -1605,16 +1692,20 @@ export function DemandAutoPanel({
           Qualified automatic switches do not wait for idle time. Darkbloom
           0.9.9 and later finish accepted requests first; older versions may
           interrupt them. Fresh identity/readiness checks, AC power, memory and
-          safe temperatures still apply. A failed load pauses automation;
-          recovery keeps its existing idle check.
+          safe temperatures still apply.{' '}
+          {managed
+            ? 'A failed switch never turns automation off: Bloomkeeper restores the previous or home model. If two restores fail, it tells you and keeps retrying, at least every two hours.'
+            : 'A failed load pauses automation; recovery keeps its existing idle check.'}
         </p>
       </details>
-      <p className="footnote">
-        Load / warm is active + queued network requests per warm provider. It
-        ranks demand trials, not predicted dollars. A short zero-earning sample
-        does not exclude a model. Trials measure this Mac’s actual paid work;
-        repeated comparable results can refine later choices.
-      </p>
+      {!managed && (
+        <p className="footnote">
+          Load / warm is active + queued network requests per warm provider. It
+          ranks demand trials, not predicted dollars. A short zero-earning
+          sample does not exclude a model. Trials measure this Mac’s actual paid
+          work; repeated comparable results can refine later choices.
+        </p>
+      )}
       {!data.enabled && (
         <p className="footnote">
           Preview scans available solo models. Your selected models and controls

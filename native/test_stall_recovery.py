@@ -269,6 +269,7 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(self.store.events, [])
 
     def test_escape_flag_and_hold_notice(self):
+        self.settings['demandPolicy'] = {'managerStrategy': 0}  # the legacy escape
         c = self.control()
         for at, step in ((T0 + 300, 'probe'), (T0 + 480, 'restart')):
             self.store.event('acct', 'mac', at, 'stall-' + step, 'a', step)

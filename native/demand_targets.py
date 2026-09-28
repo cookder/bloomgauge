@@ -14,6 +14,21 @@ DEFAULT_TARGET = 0.12
 HIGH_EARNINGS_USD = 0.20
 
 
+def chosen_goal(rules):
+    """The earnings goal the user picked, or None.
+
+    DEFAULT_TARGET only fills the policy slot; it is not a goal anyone chose, and
+    Macs differ too much for one number to judge them all. The policy has no
+    "no goal" value yet, so a saved $0.12 also reads as no goal.
+    """
+    target = (rules or {}).get('targetUsdPerHour')
+    return (
+        target
+        if finite(target) and target > 0 and abs(target - DEFAULT_TARGET) > 1e-9
+        else None
+    )
+
+
 def finite(value):
     return type(value) in (float, int) and math.isfinite(value)
 

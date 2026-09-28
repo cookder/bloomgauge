@@ -94,7 +94,12 @@ def artifact(app):
     assert (resources / 'diagnostics.py').is_file()
     assert all(
         (resources / name).is_file()
-        for name in ('usage_reporting.py', 'usage_integration.py', 'feature_discovery.py')
+        for name in (
+            'usage_reporting.py',
+            'usage_integration.py',
+            'feature_discovery.py',
+            'whats_changed.py',
+        )
     )
     assert json.loads((resources / 'product-config.json').read_text()) == {'edition': 'free'}, (
         'Beta must be the free edition'

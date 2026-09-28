@@ -11,8 +11,17 @@ GEMMA, QWEN, PAIR = 'gemma', 'EigenLabs/Qwen3.8-27B-4bit-mtp', ['Qwen3.5-9B', 'g
 FLEET = {
     '1': {'models': [GEMMA], 'ratePerHour': 0.15},
     '2': {'models': [GEMMA], 'ratePerHour': 0.10, 'chip': 'M2 Max', 'memoryGB': 96},
-    '3': {'models': [QWEN], 'ratePerHour': 0.30, 'chip': 'M3 Ultra', 'memoryGB': 256},
-    '4': {'models': PAIR, 'ratePerHour': 0.08},
+    # An older Bloomkeeper: no model count, per-model pace or strategy.
+    '3': {'models': [QWEN], 'ratePerHour': 0.30, 'chip': 'M3 Ultra', 'memoryGB': 256, 'old': True},
+    # A pair's pace follows the credits each model earned, not an even split.
+    '4': {
+        'models': PAIR,
+        'ratePerHour': 0.08,
+        'modelRates': [
+            {'model': 'Qwen3.5-9B', 'ratePerHour': 0.06},
+            {'model': 'gpt-oss-20b', 'ratePerHour': 0.02},
+        ],
+    },
     '5': {'models': [], 'ratePerHour': None, 'ready': False, 'switching': True},
     '6': {'models': [GEMMA], 'ratePerHour': 0.20, 'stale': True},
     '7': {'models': [GEMMA], 'ratePerHour': 0.20, 'unreachable': True},
@@ -57,7 +66,18 @@ class FleetSimulation(unittest.TestCase):
             }
             if spec.get('stale') and self.connected:
                 extra['at'] = self.now - 600
-            return self.report(hours, installation=installation, device=device, **extra)
+            rate = spec.get('ratePerHour')
+            extra['modelCount'] = len(spec['models'])
+            extra['modelRates'] = spec.get('modelRates') or (
+                [{'model': m, 'ratePerHour': rate} for m in spec['models']]
+                if rate is not None
+                else None
+            )
+            r = self.report(hours, installation=installation, device=device, **extra)
+            if spec.get('old'):
+                for key in ('modelCount', 'modelRates', 'strategy'):
+                    del r[key]
+            return r
 
         self.c.machines.fetcher = fetch
         for name in FLEET:
@@ -82,7 +102,7 @@ class FleetSimulation(unittest.TestCase):
         self.assertEqual(r['rateMacs'], 5)
         self.assertAlmostEqual(sum(m['ratePerHour'] or 0 for m in r['models']), r['ratePerHour'])
 
-    def test_model_rollup_splits_pairs_and_attaches_demand(self):
+    def test_model_rollup_splits_pairs_by_credits_and_attaches_demand(self):
         r = self.settled()
         models = {m['model']: m for m in r['models']}
         self.assertEqual(r['models'][0]['model'], GEMMA)
@@ -90,8 +110,10 @@ class FleetSimulation(unittest.TestCase):
         self.assertEqual(len(models[GEMMA]['macs']), 4)
         self.assertAlmostEqual(models[GEMMA]['ratePerHour'], 0.15 + 0.15 + 0.10)
         self.assertEqual(models[GEMMA]['demand']['ratio'], 2.0)
-        self.assertAlmostEqual(models['Qwen3.5-9B']['ratePerHour'], 0.04)
-        self.assertAlmostEqual(models['gpt-oss-20b']['ratePerHour'], 0.04)
+        self.assertAlmostEqual(models['Qwen3.5-9B']['ratePerHour'], 0.06)
+        self.assertAlmostEqual(models['gpt-oss-20b']['ratePerHour'], 0.02)
+        # The older single-model Mac still adds its whole pace.
+        self.assertAlmostEqual(models[QWEN]['ratePerHour'], 0.30)
         self.assertIsNone(models[QWEN]['demand'])
 
     def test_known_inference_only_counts_included_macs(self):

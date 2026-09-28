@@ -1,6 +1,7 @@
 import copy, unittest
 from unittest.mock import Mock
 from optimizer import roster_identity
+from demand_optimizer import policy
 import test_provider_eligibility as fixtures
 
 
@@ -93,12 +94,20 @@ class ServingStatusTests(unittest.TestCase):
         self.o.runner.assert_not_called()
 
     def test_unselected_current_or_missing_alternative_keeps_selection_guidance(self):
-        for selected in (['b'], ['a']):
+        legacy = policy({**(self.o.state.get('demandPolicy') or {}), 'managerStrategy': 0})
+        for selected, strategy in ((['b'], None), (['a'], legacy)):
             self.o.state.update(mode='observe', endsAt=None, models=selected)
+            if strategy:
+                self.o.state['demandPolicy'] = strategy
             status = self.o.demand_resume_status()
             self.assertFalse(status['available'])
             self.assertIn('include the serving model', status['reason'])
             self.o.runner.assert_not_called()
+
+    def test_manager_holds_the_serving_model_without_an_alternative(self):
+        self.o.state.update(mode='observe', endsAt=None, models=['a'])
+        self.assertTrue(self.o.demand_resume_status()['available'])
+        self.o.runner.assert_not_called()
 
 
 if __name__ == '__main__':

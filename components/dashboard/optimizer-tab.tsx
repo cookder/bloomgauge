@@ -1,13 +1,21 @@
 'use client';
 import { ModelEvidence } from './model-evidence';
 import { StallRecovery } from './stall-recovery';
-import { recordSupportIssue, observeModelResult } from '@/lib/support-issues';
-import { startChartPolling } from '@/lib/chart-polling';
+import {
+  recordSupportIssue,
+  observeModelResult,
+  observeSupportCondition,
+} from '@/lib/support-issues';
+import {
+  ResponseValidationError,
+  startChartPolling,
+} from '@/lib/chart-polling';
 import { usePageVisible } from '@/lib/use-page-visibility';
 import { distinctLabels } from '@/lib/model-label';
 import {
-  validOptimizerResponse,
-  withoutInvalidHistory,
+  keepReadablePlan,
+  readOptimizerResponse,
+  savedPlanUnreadable,
 } from '@/lib/optimizer-response';
 import {
   consumeOptimizerDetails,
@@ -31,6 +39,14 @@ import {
   type DemandRules,
 } from './demand-auto';
 import { OptimizerPlan } from './optimizer-plan';
+import { NetworkEvidencePanel } from './manager-status';
+import { WhatsChanged } from './whats-changed';
+import {
+  excursionsSetting,
+  lastPause,
+  optimizerStrategy,
+  readManager,
+} from '@/lib/optimizer-manager';
 import { CalendarDays, Play, RefreshCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -203,17 +219,21 @@ const series = {
     {
       key: 'activeRequests',
       label: 'Active + queued requests',
-      color: '#a995ff',
+      color: 'var(--c-a995ff)',
     },
   ],
   pressure: [
-    { key: 'pressure', label: 'Requests per warm provider', color: '#87b9ff' },
+    {
+      key: 'pressure',
+      label: 'Requests per warm provider',
+      color: 'var(--c-87b9ff)',
+    },
   ],
   earnings: [
     {
       key: 'usdPerHour',
       label: 'This Mac · inference USD / hour',
-      color: '#82efb5',
+      color: 'var(--c-82efb5)',
     },
   ],
 };
@@ -228,9 +248,16 @@ export function OptimizerTab({
   const pageVisible = usePageVisible();
   const { mobile, visible, navigate, tab } = useAppNavigation();
   const [data, setData] = useState<Optimizer | null>(null),
+    // Parts of the last response that were dropped as unreadable ("Couldn't read").
+    [unreadable, setUnreadable] = useState<string[]>([]),
     [error, setError] = useState(''),
     [actionError, setActionError] = useState(''),
     [busy, setBusy] = useState(false);
+  // The last reading, so a plan section this reading dropped keeps its last value.
+  const lastData = useRef<Optimizer | null>(null);
+  useEffect(() => {
+    lastData.current = data;
+  }, [data]);
   const [range, setRange] = useState<Range>({ preset: 'all' }),
     [selected, setSelected] = useState<string[]>([]),
     // Other strategies (scheduled tests). Follow demand is edited through the plan.
@@ -271,7 +298,9 @@ export function OptimizerTab({
     (visible('results') && resultsView !== 'history') ||
     visible('pairs') ||
     visible('diagnostics') ||
-    visible('test');
+    visible('test') ||
+    // Model controls read the manager's home and pin from this response.
+    visible('switch');
   const planDirty = useRef(false);
   function showPlan() {
     requestAnimationFrame(() =>
@@ -305,16 +334,28 @@ export function OptimizerTab({
           throw Error(
             'The optimizer is unavailable. Check that Bloomkeeper is running.',
           );
-        const value = withoutInvalidHistory(await res.json());
-        if (!validOptimizerResponse(value))
-          throw Error(
+        const read = readOptimizerResponse<Optimizer>(await res.json());
+        if (!read)
+          throw new ResponseValidationError(
+            'optimizer',
             'The optimizer response is incomplete. Retrying without replacing saved readings.',
           );
-        return { value: value as Optimizer, epoch };
+        return { ...read, epoch };
       },
-      onValue: ({ value, epoch }) => {
+      onValue: ({ value: reading, unreadable, reportable, epoch }) => {
         if (epoch !== updateEpoch.current || actionPending.current) return;
-        observeModelResult(value.lastSwitchResult);
+        const value = keepReadablePlan(reading, unreadable, lastData.current);
+        observeModelResult(value.lastSwitchResult, value.demandAuto?.runs);
+        // A dropped part counts as a validation issue once it persists (60 s);
+        // dropped history rows are only named.
+        observeSupportCondition(
+          'validation',
+          'models',
+          reportable,
+          Date.now(),
+          'optimizer',
+        );
+        setUnreadable(unreadable);
         setData(value);
         setLoadedRangeKey(
           visible('results') ? rangeKey : JSON.stringify({ preset: '24h' }),
@@ -463,12 +504,12 @@ export function OptimizerTab({
           expectedControl: data.controlVersion,
         }),
       });
-      const value = withoutInvalidHistory(
-        (await res.json()) as Optimizer & { error?: string },
-      );
+      const reply = (await res.json()) as Optimizer & { error?: string };
       if (!res.ok)
-        throw Error(value.error || 'Could not change optimizer settings.');
-      if (!validOptimizerResponse(value))
+        throw Error(reply.error || 'Could not change optimizer settings.');
+      const read = readOptimizerResponse<Optimizer>(reply),
+        value = read?.value;
+      if (!value)
         throw Error(
           'The request response was incomplete. Check the live optimizer status before retrying.',
         );
@@ -481,7 +522,11 @@ export function OptimizerTab({
               status: value.status,
               detail: value.detail,
               warmup: value.warmup,
-              demandAuto: value.demandAuto,
+              demandAuto: keepReadablePlan(
+                value,
+                read?.unreadable ?? [],
+                previous,
+              ).demandAuto,
               resumeDemand: value.resumeDemand,
               selected: value.selected,
               busy: value.busy,
@@ -535,12 +580,12 @@ export function OptimizerTab({
           expectedControl: data.controlVersion,
         }),
       });
-      const value = withoutInvalidHistory(
-        (await res.json()) as Optimizer & { error?: string },
-      );
+      const reply = (await res.json()) as Optimizer & { error?: string };
       if (!res.ok)
-        throw Error(value.error || 'Could not change learning boost.');
-      if (!validOptimizerResponse(value))
+        throw Error(reply.error || 'Could not change learning boost.');
+      const read = readOptimizerResponse<Optimizer>(reply),
+        value = read?.value;
+      if (!value)
         throw Error(
           'The request response was incomplete. Check the live optimizer status before retrying.',
         );
@@ -548,7 +593,11 @@ export function OptimizerTab({
         previous
           ? {
               ...previous,
-              demandAuto: value.demandAuto,
+              demandAuto: keepReadablePlan(
+                value,
+                read?.unreadable ?? [],
+                previous,
+              ).demandAuto,
               controlVersion: value.controlVersion,
               status: value.status,
               detail: value.detail,
@@ -567,6 +616,74 @@ export function OptimizerTab({
       setBusy(false);
     }
   }
+  // One saved setting (e.g. managerExcursions), merged into the saved plan by the
+  // backend. Never switches a model.
+  const [policyBusy, setPolicyBusy] = useState(false);
+  async function setPolicy(changes: Partial<DemandRules>) {
+    if (actionPending.current || !data) return;
+    actionPending.current = true;
+    updateEpoch.current += 1;
+    setBusy(true);
+    setPolicyBusy(true);
+    setActionError('');
+    try {
+      const res = await fetch('/api/optimizer', {
+        method: 'POST',
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Bloom-Action': 'optimizer',
+        },
+        body: JSON.stringify({
+          action: 'update-plan',
+          demandPolicy: changes,
+          expectedControl: data.controlVersion,
+        }),
+      });
+      const reply = (await res.json()) as Optimizer & { error?: string };
+      if (!res.ok) throw Error(reply.error || 'Could not save the setting.');
+      const read = readOptimizerResponse<Optimizer>(reply),
+        value = read?.value;
+      if (!value)
+        throw Error(
+          'The request response was incomplete. Check the live optimizer status before retrying.',
+        );
+      setData((previous) =>
+        previous
+          ? {
+              ...previous,
+              demandAuto: keepReadablePlan(
+                value,
+                read?.unreadable ?? [],
+                previous,
+              ).demandAuto,
+              controlVersion: value.controlVersion,
+              status: value.status,
+              detail: value.detail,
+            }
+          : value,
+      );
+      // Keep an unsaved plan edit, but carry the new value into it.
+      setAutoRules((rules) => ({ ...rules, ...changes }));
+    } catch (e) {
+      setActionError(
+        e instanceof Error && e.name !== 'TimeoutError'
+          ? e.message
+          : 'The request could not be confirmed. Check the live optimizer status before retrying.',
+      );
+    } finally {
+      updateEpoch.current += 1;
+      actionPending.current = false;
+      setBusy(false);
+      setPolicyBusy(false);
+    }
+  }
+  const manager = readManager(data?.demandAuto?.manager);
+  const savedPolicy = (data?.demandAuto?.savedPolicy ??
+    data?.demandAuto?.policy) as Record<string, unknown> | undefined;
+  const strategy = optimizerStrategy({ manager, savedPolicy });
+  const managed = strategy === 'manager';
+  const excursions = excursionsSetting(savedPolicy);
   const savedRules = data?.demandAuto
     ? {
         ...defaultDemandRules,
@@ -592,10 +709,13 @@ export function OptimizerTab({
       selected.some((id) => !savedSelection.includes(id)) ||
       (!!savedRules &&
         JSON.stringify(autoRules) !== JSON.stringify(savedRules)));
+  // Saving while the saved plan can't be read could replace it with something else.
+  const planUnreadable = savedPlanUnreadable(unreadable);
   const planEditable =
     !!data?.canManage &&
     !data.busy &&
     !data.requestedModel &&
+    !planUnreadable &&
     (data.mode === 'observe' || data.mode === 'demand');
   const planLockedReason = !data
     ? ''
@@ -603,9 +723,11 @@ export function OptimizerTab({
       ? 'Open the dashboard on your Mac or your private phone connection to change the plan.'
       : data.busy || data.requestedModel
         ? 'A model change is in progress. The plan can be changed when it finishes.'
-        : data.mode !== 'observe' && data.mode !== 'demand'
-          ? 'A scheduled test is running. Switch to Manual to change the plan.'
-          : '';
+        : planUnreadable
+          ? 'Your saved plan couldn’t be read. You can change it once it loads again.'
+          : data.mode !== 'observe' && data.mode !== 'demand'
+            ? 'A scheduled test is running. Switch to Manual to change the plan.'
+            : '';
   function discardPlan() {
     if (!data) return;
     planDirty.current = false;
@@ -633,11 +755,11 @@ export function OptimizerTab({
           expectedControl: data.controlVersion,
         }),
       });
-      const value = withoutInvalidHistory(
-        (await res.json()) as Optimizer & { error?: string },
-      );
-      if (!res.ok) throw Error(value.error || 'Could not save the plan.');
-      if (!validOptimizerResponse(value))
+      const reply = (await res.json()) as Optimizer & { error?: string };
+      if (!res.ok) throw Error(reply.error || 'Could not save the plan.');
+      const read = readOptimizerResponse<Optimizer>(reply),
+        value = read?.value;
+      if (!value)
         throw Error(
           'The request response was incomplete. Check the live optimizer status before retrying.',
         );
@@ -647,7 +769,11 @@ export function OptimizerTab({
           ? {
               ...previous,
               selected: value.selected,
-              demandAuto: value.demandAuto,
+              demandAuto: keepReadablePlan(
+                value,
+                read?.unreadable ?? [],
+                previous,
+              ).demandAuto,
               controlVersion: value.controlVersion,
               status: value.status,
               detail: value.detail,
@@ -700,6 +826,13 @@ export function OptimizerTab({
   )[0];
   // Models the provider offers that Darkbloom's catalog no longer lists get no
   // network work; show them (dimmed) so the model list matches the provider.
+  const offeredNotDownloaded = Array.isArray(
+    data?.reporting?.offeredNotDownloaded,
+  )
+    ? data.reporting.offeredNotDownloaded.filter(
+        (id): id is string => typeof id === 'string' && id.length > 0,
+      )
+    : [];
   const offeredNotInCatalog = (data?.reporting?.models ?? []).filter(
     (id) => !(data?.models ?? []).some((m) => m.id === id),
   );
@@ -768,8 +901,8 @@ export function OptimizerTab({
           <div className="eyebrow">OPTIMIZER</div>
           <h1>Your Mac. Your choice.</h1>
           <p>
-            Let Bloomkeeper manage models, or choose one yourself. Reporting continues
-            in either mode.
+            Let Bloomkeeper manage models, or choose one yourself. Reporting
+            continues in either mode.
           </p>
         </div>
       </section>
@@ -1148,9 +1281,21 @@ export function OptimizerTab({
         <NavigationHub optimizer />
       </AppScreen>
       <AppScreen name="switch">
-        <ManualModelControl paused={paused || !visible('switch')} />
+        <ManualModelControl
+          paused={paused || !visible('switch')}
+          managed={managed && data?.mode === 'demand'}
+          homeModel={manager?.home?.model}
+          pinned={!!manager?.pinned}
+        />
       </AppScreen>
       <AppScreen name="test">
+        <WhatsChanged />
+        {data && !error && unreadable.length > 0 && (
+          <p className="notice" role="status">
+            Couldn’t read {unreadable.join(', ')}. The rest of this page is up
+            to date.
+          </p>
+        )}
         {data?.reporting && (
           <div className="notice" role="status">
             <strong>
@@ -1159,10 +1304,12 @@ export function OptimizerTab({
             </strong>
             <p>{data.reporting.detail}</p>
             <p>
-              Statistics count for the models loaded right now, and start fresh
-              whenever Darkbloom loads or unloads one, so numbers from different
-              sets never mix. Earnings, traffic and the dashboards work either
-              way.
+              Statistics count while any model the network sends this Mac work
+              for is loaded. When Darkbloom loads or unloads a model, counting
+              carries on in a new segment, so numbers from different sets never
+              mix. While statistics are paused, the live pace and traffic meter
+              wait; balance, credits and hourly totals keep updating. Per-model
+              evidence is kept only for one model or a pair.
             </p>
             {offeredNotInCatalog.length > 0 && (
               <p>
@@ -1170,12 +1317,26 @@ export function OptimizerTab({
                 {offeredNotInCatalog.length === 1 ? 'is' : 'are'} no longer in
                 Darkbloom’s catalog, so the network won’t send{' '}
                 {offeredNotInCatalog.length === 1 ? 'it' : 'them'} work. Remove
-                with <code>darkbloom models remove &lt;id&gt;</code>.
+                with <code>darkbloom models remove &lt;id&gt;</code>, then
+                restart Darkbloom so it stops offering{' '}
+                {offeredNotInCatalog.length === 1 ? 'it' : 'them'}.
+              </p>
+            )}
+            {offeredNotDownloaded.length > 0 && (
+              <p>
+                {offeredNotDownloaded.join(', ')}{' '}
+                {offeredNotDownloaded.length === 1 ? 'is' : 'are'} no longer
+                downloaded, but Darkbloom keeps offering{' '}
+                {offeredNotDownloaded.length === 1 ? 'it' : 'them'}. Restart
+                Darkbloom to stop offering removed models.
               </p>
             )}
             <p>
-              The optimizer switches one model at a time, so it leaves this setup
-              alone and never changes your Darkbloom model list.
+              The Manager runs one model, or a pair without Gemma, so Darkbloom
+              manages this set and Bloomkeeper never changes it. Public network
+              data shows Macs serving Gemma alone get about twice the Gemma work
+              of Macs that mix it with other models. To let the Manager run,
+              pick one model in Model controls, then turn the Manager on.
             </p>
           </div>
         )}
@@ -1183,6 +1344,14 @@ export function OptimizerTab({
           connectionError={connectionError}
           onSettings={showPlan}
           onChanged={() => setRefreshRevision((n) => n + 1)}
+          strategy={strategy}
+          manager={manager}
+          excursions={excursions}
+          excursionsBusy={policyBusy || busy || !data?.canManage}
+          onExcursions={(on) =>
+            void setPolicy({ managerExcursions: on ? 1 : 0 })
+          }
+          lastPause={lastPause(data?.events)}
           plan={
             !data ? (
               <p className="footnote">
@@ -1204,6 +1373,8 @@ export function OptimizerTab({
                 )}
                 <OptimizerPlan
                   on={data.mode === 'demand'}
+                  strategy={strategy}
+                  excursions={excursions}
                   models={planModels}
                   currentModel={data.currentModel}
                   selected={selected}
@@ -1349,8 +1520,8 @@ export function OptimizerTab({
                       preserves your local endpoint settings and attempts
                       recovery if a switch fails. Closing the app stops scanning
                       and switching; the current provider keeps running. The
-                      top-bar pause freezes only the view; choose Manual to stop
-                      automation.
+                      top-bar pause freezes only the view; choose{' '}
+                      {managed ? 'Off' : 'Manual'} to stop automation.
                     </p>
                   </div>
                 </OptimizerPlan>
@@ -1363,6 +1534,15 @@ export function OptimizerTab({
             value={data.stallRecovery}
             events={data.events}
             now={data.at}
+            manager={managed}
+          />
+        )}
+        {managed && data && (
+          <NetworkEvidencePanel
+            view={manager}
+            currentModel={data.currentModel}
+            now={data.at}
+            names={Object.fromEntries(data.models.map((m) => [m.id, m.name]))}
           />
         )}
         <details
@@ -1380,7 +1560,9 @@ export function OptimizerTab({
           open={insightsOpen}
           onToggle={(event) => setInsightsOpen(event.currentTarget.open)}
         >
-          <summary>Why Bloomkeeper chooses a model</summary>
+          <summary>
+            {managed ? 'Decision details' : 'Why Bloomkeeper chooses a model'}
+          </summary>
           {insightsOpen && (
             <>
               {error && (
@@ -1389,7 +1571,11 @@ export function OptimizerTab({
                   available above.
                 </p>
               )}
-              <DemandAutoPanel data={data?.demandAuto} stale={!!error} />
+              <DemandAutoPanel
+                data={data?.demandAuto}
+                stale={!!error}
+                managed={managed}
+              />
             </>
           )}
         </details>
@@ -1410,7 +1596,9 @@ export function OptimizerTab({
             <p>
               {running
                 ? 'This test is running again. The same cleanup can fail on a later rotation until Mac setup is complete.'
-                : 'Bloomkeeper pauses switching after a failed load and attempts to restore the previous model.'}
+                : managed
+                  ? 'Bloomkeeper restores the previous or home model and stays on.'
+                  : 'Bloomkeeper pauses switching after a failed load and attempts to restore the previous model.'}
             </p>
             {mobile && (
               <button
@@ -1438,9 +1626,9 @@ export function OptimizerTab({
           <p className="footnote">
             After the current solo test, compare compatible pairs for seven more
             days in {data?.blockHours ?? 2}-hour runs, with a solo reference and
-            changing time slots. Bloomkeeper warms each model in turn, then verifies
-            both are loaded together. Memory, power, temperature and idle checks
-            still apply.
+            changing time slots. Bloomkeeper warms each model in turn, then
+            verifies both are loaded together. Memory, power, temperature and
+            idle checks still apply.
           </p>
           {comboPlan && (
             <p className="combo-plan-note" role="status">
@@ -1672,13 +1860,13 @@ export function OptimizerTab({
             <div>
               <strong>Automatic cache recovery</strong>
               <p className="footnote">
-                If a new model is cold and blocked by file-cache pressure, Bloomkeeper
-                clears the macOS cache before retrying warm-up. This needs a
-                one-time authorization on the Mac. Cleanup runs at most once per
-                provider session and once every ten minutes; healthy models are
-                left alone. Your manual <code>sudo /usr/sbin/purge</code>{' '}
-                fallback remains available. Bloomkeeper never collects your
-                administrator password.
+                If a new model is cold and blocked by file-cache pressure,
+                Bloomkeeper clears the macOS cache before retrying warm-up. This
+                needs a one-time authorization on the Mac. Cleanup runs at most
+                once per provider session and once every ten minutes; healthy
+                models are left alone. Your manual{' '}
+                <code>sudo /usr/sbin/purge</code> fallback remains available.
+                Bloomkeeper never collects your administrator password.
               </p>
               {data?.memory?.cacheRecovery?.detail && (
                 <p className="footnote" role="status">
@@ -1732,10 +1920,12 @@ export function OptimizerTab({
             </p>
           )}
           <p className="footnote">
-            History belongs to this Mac and account. An account change, an
-            unsupported service configuration, or a manual model change pauses
-            automation. Historical earnings without verified model run time are
-            not used to rank models.
+            History belongs to this Mac and account.{' '}
+            {managed
+              ? 'A model you start yourself becomes the manager’s pinned pick; automation stays on.'
+              : 'An account change, an unsupported service configuration, or a manual model change pauses automation.'}{' '}
+            Historical earnings without verified model run time are not used to
+            rank models.
           </p>
         </section>
       </AppScreen>

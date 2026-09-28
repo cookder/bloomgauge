@@ -25,55 +25,110 @@ def _number(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
-def _baseline(groups, now):
-    """Groups contain deduplicated observations aggregated by local date/hour."""
-    clock = datetime.fromtimestamp(now)
+def _samples(marks):
+    """Latest valid sample per model and 30s bucket, so repeated polls never count twice."""
+    return f"""WITH latest AS (
+        SELECT model,CAST(at/30 AS INTEGER) AS bucket,MAX(at) AS at
+        FROM opt_network WHERE model IN ({marks}) AND at>=? AND at<? AND at<=?
+        GROUP BY model,bucket), samples AS (
+        SELECT n.model,n.at,n.active,n.queued,n.warm,
+            n.active+n.queued AS load,
+            CASE WHEN n.warm>=1 THEN (n.active+n.queued)/n.warm END AS pressure
+        FROM latest l JOIN opt_network n ON n.model=l.model AND n.at=l.at
+        WHERE n.active>=0 AND n.active<=1e12 AND n.queued>=0 AND n.queued<=1e12
+            AND n.warm>=0 AND n.warm<=1e12)
+    """
 
-    def summarize(items, contextual):
-        days = {}
-        for group in items:
-            day = days.setdefault(group['day'], {'n': 0, 'load': 0, 'pressure': 0})
-            for key in ('n', 'load', 'pressure'):
-                day[key] += group[key]
-        if contextual:
-            days = {date: day for date, day in days.items() if day['n'] >= 60}
-        count = sum(day['n'] for day in days.values())
-        if count < MIN_BASELINE_SAMPLES or contextual and len(days) < 3:
-            return None
-        weights = [min(day['n'], 120) if contextual else day['n'] for day in days.values()]
+
+def _medians(db, models, now, context):
+    """Median load and pressure per model over the lookback, before the recent window.
+
+    With `context` (weekend flag, three local hours) only those samples count,
+    and only from local dates with at least 30 minutes of them. SQLite localtime
+    applies each timestamp's own DST rule. Returns one row per model.
+    """
+    marks = ','.join('?' for _ in models)
+    where = (
+        """AND ((CAST(strftime('%w',at,'unixepoch','localtime') AS INTEGER)+6)%7>=5)=?
+        AND CAST(strftime('%H',at,'unixepoch','localtime') AS INTEGER) IN (?,?,?)"""
+        if context
+        else ''
+    )
+    rows = db.execute(
+        _samples(marks)
+        + f""", tagged AS (
+            SELECT model,load,pressure,day,COUNT(*) OVER (PARTITION BY model,day) AS day_n
+            FROM (SELECT model,load,pressure,
+                strftime('%Y-%m-%d',at,'unixepoch','localtime') AS day
+                FROM samples WHERE warm>=1 {where})),
+        ranked AS (
+            SELECT model,day,load,pressure,COUNT(*) OVER (PARTITION BY model) AS n,
+                ROW_NUMBER() OVER (PARTITION BY model ORDER BY load) AS load_rank,
+                ROW_NUMBER() OVER (PARTITION BY model ORDER BY pressure) AS pressure_rank
+            FROM tagged WHERE day_n>=?)
+        SELECT model,MAX(n) AS n,COUNT(DISTINCT day) AS days,
+            AVG(CASE WHEN load_rank IN ((n+1)/2,(n+2)/2) THEN load END) AS load,
+            AVG(CASE WHEN pressure_rank IN ((n+1)/2,(n+2)/2) THEN pressure END) AS pressure
+        FROM ranked GROUP BY model""",
+        (
+            *models,
+            now - LOOKBACK,
+            int(now // 30) * 30 - RECENT_SECONDS,
+            now,
+            *(context or ()),
+            60 if context else 0,
+        ),
+    ).fetchall()
+    return {row['model']: dict(row) for row in rows}
+
+
+def usual_levels(db, models, now):
+    """The app's one "usual" network demand for each model.
+
+    Usual = the median 30-second reading on the same kind of day (weekday or
+    weekend) within an hour of this time of day, over the last 30 days. It
+    needs two hours of such samples from at least three dates. A median of the
+    same time of day is what a reading at this hour normally looks like; a
+    mean of all hours is pulled up by busy hours and bursts, so it made quiet
+    look like the norm. Until the time-of-day level exists, alerts fall back to
+    the median of all hours ('all_hours'); the Pulse overlay shows no ratio.
+    The caller holds the connection's lock.
+    """
+    models = list(models)
+    if not models:
+        return {}
+    clock = datetime.fromtimestamp(now)
+    context = (int(clock.weekday() >= 5), *((clock.hour + d) % 24 for d in (-1, 0, 1)))
+
+    def level(row, scope):
         return {
-            'baselineLoad': sum(
-                day['load'] / day['n'] * weight for day, weight in zip(days.values(), weights)
-            )
-            / sum(weights),
-            'baselinePressure': sum(
-                day['pressure'] / day['n'] * weight for day, weight in zip(days.values(), weights)
-            )
-            / sum(weights),
-            'baselineHours': count / 120,
-            'baselineDays': len(days),
+            'baselineLoad': row['load'],
+            'baselinePressure': row['pressure'],
+            'baselineHours': row['n'] / 120,
+            'baselineDays': row['days'],
+            'baselineScope': scope,
         }
 
-    comparable = [
-        group
-        for group in groups
-        if (group['weekday'] >= 5) == (clock.weekday() >= 5)
-        and min(abs(group['hour'] - clock.hour), 24 - abs(group['hour'] - clock.hour)) <= 1
-    ]
-    context = summarize(comparable, True)
-    if context:
-        return {**context, 'baselineScope': 'daytype_hour', 'dayWeightCapHours': 1}
-    broad = summarize(groups, False)
-    if broad:
-        return {**broad, 'baselineScope': 'all_hours', 'dayWeightCapHours': None}
-    return {
-        'baselineLoad': None,
-        'baselinePressure': None,
-        'baselineHours': sum(g['n'] for g in groups) / 120,
-        'baselineDays': len({g['day'] for g in groups}),
-        'baselineScope': 'learning',
-        'dayWeightCapHours': None,
-    }
+    result = {}
+    for model, row in _medians(db, models, now, context).items():
+        if row['n'] >= MIN_BASELINE_SAMPLES and row['days'] >= 3:
+            result[model] = level(row, 'daytype_hour')
+    rest = [model for model in models if model not in result]
+    broad = _medians(db, rest, now, None) if rest else {}
+    for model in rest:
+        row = broad.get(model) or {'n': 0, 'days': 0}
+        result[model] = (
+            level(row, 'all_hours')
+            if row['n'] >= MIN_BASELINE_SAMPLES
+            else {
+                'baselineLoad': None,
+                'baselinePressure': None,
+                'baselineHours': row['n'] / 120,
+                'baselineDays': row['days'],
+                'baselineScope': 'learning',
+            }
+        )
+    return result
 
 
 def current_row(row, observation, now):
@@ -158,29 +213,17 @@ class DemandAlerts:
     def _observations(self, models, now, include_history=True):
         """Latest sample per 30s bucket; never count repeated polls as coverage.
 
-        SQLite localtime applies each timestamp's historical DST rule. Grouped
-        historical output is bounded to at most 31 dates x 24 hours per model,
-        rather than passing a month of raw snapshots through the collector.
+        The usual level is computed in SQLite (one row per model), rather than
+        passing a month of raw snapshots through the collector.
         """
         cutoff = int(now // 30) * 30
         start = cutoff - RECENT_SECONDS
         marks = ','.join('?' for _ in models)
-        latest = f"""WITH latest AS (
-            SELECT model,CAST(at/30 AS INTEGER) AS bucket,MAX(at) AS at
-            FROM opt_network WHERE model IN ({marks}) AND at>=? AND at<? AND at<=?
-            GROUP BY model,bucket), samples AS (
-            SELECT n.model,n.at,n.active,n.queued,n.warm,
-                n.active+n.queued AS load,
-                CASE WHEN n.warm>=1 THEN (n.active+n.queued)/n.warm END AS pressure
-            FROM latest l JOIN opt_network n ON n.model=l.model AND n.at=l.at
-            WHERE n.active>=0 AND n.active<=1e12 AND n.queued>=0 AND n.queued<=1e12
-                AND n.warm>=0 AND n.warm<=1e12)
-        """
         with self.h.lock:
             recent = [
                 dict(row)
                 for row in self.h.db.execute(
-                    latest
+                    _samples(marks)
                     + """
                 SELECT model,MAX(at) AS observedAt,COUNT(*) AS n,AVG(active) AS active,
                     AVG(queued) AS queued,AVG(load) AS load,AVG(warm) AS warm,
@@ -189,27 +232,8 @@ class DemandAlerts:
                     (*models, start, cutoff, now),
                 )
             ]
-            historical = (
-                [
-                    dict(row)
-                    for row in self.h.db.execute(
-                        latest
-                        + """
-                SELECT model,strftime('%Y-%m-%d',at,'unixepoch','localtime') AS day,
-                    CAST(strftime('%H',at,'unixepoch','localtime') AS INTEGER) AS hour,
-                    (CAST(strftime('%w',at,'unixepoch','localtime') AS INTEGER)+6)%7 AS weekday,
-                    COUNT(*) AS n,SUM(load) AS load,SUM(pressure) AS pressure
-                FROM samples WHERE warm>=1 GROUP BY model,day,hour,weekday""",
-                        (*models, now - LOOKBACK, start, now),
-                    )
-                ]
-                if include_history
-                else []
-            )
-        by_model = {model: [] for model in models}
-        for group in historical:
-            by_model[group['model']].append(group)
-        return {row['model']: row for row in recent}, by_model
+            usual = usual_levels(self.h.db, models, now) if include_history else {}
+        return {row['model']: row for row in recent}, usual
 
     def _events(self, account, device, models):
         if not models:
@@ -291,7 +315,7 @@ class DemandAlerts:
             }
             for model in models:
                 observation = recent.get(model) or {}
-                baseline = _baseline(historical[model], now)
+                baseline = historical[model]
                 known = local.get(model) or {}
                 hours = known.get('hours')
                 rate = known.get('usdPerHour')

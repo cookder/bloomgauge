@@ -1,6 +1,7 @@
 """Durable reporting sessions, independent of chart pause or optimizer mode."""
 
 import copy, ctypes, errno, hashlib, json, math, os, pathlib, threading, time
+from provider_reporting import FRESH_SECONDS, PRELOAD_FRESH_SECONDS, loaded_models, preloading
 
 
 def numeric(value):
@@ -126,6 +127,11 @@ COUNTERS = (
     'challengesPassed',
     'challengesFailed',
 )
+BASELINE_GROUPS = (
+    ('totalJobs', 'successfulJobs', 'failedJobs'),
+    ('uptimeSeconds',),
+    ('challengesPassed', 'challengesFailed'),
+)
 
 
 class ProviderSessions:
@@ -135,6 +141,7 @@ class ProviderSessions:
         self.lock = threading.RLock()
         self.current, self.scope = None, None
         self.availability = 'unavailable'
+        self.fresh_seconds = FRESH_SECONDS  # longer while Darkbloom preloads its models
         with self.h.lock:
             self.h.db.execute(
                 'CREATE TABLE IF NOT EXISTS provider_sessions(id INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT,data TEXT)'
@@ -256,7 +263,8 @@ class ProviderSessions:
             current = self.current
             identity = process_identity(raw)
             written, selected = raw.get('written_at'), models(raw)
-            fresh = numeric(written) and -5 < now - written < 15
+            self.fresh_seconds = PRELOAD_FRESH_SECONDS if preloading(raw) else FRESH_SECONDS
+            fresh = numeric(written) and -5 < now - written < self.fresh_seconds
             candidate = (
                 identity
                 if identity and selected and fresh and isinstance(key, str) and key
@@ -399,7 +407,7 @@ class ProviderSessions:
         data = {k: copy.deepcopy(v) for k, v in record.items() if not k.startswith('_')}
         data['label'] = 'Session ' + str(data['id'])
         data['status'] = 'ended' if data['endedAt'] is not None else self.availability
-        if data['status'] == 'active' and not -5 < now - data['lastSeenAt'] < 15:
+        if data['status'] == 'active' and not -5 < now - data['lastSeenAt'] < self.fresh_seconds:
             data['status'] = 'stale'
         end = (
             data['endedAt']
@@ -436,8 +444,12 @@ class ProviderSessions:
                 if data.get('performance', {}).get('status') != 'counting'
                 else 'observed'
             )
-            rep['scoreStart'], rep['scoreNow'] = baseline['score'], latest['score']
-            rep['scoreChange'] = (latest['score'] - baseline['score']) * 100
+            # Darkbloom 0.9.10 sends no score: its change is unknown, the counters still count.
+            start, score = baseline.get('score'), latest.get('score')
+            rep['scoreStart'], rep['scoreNow'] = start, score
+            rep['scoreChange'] = (
+                (score - start) * 100 if numeric(start) and numeric(score) else None
+            )
             for key in COUNTERS:
                 rep[key] = (
                     latest[key] - baseline[key]
@@ -502,8 +514,13 @@ class ProviderSessions:
                     return False
                 if self.probe(record['_process']) is not True:
                     return False
-                if not isinstance(raw.get('warm_models'), list) or not all(
-                    m in raw['warm_models'] for m in record['models']
+                # Like its statistics, a set of 3+ models Darkbloom loads on demand is
+                # ready with any of them loaded; one model or a pair needs all loaded.
+                warm = raw.get('warm_models')
+                if not isinstance(warm, list) or not (
+                    loaded_models(raw, record['models'])
+                    if len(record['models']) > 2
+                    else all(m in warm for m in record['models'])
                 ):
                     return False
             except (OSError, ValueError, TypeError):
@@ -535,6 +552,16 @@ class ProviderSessions:
                     '_lastCounts': {},
                     'counterReset': False,
                 }
+            # Per-field baselines: a counter unknown in the first reading (e.g. a total
+            # below its parts) starts from its first known value instead of staying
+            # unknown for the whole warm interval. Related counters restart together so
+            # jobs and their successes and failures cover the same span.
+            for group in BASELINE_GROUPS:
+                if any(
+                    rep['_baseline'].get(k) is None and values.get(k) is not None
+                    for k in group
+                ):
+                    rep['_baseline'] = {**rep['_baseline'], **{k: values.get(k) for k in group}}
             if any(
                 values.get(k) is not None
                 and rep['_lastCounts'].get(k) is not None

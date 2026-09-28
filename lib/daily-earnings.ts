@@ -77,10 +77,47 @@ export type EarningsTone =
   | 'green'
   | 'purple'
   | 'gold'
+  | 'neutral'
   | 'unknown';
+/** This Mac's own day scale: the 25th, 50th, 75th and 90th percentiles of its
+ * last 30 complete days. Macs earn very different amounts, so no fixed dollar
+ * tiers; with fewer than 7 complete days (or no spread) there is no scale. */
+export type EarningsTiers = {
+  steady: number;
+  green: number;
+  purple: number;
+  gold: number;
+  days: number;
+};
+export const TIER_MIN_DAYS = 7;
+export function earningsTiers(
+  days: DailyEarning[] | null | undefined,
+): EarningsTiers | null {
+  const values = (days ?? [])
+    .filter((d) => d.status === 'complete' && Number.isFinite(d.usd))
+    .sort((a, b) => a.at - b.at)
+    .slice(-30)
+    .map((d) => d.usd)
+    .sort((a, b) => a - b);
+  if (values.length < TIER_MIN_DAYS) return null;
+  const at = (p: number) => {
+    const i = (values.length - 1) * p,
+      low = Math.floor(i);
+    return values[low] + (values[Math.ceil(i)] - values[low]) * (i - low);
+  };
+  const tiers = {
+    steady: at(0.25),
+    green: at(0.5),
+    purple: at(0.75),
+    gold: at(0.9),
+    days: values.length,
+  };
+  return tiers.gold > tiers.steady ? tiers : null;
+}
 export function earningsTone(
   usd: number | null | undefined,
   hours = 24,
+  tiers: EarningsTiers | null = null,
 ): EarningsTone {
   if (
     usd == null ||
@@ -89,11 +126,13 @@ export function earningsTone(
     hours <= 0
   )
     return 'unknown';
+  if (!tiers) return 'neutral';
   const daily = (usd * 24) / hours;
-  if (daily >= 4) return 'gold';
-  if (daily >= 3) return 'purple';
-  if (daily >= 2.5) return 'green';
-  if (daily >= 1.5) return 'steady';
+  if (daily <= 0) return 'quiet';
+  if (daily >= tiers.gold) return 'gold';
+  if (daily >= tiers.purple) return 'purple';
+  if (daily >= tiers.green) return 'green';
+  if (daily >= tiers.steady) return 'steady';
   return 'quiet';
 }
 export const earningsToneLabel: Record<EarningsTone, string> = {
@@ -102,11 +141,15 @@ export const earningsToneLabel: Record<EarningsTone, string> = {
   green: 'Good',
   purple: 'Great',
   gold: 'Outstanding',
+  neutral: 'Not rated yet',
   unknown: 'Unavailable',
 };
-export function dayTone(day: DailyEarning): EarningsTone {
+export function dayTone(
+  day: DailyEarning,
+  tiers: EarningsTiers | null = null,
+): EarningsTone {
   if (day.status === 'unknown') return 'unknown';
-  return earningsTone(day.usd);
+  return earningsTone(day.usd, 24, tiers);
 }
 // Whole local calendar dates, including today, rather than rolling 24h bins.
 export function dailyBounds(

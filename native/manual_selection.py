@@ -5,7 +5,7 @@ import re
 import threading
 import time
 import uuid
-from model_combinations import members, same_selection
+from model_combinations import configured_reserve_gb, members, same_selection
 from model_readiness import session_key
 from optimizer_store import device_id
 from provider_control import endpoint_issue
@@ -135,7 +135,11 @@ class ManualSelection:
             # Explicit Start selected permits an offline provider, never stale
             # host readings or an unknown/possibly-running process.
             check['provider'] = {**check.get('provider', {}), 'online': True, 'memoryGB': 0}
-        return o.environment_reason(check, now, manual=True)
+        # Switching a running provider: battery power and the 95 °C line don't hold an explicit
+        # pick (thermal state does). Starting a stopped one keeps them: it may clear the file
+        # cache first, and On uses this check too.
+        move = 'manual' if v['status'] == 'running' else None
+        return o.environment_reason(check, now, manual=True, move=move)
 
     def rows(self, v, source, live, raw, state, now, blocked=False):
         from optimizer import finite, memory_budget
@@ -153,6 +157,7 @@ class ManualSelection:
             if v.get('status') == 'stopped'
             else {'status': 'unknown', 'detail': ''}
         )
+        reserve = configured_reserve_gb(o.home, v.get('options') or [])
         for row in candidates:
             row = copy.deepcopy(row)
             model = row['id']
@@ -203,7 +208,12 @@ class ManualSelection:
                 else raw.get('capacity', {}).get('gpu_memory_cache_gb', 0)
             )
             budget = memory_budget(
-                live.get('hardware', {}), provider, model, row.get('memoryGB'), cache
+                live.get('hardware', {}),
+                provider,
+                model,
+                row.get('memoryGB'),
+                cache,
+                config_reserve=reserve,
             )
             recovery = self.cache_plan(
                 v, live, state, budget, now, common is None and reason is None, authorization
@@ -277,6 +287,7 @@ class ManualSelection:
                 'memoryGB',
                 'loadBudget',
                 'requiresRuntimeVerification',
+                'runtimeProof',
                 'canStart',
                 'startReason',
                 'canSwitch',
@@ -477,8 +488,12 @@ class ManualSelection:
                 + [{'id': request_id, 'body': data, 'source': source, 'kind': kind}]
             )[-32:]
             o.state['selectionRequest'] = copy.deepcopy(request)
+            unchanged = kind == 'switch' and model == v['model'] and not setup
+            # Under the manager a manual pick becomes the pin and automatic control resumes after it.
+            manager = getattr(o, 'manager', None)
+            resume = bool(manager and manager.manual_queued(request_id, model, unchanged))
             o.state.update(
-                mode='observe',
+                mode='demand' if resume and unchanged else 'observe',
                 account=live['account'],
                 device=live['device'],
                 requestedModel=None,
@@ -491,13 +506,14 @@ class ManualSelection:
             o.state.pop('demandProposal', None)
             o.state.pop('rollbackModel', None)
             o.cancel_combo('Manual selection paused automatic switching.')
-            unchanged = kind == 'switch' and model == v['model'] and not setup
             o.state['manualResult'] = {
                 'id': request_id,
                 'model': model,
                 'at': now,
                 'status': 'unchanged' if unchanged else 'working' if kind == 'start' else 'queued',
-                'detail': 'This model is already selected. Automatic switching is paused.'
+                'detail': 'This model is already selected. It is now your pick; automatic control continues.'
+                if unchanged and resume
+                else 'This model is already selected. Automatic switching is paused.'
                 if unchanged
                 else 'Preparing the selected model; cache cleanup and memory recheck are required before start.'
                 if kind == 'start' and row['cacheRecovery']['canAttempt']
@@ -889,7 +905,10 @@ class ManualSelection:
                 if status == 'completed':
                     o.state['expectedModel'] = request['model']
                     o.state['lastSwitchAt'] = time.time()
-                o.status = 'observing'
+                manager = getattr(o, 'manager', None)
+                if manager:
+                    manager.manual_finished(request['id'], request['model'], status)
+                o.status = 'optimizing' if o.state['mode'] == 'demand' else 'observing'
                 o.detail = detail
                 o.next_identity = 0
                 o.next_discovery = 0

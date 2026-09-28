@@ -262,13 +262,16 @@ export function DemandBaselines({
                   key={`${key}-${metric}`}
                   margin={{ top: 12, right: 12, bottom: 12, left: 0 }}
                 >
-                  <CartesianGrid stroke="#263642" strokeDasharray="3 6" />
+                  <CartesianGrid
+                    stroke="var(--c-263642)"
+                    strokeDasharray="3 6"
+                  />
                   <XAxis
                     type="number"
                     dataKey="pressure"
                     name="Load / warm"
                     domain={[0, 'auto']}
-                    tick={{ fontSize: 11, fill: '#9bacb9' }}
+                    tick={{ fontSize: 11, fill: 'var(--c-9bacb9)' }}
                     tickFormatter={(v) => num(v, 1)}
                     tickCount={5}
                   />
@@ -277,7 +280,7 @@ export function DemandBaselines({
                     dataKey={metric}
                     name={metrics[metric]}
                     domain={[0, 'auto']}
-                    tick={{ fontSize: 11, fill: '#9bacb9' }}
+                    tick={{ fontSize: 11, fill: 'var(--c-9bacb9)' }}
                     tickFormatter={(v) =>
                       metric === 'usdPerHour' ? money(v) : num(v, 1)
                     }
@@ -293,7 +296,7 @@ export function DemandBaselines({
                   />
                   <Scatter
                     name="Weekday"
-                    fill="#82efb5"
+                    fill="var(--c-82efb5)"
                     fillOpacity={0.75}
                     isAnimationActive={false}
                     data={data.periods.filter(
@@ -302,7 +305,7 @@ export function DemandBaselines({
                   />
                   <Scatter
                     name="Weekend"
-                    fill="#ac98ff"
+                    fill="var(--c-ac98ff)"
                     fillOpacity={0.75}
                     isAnimationActive={false}
                     data={data.periods.filter((p) =>

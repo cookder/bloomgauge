@@ -1,4 +1,7 @@
-"""Unadvertised protected models: explicit manual verification, never auto admission."""
+"""Unadvertised protected models never served on this Mac: explicit manual verification only.
+
+Once this Mac has served one, automatic selection may pick it (test_runtime_proof.py).
+"""
 
 import copy
 import unittest
@@ -22,7 +25,12 @@ class ManualRuntimeTests(unittest.TestCase):
     def setUp(self):
         test_optimizer.ControllerTests.setUp(self)
         self.o.catalog[1]['required_provider_capabilities'] = ['apple_m5', 'mlx_nax']
+        # The runtime supports it; only the missing run on this Mac holds automation back.
+        self.o.raw['runtime_capabilities'] = ['apple_m5', 'mlx_nax']
+        self.raw = copy.deepcopy(self.o.raw)
+        self.o.read_state.return_value = copy.deepcopy(self.raw)
         self.o.device_identity_ok = self.o.identity_hardware = True
+        self.o.identity_device = self.live['device']
         self.o.eligible_models = ['a']
 
     def row(self, manual=False):
@@ -52,6 +60,12 @@ class ManualRuntimeTests(unittest.TestCase):
 
     def test_unadvertised_model_can_be_manually_verified_but_stays_out_of_auto_pool(self):
         self.assertFalse(self.row()['available'])
+        self.assertEqual(
+            self.row()['reason'],
+            'Runtime support is not yet verified for automatic selection. Needs one run on this '
+            'Mac first: pick it from the manual model list to verify it.',
+        )
+        self.assertIsNone(self.row()['runtimeProof'])
         self.assertTrue(self.row(True)['available'])
         self.assertTrue(self.row(True)['requiresRuntimeVerification'])
         self.assertFalse(self.row()['available'])
@@ -177,6 +191,7 @@ class ManualRuntimeTests(unittest.TestCase):
     def test_verified_current_model_needs_no_manual_exception(self):
         self.o.eligible_models = ['a', 'b']
         self.assertTrue(self.row()['available'])
+        self.assertEqual(self.row()['runtimeProof'], 'roster')
         self.assertFalse(self.row(True)['requiresRuntimeVerification'])
 
     def test_changed_or_removed_target_during_preflight_does_not_restart(self):

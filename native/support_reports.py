@@ -42,7 +42,9 @@ AUTO_LIMITED = (
     'every six hours and three a day. You can still send this report yourself.'
 )
 TIMEOUT = 15
-CATEGORIES = {'manual', 'ui', 'connection', 'setup', 'model', 'action'}
+# Keep in step with lib/support-issues.ts supportCategories and the website's list
+# (bloom-storefront lib/support-protocol.ts), which rejects a report it doesn't know.
+CATEGORIES = {'manual', 'ui', 'connection', 'setup', 'model', 'action', 'validation'}
 CONTEXTS = {
     'overview',
     'setup',

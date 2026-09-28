@@ -11,12 +11,17 @@ import {
 import { sessionStamp, type ProviderSession } from './provider-session';
 import { useScreenActive } from './app-navigation';
 import { usePageVisible } from '@/lib/use-page-visibility';
-import { startChartPolling } from '@/lib/chart-polling';
+import {
+  ResponseValidationError,
+  startChartPolling,
+} from '@/lib/chart-polling';
+import { validReputationResponse } from '@/lib/reputation-response';
 
 type ReputationData = {
   concurrency?: Concurrency | null;
   observedSessionId?: number | null;
-  score: number;
+  // Darkbloom 0.9.10 no longer sends a score: null, and the card shows the counts.
+  score: number | null;
   updatedAt: number;
   totalJobs: number | null;
   successfulJobs: number | null;
@@ -79,6 +84,7 @@ export const ReputationPanel = memo(function ReputationPanel({
   useEffect(() => {
     if (!active || !pageVisible || (paused && state)) return;
     return startChartPolling({
+      issueContext: 'network',
       load: async (signal) => {
         const response = await fetch('/api/reputation', {
           signal,
@@ -89,15 +95,9 @@ export const ReputationPanel = memo(function ReputationPanel({
             'Could not read the reputation connection. Retrying automatically.',
           );
         const next: State = await response.json();
-        if (
-          !next ||
-          typeof next.status !== 'string' ||
-          (next.data != null &&
-            (!Number.isFinite(next.data.score) ||
-              !Number.isFinite(next.data.updatedAt))) ||
-          (next.session != null && !Number.isFinite(next.session.id))
-        )
-          throw Error(
+        if (!validReputationResponse(next))
+          throw new ResponseValidationError(
+            'reputation',
             'Reputation returned an incomplete response. Retrying automatically.',
           );
         return next;
@@ -257,7 +257,11 @@ export const ReputationPanel = memo(function ReputationPanel({
       <div className="panel-heading">
         <div>
           <div className="eyebrow">YOUR NETWORK REPUTATION</div>
-          <h2>How Darkbloom rates this Mac.</h2>
+          <h2>
+            {r && r.score == null
+              ? 'This Mac’s record on Darkbloom.'
+              : 'How Darkbloom rates this Mac.'}
+          </h2>
         </div>
         <ShieldCheck size={23} className="muted" />
       </div>
@@ -272,19 +276,38 @@ export const ReputationPanel = memo(function ReputationPanel({
       {r && (
         <div className="reputation-readout">
           <div className="reputation-score">
-            <span className="small muted">
-              Official score · continuing network record
-            </span>
-            <strong>
-              {num(r.score * 100, 1)}
-              <span> / 100</span>
-            </strong>
-            <meter
-              min={0}
-              max={1}
-              value={r.score}
-              aria-label={`Official reputation score: ${num(r.score * 100, 1)} out of 100`}
-            />
+            {r.score != null ? (
+              <>
+                <span className="small muted">
+                  Official score · continuing network record
+                </span>
+                <strong>
+                  {num(r.score * 100, 1)}
+                  <span> / 100</span>
+                </strong>
+                <meter
+                  min={0}
+                  max={1}
+                  value={r.score}
+                  aria-label={`Official reputation score: ${num(r.score * 100, 1)} out of 100`}
+                />
+              </>
+            ) : (
+              // Darkbloom 0.9.10 reports job counts instead of a score.
+              <>
+                <span className="small muted">
+                  Jobs · continuing network record
+                </span>
+                <strong>
+                  {num(r.totalJobs)}
+                  <span> jobs</span>
+                </strong>
+                <small>
+                  {num(r.successfulJobs)} successful · {num(r.failedJobs)}{' '}
+                  failed
+                </small>
+              </>
+            )}
             <span className={`small ${fresh ? 'connected' : 'pending'}`}>
               {paused
                 ? 'View paused'
@@ -375,17 +398,19 @@ export const ReputationPanel = memo(function ReputationPanel({
                   : ''}
               </p>
               <div className="session-reputation-grid">
-                <div>
-                  <span>Score change</span>
-                  <strong>
-                    {sessionRep.scoreChange >= 0 ? '+' : ''}
-                    {num(sessionRep.scoreChange, 1)} points
-                  </strong>
-                  <small>
-                    {num(sessionRep.scoreStart * 100, 1)} →{' '}
-                    {num(sessionRep.scoreNow * 100, 1)} / 100
-                  </small>
-                </div>
+                {sessionRep.scoreChange != null && (
+                  <div>
+                    <span>Score change</span>
+                    <strong>
+                      {sessionRep.scoreChange >= 0 ? '+' : ''}
+                      {num(sessionRep.scoreChange, 1)} points
+                    </strong>
+                    <small>
+                      {num((sessionRep.scoreStart ?? NaN) * 100, 1)} →{' '}
+                      {num((sessionRep.scoreNow ?? NaN) * 100, 1)} / 100
+                    </small>
+                  </div>
+                )}
                 <div>
                   <span>Jobs observed</span>
                   <strong>{num(sessionRep.totalJobs)}</strong>
@@ -420,8 +445,10 @@ export const ReputationPanel = memo(function ReputationPanel({
           <p className="footnote">
             Changes start with the first matched reading in the current
             continuous warm interval. Cold gaps pause observation and restart
-            its baseline. The official score above is Darkbloom’s continuing
-            record and does not reset when a model changes.
+            its baseline.{' '}
+            {r?.score != null
+              ? 'The official score above is Darkbloom’s continuing record and does not reset when a model changes.'
+              : 'The network record above continues across sessions and does not reset when a model changes.'}
           </p>
         </div>
       )}
@@ -463,7 +490,7 @@ export const ReputationPanel = memo(function ReputationPanel({
         </a>
       </div>
       <p className="footnote">
-        {r
+        {r?.score != null
           ? 'The score comes directly from Darkbloom, scaled from 0–1 to 0–100. '
           : ''}
         Reputation is separate from hardware trust.{' '}

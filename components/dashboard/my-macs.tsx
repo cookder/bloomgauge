@@ -5,6 +5,7 @@ import { ArrowRight, Laptop, Plus, RefreshCw } from 'lucide-react';
 import { useAppNavigation, useScreenActive } from './app-navigation';
 import { money, shortModel } from './shared';
 import { demandLabel, validFleetModels, type FleetModel } from '@/lib/fleet';
+import { macMode, macModels } from '@/lib/my-macs';
 
 type Summary = {
   at: number | null;
@@ -14,6 +15,8 @@ type Summary = {
   chip: string;
   memoryGB: number | null;
   models: string[];
+  modelCount?: number;
+  strategy?: string | null;
   ready: boolean;
   switching: boolean;
   optimizer: string;
@@ -57,13 +60,6 @@ type Fleet = {
   models: FleetModel[];
 };
 const percent = (n: number | null) => (n == null ? '—' : `${Math.round(n)}%`);
-const modes: Record<string, string> = {
-  observe: 'Observing',
-  demand: 'Following demand',
-  week: 'Scheduled trials',
-  optimize: 'Optimizing',
-  combo: 'Pair trials',
-};
 const statuses: Record<Mac['status'], string> = {
   connected: 'Connected',
   connecting: 'Connecting',
@@ -363,9 +359,11 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
           </div>
           <p className="footnote">
             Pace is each live Mac’s confirmed pay over its last 5 warm minutes,
-            as everywhere in Bloomkeeper; a pair’s pace is split between its two
-            models. Demand is the network’s requests per warm Mac for that model
-            now, compared with its usual week, read on this Mac.
+            as everywhere in Bloomkeeper, split across its models by what each
+            one earned. A Mac on an older Bloomkeeper that serves more than one
+            model adds no pace here. Demand is the network’s requests per warm
+            Mac for that model now, compared with its usual for this time of day, read on this
+            Mac.
           </p>
         </section>
       )}
@@ -420,9 +418,7 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
                 {state}
               </span>
               <p className="mac-models">
-                {r?.models.length
-                  ? r.models.map(shortModel).join(' + ')
-                  : 'No verified model reading'}
+                {macModels(r?.models ?? [], r?.modelCount, shortModel)}
               </p>
               {r?.models.length === 1 &&
                 (() => {
@@ -483,7 +479,7 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
                       </span>
                     </div>
                     <p className="footnote">
-                      {modes[r.optimizer] || 'Observing'}
+                      {macMode(r.optimizer, r.strategy)}
                       {!r.earningsFresh ? ' · earnings need a fresh sync' : ''}
                     </p>
                   </>
@@ -495,7 +491,7 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
                 )}
               </details>
               <p className="footnote">
-                {r ? modes[r.optimizer] || 'Observing' : 'Awaiting readings'}
+                {r ? macMode(r.optimizer, r.strategy) : 'Awaiting readings'}
                 {r && !r.earningsFresh ? ' · earnings need a fresh sync' : ''}
               </p>
               {mac.status === 'identity-changed' && (

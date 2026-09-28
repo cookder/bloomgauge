@@ -99,6 +99,16 @@ class PredictiveTests(unittest.TestCase):
         self.assertEqual(row['status'], 'limited')
         self.assertAlmostEqual(sum(m['usd'] for m in row['perModel'].values()), row['usd'])
 
+    def test_below_goal_share_uses_the_users_goal_or_none(self):
+        # Two complete blocks at $0.10/h and $0.30/h.
+        minutes = [{'at': i * 60, 'usd': 0.1 / 60} for i in range(15)] + [
+            {'at': 900 + i * 60, 'usd': 0.3 / 60} for i in range(15)
+        ]
+        e = {'a': {'hours': 0.5, 'usd': 0.1, 'usdPerHour': 0.2, 'perModel': {}, 'minutes': minutes}}
+        self.assertIsNone(portfolio(e)[0]['belowTargetPercent'])
+        self.assertEqual(portfolio(e, 0.2)[0]['belowTargetPercent'], 50)
+        self.assertEqual(portfolio(e, 0.08)[0]['belowTargetPercent'], 0)
+
     def test_missing_income_is_unknown_not_zero_or_sum_of_solo_rates(self):
         self.assertIsNone(income_scenario({}, {}, None, 10, 10000))
         s = income_scenario({}, {}, 2, 10, 10000)

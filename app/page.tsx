@@ -4,6 +4,7 @@ import { startChartPolling } from '@/lib/chart-polling';
 import { usePageVisible } from '@/lib/use-page-visibility';
 import { dashboardConnection, readStatusJSON } from '@/lib/connection-status';
 import { BloomStatus } from '@/components/dashboard/bloom-status';
+import { ThemeToggle } from '@/components/dashboard/theme-toggle';
 import { ScreenErrorBoundary } from '@/components/dashboard/screen-error';
 import { observeSupportCondition } from '@/lib/support-issues';
 import {
@@ -91,6 +92,7 @@ import {
 type Provider = {
   tracking?: { counting: boolean; detail: string };
   online: boolean;
+  starting?: boolean;
   active: boolean;
   model: string;
   version: string;
@@ -156,8 +158,16 @@ function Metric({
   );
 }
 const throughputSeries = [
-  { key: 'tokensPerSecond', label: 'Average output tok/s', color: '#a995ff' },
-  { key: 'peakTokensPerSecond', label: 'Peak output tok/s', color: '#637795' },
+  {
+    key: 'tokensPerSecond',
+    label: 'Average output tok/s',
+    color: 'var(--c-a995ff)',
+  },
+  {
+    key: 'peakTokensPerSecond',
+    label: 'Peak output tok/s',
+    color: 'var(--c-637795)',
+  },
 ];
 function ThroughputPanel({
   provider: p,
@@ -438,6 +448,7 @@ function DashboardContent() {
             >
               {paused ? <Play size={17} /> : <Pause size={17} />}
             </button>
+            <ThemeToggle />
           </div>
         </header>
         <DesktopNavigation />
@@ -484,9 +495,11 @@ function DashboardContent() {
                   <span className="heading-divider">/</span>
                   <span>
                     {p?.online
-                      ? p.active
-                        ? 'Serving inference'
-                        : 'Ready for requests'
+                      ? p.starting
+                        ? 'Starting, loading models'
+                        : p.active
+                          ? 'Serving inference'
+                          : 'Ready for requests'
                       : 'Provider offline'}
                   </span>
                 </p>
@@ -520,6 +533,7 @@ function DashboardContent() {
                   }
                   live={readingsFresh && !!data}
                   online={p?.online ?? null}
+                  starting={p?.starting === true}
                   model={p?.model || null}
                   pulse={data?.pulse}
                   hours={data?.monitor.hours}
@@ -590,6 +604,8 @@ function DashboardContent() {
                             forecast={data?.forecast}
                             earningsUpdatedAt={e?.updatedAt}
                             earningsStatus={e?.status}
+                            monitor={data?.monitor}
+                            at={data?.at}
                           />
                         );
                       case 'optimizer':

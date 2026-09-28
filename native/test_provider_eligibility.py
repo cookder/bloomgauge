@@ -63,18 +63,23 @@ class EligibilityTests(unittest.TestCase):
 
     def gate(self):
         self.o.catalog[1]['required_provider_capabilities'] = ['apple_m5', 'mlx_nax']
+        # Even with the runtime reporting both, a model never served here is not automatic.
+        self.o.raw['runtime_capabilities'] = ['apple_m5', 'mlx_nax']
         self.o.device_identity_ok = True
         self.o.identity_hardware = True
+        self.o.identity_device = self.live['device']
         self.o.eligible_models = ['a']
 
+    def row(self):
+        return next(r for r in self.o.candidates({}, {}, self.live, self.o.state) if r['id'] == 'b')
+
     def available(self):
-        return next(
-            r for r in self.o.candidates({}, {}, self.live, self.o.state) if r['id'] == 'b'
-        )['available']
+        return self.row()['available']
 
     def test_m5_chip_and_disk_presence_do_not_prove_runtime_capabilities(self):
         self.gate()
         self.assertFalse(self.available())
+        self.assertIn('Needs one run on this Mac first', self.row()['reason'])
         self.o.eligible_models = ['a', 'b']
         self.assertTrue(self.available())
         for field, value in [
@@ -112,7 +117,7 @@ class EligibilityTests(unittest.TestCase):
             'pid': 2,
         }
 
-        def verify(target, *args):
+        def verify(target, *args, **kwargs):
             if target == 'a':
                 return True
             self.o.raw = copy.deepcopy(failed)
@@ -314,6 +319,11 @@ class EligibilityTests(unittest.TestCase):
                 }
                 if fault == 'cold':
                     self.o.warmup = {}
+                    # Legacy only: the manager turns on with a cold model (test_manager.py).
+                    self.o.state['demandPolicy'] = {
+                        **self.o.state['demandPolicy'],
+                        'managerStrategy': 0,
+                    }
                 elif fault == 'disabled':
                     self.o.service_disabled.return_value = True
                 elif fault == 'stale':
@@ -386,6 +396,10 @@ class EligibilityTests(unittest.TestCase):
                     self.o.service_disabled.return_value = True
                 elif fault == 'cold':
                     self.o.warmup = {}
+                    self.o.state['demandPolicy'] = {
+                        **self.o.state['demandPolicy'],
+                        'managerStrategy': 0,
+                    }
                 elif fault == 'account':
                     self.o.live['account'] = 'changed'
                 elif fault == 'identity':

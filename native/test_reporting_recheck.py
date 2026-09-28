@@ -20,9 +20,13 @@ class ReportingRecheckTests(unittest.TestCase):
             self.o.refresh(T + delta)
 
     def recover(self):
-        self.f.step(66, warm_models=list('ab'))
+        # A real gap: the provider stops being ready to serve, then comes back. (Loading
+        # or unloading models is no gap: the roster proof doesn't depend on them.)
+        self.f.step(66, trust={'status': 'offline'})
         self.f.step(
-            69, warm_models=list('abc'), stats={'requests_served': 80, 'tokens_generated': 1600}
+            69,
+            trust={'status': 'online'},
+            stats={'requests_served': 80, 'tokens_generated': 1600},
         )
 
     def test_new_warm_scope_requests_fresh_identity_without_reusing_old_proof(self):
@@ -66,9 +70,16 @@ class ReportingRecheckTests(unittest.TestCase):
             self.assertEqual(self.f.c.network.fetch.call_count, calls)
             self.assertIsNone(self.o.reporting_roster.proof)
 
-    def test_cold_pending_invalid_and_solo_pair_states_never_request_recheck(self):
+    def test_nothing_loaded_is_still_an_identity_scope(self):
+        # Darkbloom 0.9.10 may unload every model while idle; the roster row doesn't
+        # change, so a lost proof is rechecked without waiting for a model to load.
+        self.o.invalidate_reporting_identity()
+        raw = {**daemon(T + 69), 'warm_models': []}
+        self.assertIsNone(self.o.reporting_identity(raw, T + 69, 'account'))
+        self.assertTrue(self.o.reporting_recheck_requested)
+
+    def test_stale_pending_invalid_and_solo_pair_states_never_request_recheck(self):
         for changes in (
-            {'warm_models': []},
             {'written_at': T + 40},
             {'advertised_models': ['a']},
             {'advertised_models': ['a', 'b']},
@@ -82,9 +93,7 @@ class ReportingRecheckTests(unittest.TestCase):
         self.assertIsNone(self.o.reporting_identity(daemon(T + 69), T + 69, 'account'))
         self.assertFalse(self.o.reporting_recheck_requested)
 
-    def test_repeated_cold_warm_transitions_do_not_make_roster_calls_more_than_every15_seconds(
-        self,
-    ):
+    def test_repeated_scope_gaps_do_not_make_roster_calls_more_than_every15_seconds(self):
         calls = []
         clock = {'delta': 66}
 
@@ -95,7 +104,7 @@ class ReportingRecheckTests(unittest.TestCase):
         self.f.c.network.fetch.side_effect = failed
         for delta in range(66, 109, 3):
             clock['delta'] = delta
-            self.f.step(delta, warm_models=list('ab') if delta % 6 == 0 else list('abc'))
+            self.f.step(delta, trust={'status': 'offline' if delta % 6 == 0 else 'online'})
             self.refresh(delta)
         self.assertGreaterEqual(len(calls), 2)
         self.assertTrue(all(b - a >= 15 for a, b in zip(calls, calls[1:])), calls)

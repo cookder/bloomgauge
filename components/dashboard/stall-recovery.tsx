@@ -16,17 +16,20 @@ const day = (at: number, now: number) =>
         minute: '2-digit',
       });
 
-/** Shown only while work has stalled, or for a day after Bloomkeeper last acted on a stall. */
+/** Shown while work has stalled, and afterwards until work resumes or a model is ready again (a day at most). */
 export function StallRecovery({
   value,
   events,
   now,
+  manager = false,
 }: {
   value: unknown;
   events: unknown;
   now: number;
+  /** The manager holds the home model; its ladder has no "Try another model". */
+  manager?: boolean;
 }) {
-  const view = stallView(value, events, now);
+  const view = stallView(value, events, now, { manager });
   if (!view) return null;
   const active = view.state === 'active';
   return (

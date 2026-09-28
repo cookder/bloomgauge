@@ -1,6 +1,8 @@
 """Public, read-only network endpoints used by the official Darkbloom console."""
 
-import copy, json, threading, time, urllib.request, urllib.error
+import copy, json, logging, threading, time, urllib.request, urllib.error
+
+log = logging.getLogger('bloom.network')
 
 # The saved copy only seeds stale values at startup. Writing all ~1.6 MB (mostly
 # the provider list in /v1/stats) on every poll cost ~12 GB of writes a day.
@@ -13,6 +15,8 @@ class Network:
         self.stop = stop
         self.lock = threading.RLock()
         self.saved_at = 0
+        # Callables (key, data, at) run after each successful fetch, on that fetch's thread.
+        self.listeners = []
         self.state = history.cache('network') or {}
         for entry in self.state.values():
             entry['status'] = 'stale'
@@ -48,6 +52,11 @@ class Network:
                         'error': None,
                     }
                     self.save()
+                for listener in list(self.listeners):
+                    try:
+                        listener(key, d, time.time())
+                    except Exception:
+                        log.exception('Network listener failed for %s', key)
             except Exception as exc:
                 code = (
                     f'HTTP {exc.code}'

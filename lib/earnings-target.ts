@@ -6,7 +6,8 @@ export type TargetHour = {
   usd: number;
   inferenceUsd: number;
   baseUsd: number;
-  status: 'met' | 'below' | 'unknown' | 'partial' | 'settling';
+  /** 'complete': a full, covered hour when no goal is set. */
+  status: 'met' | 'below' | 'complete' | 'unknown' | 'partial' | 'settling';
   covered: boolean;
 };
 export type TargetReport = {
@@ -17,8 +18,9 @@ export type TargetReport = {
   historyStart: number | null;
   model: string | null;
   models: string[];
-  targetUsdPerHour: number;
-  dailyTargetUsd: number;
+  /** The user's goal; null until they choose one (no built-in target). */
+  targetUsdPerHour: number | null;
+  dailyTargetUsd: number | null;
   usd: number;
   inferenceUsd: number;
   accountBaseUsd: number;
@@ -28,11 +30,11 @@ export type TargetReport = {
   completeCoverage: boolean;
   clockUsdPerHour: number | null;
   completeHours: number;
-  metHours: number;
+  metHours: number | null;
   unknownHours: number;
   metPercent: number | null;
   completeHourAverageUsd: number | null;
-  longestBelowHours: number;
+  longestBelowHours: number | null;
   switchSeconds: number;
   switchCount: number;
   hourly: TargetHour[];
@@ -51,17 +53,13 @@ export function validTargetReport(v: unknown): v is TargetReport {
       'from',
       'to',
       'requestedFrom',
-      'targetUsdPerHour',
-      'dailyTargetUsd',
       'usd',
       'inferenceUsd',
       'accountBaseUsd',
       'coveredSeconds',
       'rangeSeconds',
       'completeHours',
-      'metHours',
       'unknownHours',
-      'longestBelowHours',
       'switchSeconds',
       'switchCount',
     ].every((k) => finite(v[k])) ||
@@ -71,6 +69,15 @@ export function validTargetReport(v: unknown): v is TargetReport {
       'metPercent',
       'completeHourAverageUsd',
     ].every((k) => v[k] === null || finite(v[k])) ||
+    // Goal fields are all numbers with a goal, all null without one.
+    ![
+      'targetUsdPerHour',
+      'dailyTargetUsd',
+      'metHours',
+      'longestBelowHours',
+    ].every((k) =>
+      v.targetUsdPerHour === null ? v[k] === null : finite(v[k]),
+    ) ||
     !['includesBase', 'completeCoverage', 'chartTruncated'].every(
       (k) => typeof v[k] === 'boolean',
     ) ||
@@ -85,11 +92,14 @@ export function validTargetReport(v: unknown): v is TargetReport {
     return false;
   return (
     Number(v.to) > Number(v.from) &&
-    Number(v.targetUsdPerHour) > 0 &&
-    Number(v.metHours) >= 0 &&
-    Number(v.metHours) <= Number(v.completeHours) &&
+    (v.targetUsdPerHour === null ||
+      (Number(v.targetUsdPerHour) > 0 &&
+        Number(v.metHours) >= 0 &&
+        Number(v.metHours) <= Number(v.completeHours))) &&
     (v.metPercent === null ||
-      (Number(v.metPercent) >= 0 && Number(v.metPercent) <= 100)) &&
+      (v.targetUsdPerHour !== null &&
+        Number(v.metPercent) >= 0 &&
+        Number(v.metPercent) <= 100)) &&
     v.hourly.every(
       (h) =>
         object(h) &&
@@ -99,9 +109,12 @@ export function validTargetReport(v: unknown): v is TargetReport {
         Number(h.end) - Number(h.at) === 3600 &&
         Number(h.to) > Number(h.from) &&
         typeof h.covered === 'boolean' &&
-        ['met', 'below', 'unknown', 'partial', 'settling'].includes(
-          String(h.status),
-        ),
+        [
+          ...(v.targetUsdPerHour === null ? ['complete'] : ['met', 'below']),
+          'unknown',
+          'partial',
+          'settling',
+        ].includes(String(h.status)),
     )
   );
 }

@@ -82,42 +82,50 @@ const date = (at?: number | null) =>
       });
 const lines = {
   credits: [
-    { key: 'confirmedUSD', label: 'Saved inference credits', color: '#82efb5' },
+    {
+      key: 'confirmedUSD',
+      label: 'Saved inference credits',
+      color: 'var(--c-82efb5)',
+    },
   ],
   rate: [
     {
       key: 'usdPerWarmHour',
       label: 'Earnings / verified warm hour',
-      color: '#82efb5',
+      color: 'var(--c-82efb5)',
     },
   ],
   time: [
-    { key: 'warmHours', label: 'Verified warm hours', color: '#82efb5' },
+    {
+      key: 'warmHours',
+      label: 'Verified warm hours',
+      color: 'var(--c-82efb5)',
+    },
     {
       key: 'earlierHours',
       label: 'Earlier hours · warmth unverified',
-      color: '#f3c57e',
+      color: 'var(--c-f3c57e)',
     },
   ],
   request: [
     {
       key: 'usdPerRequest',
       label: 'Earnings / credited request',
-      color: '#b49cff',
+      color: 'var(--c-b49cff)',
     },
   ],
   output: [
     {
       key: 'usdPerMillionOutput',
       label: 'Job earnings / 1M output tokens',
-      color: '#91bcff',
+      color: 'var(--c-91bcff)',
     },
   ],
   tokens: [
     {
       key: 'usdPerMillionTokens',
       label: 'Job earnings / 1M total tokens',
-      color: '#91bcff',
+      color: 'var(--c-91bcff)',
     },
   ],
 };

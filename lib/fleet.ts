@@ -38,7 +38,11 @@ export function validFleetModels(v: unknown): v is FleetModel[] {
   );
 }
 
-/** Plain words for network demand versus that model's usual week. */
+/** Below this share of usual, demand reads as quiet (the Pulse hint's "low" too). */
+export const QUIET_DEMAND = 0.5;
+
+/** Plain words for network demand versus that model's usual for this time of
+ * day (native/demand_alerts.py `usual_levels`). */
 export function demandLabel(d: FleetDemand | null): {
   text: string;
   tone: 'high' | 'normal' | 'low' | 'unknown';
@@ -50,8 +54,14 @@ export function demandLabel(d: FleetDemand | null): {
       tone: 'unknown',
     };
   if (d.ratio >= 1.5)
-    return { text: `${d.ratio.toFixed(1)}× usual demand`, tone: 'high' };
-  if (d.ratio <= 0.6)
-    return { text: `${d.ratio.toFixed(1)}× usual · quiet`, tone: 'low' };
-  return { text: 'Usual demand', tone: 'normal' };
+    return {
+      text: `${d.ratio.toFixed(1)}× usual for this time of day`,
+      tone: 'high',
+    };
+  if (d.ratio < QUIET_DEMAND)
+    return {
+      text: `${d.ratio.toFixed(1)}× usual for this time of day · quiet`,
+      tone: 'low',
+    };
+  return { text: 'Usual for this time of day', tone: 'normal' };
 }

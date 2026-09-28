@@ -45,62 +45,64 @@ export const guideSections: GuideSection[] = [
     title: 'Choose models yourself',
     summary: 'Manual mode: you pick the model, Bloomkeeper handles the switch.',
     steps: [
-      { text: 'Open Optimizer and choose Manual on the card at the top.' },
+      {
+        text: 'Open Optimizer and choose Off on the card at the top (Manual in the older demand-following mode).',
+      },
       { text: 'Pick a model under Model to run, then choose Start or Switch.' },
       {
         text: 'Bloomkeeper restarts Darkbloom with that model and checks it is warm and serving before calling it ready. With cache cleanup permission (see Troubleshooting), it also clears the macOS file cache first so large models fit.',
       },
     ],
-    note: 'Manual always pauses automatic switching.',
+    note: 'Off stops automatic switching. Manual (pin) keeps the model you pick running and restores it if it fails.',
   },
   {
     id: 'what-optimizer-does',
     title: 'What the optimizer does',
-    summary: 'Three jobs it does on its own, and why it learns.',
+    summary: 'Three jobs the manager does on its own.',
     steps: [
       {
-        title: 'Runs your best earner',
-        text: 'Most of the time Bloomkeeper keeps whichever model is earning the most on this Mac right now.',
+        title: 'Holds your best model',
+        text: 'Bloomkeeper keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days. It runs no blind trials of other models.',
       },
       {
-        title: 'Catches demand spikes',
-        text: 'When a big model gets a rush of paid requests, Bloomkeeper can switch to it while the rush lasts. Large Qwen models can pay more than $0.30 an hour during a spike.',
+        title: 'Recovers by itself',
+        text: 'If a switch fails or no model is ready for about ten minutes, Bloomkeeper restores the home model instead of turning itself off. A model that fails to load as an automatic move is skipped for 24 hours, then 48 and 96 hours if it fails again. If two restores fail, it tells you and keeps retrying, at least every two hours.',
       },
       {
-        title: 'Keeps a fallback',
-        text: 'When the main earners (such as Gemma or Nemotron) go quiet, Bloomkeeper moves to a model that almost always has some demand, such as gpt-oss, instead of sitting idle.',
+        title: 'Moves only on strong evidence',
+        text: 'With Switch to better models when network evidence is strong on (the default, at most 3 moves a day), it leaves home only when at least five Macs like this one have clearly earned more on another model for two hours. It comes back when that evidence fades, and turns these moves off if they haven’t clearly paid off.',
       },
       {
-        title: 'Why it learns',
-        text: 'Bloomkeeper only knows what a model pays on your Mac by running it. It spends a little time a day (Learning time, default 1 hour) measuring other models, only while pace is below your protect level and only models with real demand. A model earning more than that is never interrupted just to learn.',
+        title: 'The older demand-following mode',
+        text: 'Macs set to the older mode follow demand instead: they spend Learning time measuring other models, can switch for demand spikes, fall back to a model with steady demand such as gpt-oss, and pause automation after a failed load.',
       },
     ],
-    note: 'The first time you choose Optimizer on, Bloomkeeper shows this summary and offers a 3-day Learning boost for a new Mac. Open it again any time with What it does on the optimizer card.',
+    note: 'The first time you choose Manager on, Bloomkeeper shows this summary. Open it again any time with What it does on the optimizer card.',
   },
   {
     id: 'optimizer',
     title: 'Let Bloomkeeper choose',
-    summary: 'Optimizer on: Bloomkeeper follows demand and your own paid work.',
+    summary: 'Manager on: Bloomkeeper holds the best model for this Mac and recovers by itself.',
     steps: [
       {
         title: 'Pick the models',
-        text: 'Under Models Bloomkeeper can use, tap models to include or leave out. Dimmed models are not available on this Mac; hover one to see why. Keep at least two.',
+        text: 'Under Models Bloomkeeper can use, tap models to include or leave out. Dimmed models are not available on this Mac; hover one to see why. Keep at least one (two for the older demand-following mode).',
       },
       {
         title: 'Protect good earnings',
-        text: 'Protect earnings above is the pace Bloomkeeper guards (default $0.20/hour). While the current model pays at least that, Bloomkeeper won’t interrupt it to learn. A clearly better model can still take over.',
+        text: 'Older demand-following mode only. Protect earnings above is the pace Bloomkeeper guards (default $0.20/hour). While the current model pays at least that, Bloomkeeper won’t interrupt it to learn. A clearly better model can still take over.',
       },
       {
         title: 'Three numbers, three jobs',
-        text: 'Protect earnings above (default $0.20/hour) is the only one that holds a model in place: above it, Bloomkeeper won’t interrupt to learn. The earnings goal (default $0.12/hour) is for the Target report only and never changes what runs. The switch gain under Fine-tune (Balanced: 20% better and at least $0.02 more over the next hour, after a confirmation wait) is how much better another model must look before Bloomkeeper moves to it.',
+        text: 'Older demand-following mode only. Protect earnings above (default $0.20/hour) is the only one that holds a model in place: above it, Bloomkeeper won’t interrupt to learn. The earnings goal (default $0.12/hour) is for the Target report only and never changes what runs. The switch gain under Fine-tune (Balanced: 20% better and at least $0.02 more over the next hour, after a confirmation wait) is how much better another model must look before Bloomkeeper moves to it.',
       },
       {
         title: 'Give it time to learn',
-        text: 'Learning time is how long a day Bloomkeeper may spend measuring other models while pace is below your protect level (default 1 hour), so it knows where to go when the current model fades. It only measures models with real demand.',
+        text: 'Older demand-following mode only. Learning time is how long a day Bloomkeeper may spend measuring other models while pace is below your protect level (default 1 hour), so it knows where to go when the current model fades. It only measures models with real demand.',
       },
       {
         title: 'Pick a style',
-        text: 'How actively Bloomkeeper switches runs from Very passive to Very aggressive and sets trial length, waits and daily limits together.',
+        text: 'Older demand-following mode only. How actively Bloomkeeper switches runs from Very passive to Very aggressive and sets trial length, waits and daily limits together.',
       },
       {
         title: 'Save',
@@ -108,7 +110,7 @@ export const guideSections: GuideSection[] = [
       },
       {
         title: 'Turn it on',
-        text: 'Choose Optimizer on. The first time, choose Turn on with 3-day boost (recommended for a Mac new to Bloomkeeper) or Turn on without boost. Bloomkeeper first confirms this Mac appears in Darkbloom’s provider list and the model is warm; this can take a few minutes.',
+        text: 'Choose Manager on. The first time, Bloomkeeper shows what the manager does; choose Turn the manager on. It first confirms this Mac appears in Darkbloom’s provider list, which can take a few minutes. In the older demand-following mode the button is Optimizer on, with an optional 3-day Learning boost.',
       },
     ],
     note: 'Every switch still has to pass memory, temperature, power and daily-limit checks. Fine-tune limits holds each value if you want to type your own, plus the earnings target used by Earnings → Target. What Bloomkeeper knows about each model shows what it has measured so far.',
@@ -116,7 +118,7 @@ export const guideSections: GuideSection[] = [
   {
     id: 'gathering',
     title: 'Learn a new Mac faster',
-    summary: 'Learning boost measures more models for a set time.',
+    summary: 'Older demand-following mode only: Learning boost measures more models for a set time. The manager runs no learning trials.',
     steps: [
       {
         text: 'With the optimizer on, choose 24 hours, 3 days or 7 days under Learning boost.',
@@ -208,8 +210,8 @@ export const guideProblems: GuideProblem[] = [
     id: 'battery',
     symptom: 'Model switching waits while the Mac is on battery power',
     cause:
-      'Bloomkeeper only switches models on AC power, because loading a model is heavy work.',
-    fixes: ['Plug in the Mac. Waiting switches continue on their own.'],
+      'On battery, Bloomkeeper holds off optional moves (excursions and automatic tests), because loading a model is heavy work. Returning to the home model, restores and switching a running model still happen.',
+    fixes: ['Plug in the Mac. Waiting moves continue on their own.'],
   },
   {
     id: 'memory',

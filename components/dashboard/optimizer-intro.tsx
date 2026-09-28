@@ -5,7 +5,12 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { introPoints, learningText } from '@/lib/optimizer-intro';
+import {
+  introPoints,
+  learningText,
+  managerIntroPoints,
+} from '@/lib/optimizer-intro';
+import { EXCURSIONS_PER_DAY } from '@/lib/optimizer-manager';
 
 /** What the optimizer does. With onChoose it is the first-On step; without, it is read-only. */
 export function OptimizerIntro({
@@ -14,13 +19,72 @@ export function OptimizerIntro({
   onChoose,
   protectUsdPerHour,
   learningMinutesPerDay,
+  manager = false,
 }: {
   open: boolean;
   onClose: () => void;
   onChoose?: (boost: boolean) => void;
   protectUsdPerHour: number;
   learningMinutesPerDay: number;
+  /** The manager strategy: no learning trials, so no Learning boost either. */
+  manager?: boolean;
 }) {
+  if (manager)
+    return (
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next) onClose();
+        }}
+      >
+        <DialogContent className="support-report-dialog optimizer-intro">
+          <DialogTitle>What the manager does</DialogTitle>
+          <DialogDescription>
+            Once it’s on, Bloomkeeper keeps this Mac serving the best model it
+            knows, and fixes problems without switching itself off.
+          </DialogDescription>
+          <ul className="optimizer-intro-points">
+            {managerIntroPoints.map((p) => (
+              <li key={p.title}>
+                <strong>{p.title}.</strong> {p.text}
+              </li>
+            ))}
+          </ul>
+          <h3>Your options</h3>
+          <p>
+            Off leaves models entirely to you. Manual (pin) keeps the model you
+            choose and restores it if it fails. Manager on lets Bloomkeeper
+            choose the home model. Every move still passes memory and daily
+            switch-limit checks.
+          </p>
+          <p>
+            Evidence moves are on by default, at most {EXCURSIONS_PER_DAY} a
+            day; turn off “Switch to better models when network evidence is
+            strong” on the optimizer card to stay home.
+          </p>
+          <div className="optimizer-intro-actions">
+            {onChoose ? (
+              <>
+                <button
+                  type="button"
+                  className="action"
+                  onClick={() => onChoose(false)}
+                >
+                  Turn the manager on
+                </button>
+                <button type="button" className="text-link" onClick={onClose}>
+                  Not now
+                </button>
+              </>
+            ) : (
+              <button type="button" className="action" onClick={onClose}>
+                Got it
+              </button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
   return (
     <Dialog
       open={open}

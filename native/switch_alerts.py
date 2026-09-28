@@ -19,6 +19,8 @@ REASONS = {
     'recovery': 'Restoring the previous model after a loading problem.',
     'automatic': 'Automatic selection based on the saved optimizer decision.',
     'external': 'The new selection is warm and ready. No Bloomkeeper switch reason was recorded.',
+    'home_return': 'Returning to the home model, the best-paying model on this Mac.',
+    'excursion': 'Network evidence favours this model for now; Bloomkeeper returns home afterwards.',
 }
 
 
@@ -29,6 +31,8 @@ def switch_reason(request_kind, mode=None, decision=None):
     if request_kind.startswith('manual'):
         return 'manual'
     if request_kind == 'demand':
+        if decision.get('kind') in ('home', 'excursion'):
+            return 'home_return' if decision['kind'] == 'home' else 'excursion'
         if decision.get('explorationTrigger') == 'spike_return':
             return 'trial_return'
         if decision.get('kind') == 'earnings':

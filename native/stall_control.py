@@ -24,6 +24,7 @@ import urllib.request
 from model_combinations import members
 from prewarm import prewarm, WarmupError
 from stall_recovery import assess, EPISODE_LIMIT_SECONDS, BASELINE_SECONDS
+import manager
 
 KEYCHAIN_ACCOUNT = 'bloom'
 KEYCHAIN_SERVICE = 'bloom-darkbloom-api-key'
@@ -227,6 +228,25 @@ class StallControl:
                 self.status, self.status_at = {'status': 'inactive'}, now
             return False
         result = self.evaluate(account, device, raw, now)
+        if result['step'] == 'escape' and manager.active(settings):
+            # The manager never escapes to another model. After a nudge or restart the
+            # ladder stops (hold); when demand fell as well there is nothing to recover.
+            taken = result.get('taken') or []
+            result = (
+                {
+                    **result,
+                    'step': 'hold',
+                    'reason': 'No work after '
+                    + ' and '.join(taken)
+                    + '. Holding the home model; Bloomkeeper has stopped trying. Check Darkbloom (darkbloom doctor, Slack) for a routing problem.',
+                }
+                if taken
+                else {
+                    **result,
+                    'step': None,
+                    'reason': 'Work stopped as this model’s network demand fell. Holding the home model.',
+                }
+            )
         with self.lock:
             self.status, self.status_at = result, now
         step = result['step']
@@ -338,19 +358,20 @@ class StallControl:
             rows = [
                 dict(r)
                 for r in self.o.store.h.db.execute(
-                    """SELECT id,at,model,detail FROM opt_events
-                WHERE account=? AND device=? AND kind='stall-hold' AND at>=? ORDER BY at""",
+                    """SELECT id,at,kind,model,detail FROM opt_events
+                WHERE account=? AND device=? AND kind IN ('stall-hold','manager-notice') AND at>=? ORDER BY at""",
                     (account, device, now - 900),
                 )
             ]
         for row in rows:
-            key = 'stall-hold-' + str(row['id'])
+            hold = row['kind'] == 'stall-hold'
+            key = ('stall-hold-' if hold else 'manager-notice-') + str(row['id'])
             if key in self.notified:
                 continue
             if push.enqueue_notice(
                 account,
                 key,
-                'Bloomkeeper · no work arriving',
+                'Bloomkeeper · no work arriving' if hold else 'Bloomkeeper · model recovery',
                 row['detail']
                 or 'This Mac stopped getting jobs. Check Darkbloom for a routing or verification problem.',
             ) or push.has_event(account, key):

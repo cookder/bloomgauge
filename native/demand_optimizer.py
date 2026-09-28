@@ -39,7 +39,10 @@ from baseline_learning import baselines, opportunity as learning_opportunity
 from data_gathering import learning_limits
 
 LOOKBACK = 30 * 86400
-POLICY_REVISION = 2
+# 3 adds managerStrategy (1 = manager, 0 = legacy demand following) and
+# managerExcursions (1 = evidence-armed excursions on, 0 = off; excursions.py). Saved
+# policies without them load with the default; only revision < 2 defaults upgrade.
+POLICY_REVISION = 3
 FAILURE_RETRY_SECONDS = 15 * 60
 LEARNING_PRESSURE = 0.3
 LEARNING_MIN_LOAD = 10
@@ -69,6 +72,8 @@ POLICY = {
     'baselineLearningEnabled': 1,
     'protectUsdPerHour': 0.20,
     'learningMinutesPerDay': 60,
+    'managerStrategy': 1,
+    'managerExcursions': 1,
 }
 # Timing and threshold controls accept any value on a step within a range, so the
 # optimizer can be tuned from passive to aggressive. Memory headroom never drops
@@ -92,6 +97,8 @@ CHOICES = {
     'fallbackEnabled': (0, 1),
     'targetUsdPerHour': (0.08, 0.10, 0.12, 0.15, 0.20, 0.25),
     'baselineLearningEnabled': (0, 1),
+    'managerStrategy': (0, 1),
+    'managerExcursions': (0, 1),
 }
 
 
@@ -125,7 +132,7 @@ def policy(value=None):
 def upgraded_policy(value=None, revision=0):
     """One-time update of old defaults; explicit nondefault controls survive."""
     result = policy(value)
-    if revision != POLICY_REVISION and isinstance(value, dict):
+    if isinstance(value, dict) and not (number(revision) and revision >= 2):
         for key, old in PREVIOUS_DEFAULTS.items():
             if value.get(key) == old:
                 result[key] = POLICY[key]
@@ -1840,6 +1847,72 @@ class DemandOptimizer:
                     device,
                     now,
                     target,
+                    target,
+                    json.dumps(payload, allow_nan=False),
+                    RECOVERY_RESERVED_SECONDS,
+                    'starting',
+                ),
+            )
+            self.h.db.commit()
+            return result.lastrowid
+
+    def excursion_limit(self, account, device, rules, now):
+        """Why the manager may not start another excursion now, or None. Under the manager
+        maxSwitchesPerDay counts only excursion starts in the last 24 h: a return home, the
+        end of an excursion and restores never count, and older (legacy) runs don't either."""
+        rules = policy(rules)
+        with self.h.lock:
+            rows = self.h.db.execute(
+                'SELECT payload FROM demand_switch_runs WHERE account=? AND device=? AND at>? AND at<=?',
+                (account, device, now - 86400, now),
+            ).fetchall()
+        started = 0
+        for row in rows:
+            try:
+                started += json.loads(row['payload']).get('kind') == 'excursion'
+            except (TypeError, ValueError, AttributeError):
+                pass
+        if started >= rules['maxSwitchesPerDay']:
+            return 'The daily switch limit does not allow another excursion.'
+        return None
+
+    def begin_manager(self, account, device, decision, now):
+        """A manager move (return home, excursion). Only an excursion start counts toward the
+        daily switch limit (excursion_limit)."""
+        target, kind = decision.get('target'), decision.get('kind')
+        if not target or kind not in ('home', 'excursion') or not 0 <= now - decision['at'] <= 30:
+            raise ValueError('The manager decision expired before switching.')
+        rules = policy(decision.get('policy'))
+        manager = decision.get('manager') or {}
+        payload = {
+            'kind': kind,
+            'reason': decision.get('reason'),
+            'manager': {k: manager.get(k) for k in ('action', 'home', 'proposal', 'excursion')},
+            'activeAtDispatch': decision.get('activeAtDispatch'),
+            'workAdvancedDuringPreflight': decision.get('workAdvancedDuringPreflight'),
+        }
+        with self.h.lock:
+            recent = self.h.db.execute(
+                """SELECT SUM(CASE WHEN result='starting' THEN 1 ELSE 0 END) AS pending
+                FROM demand_switch_runs WHERE account=? AND device=? AND at>? AND at<=?""",
+                (account, device, now - 86400, now),
+            ).fetchone()
+            limit = (
+                self.excursion_limit(account, device, rules, now) if kind == 'excursion' else None
+            )
+            if recent['pending'] or limit:
+                raise ValueError(
+                    limit or 'Another automatic move is still starting; this one waits for it.'
+                )
+            result = self.h.db.execute(
+                """INSERT INTO demand_switch_runs
+                (account,device,at,previous,model,payload,reserved_seconds,result)
+                VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    account,
+                    device,
+                    now,
+                    decision['currentModel'],
                     target,
                     json.dumps(payload, allow_nan=False),
                     RECOVERY_RESERVED_SECONDS,

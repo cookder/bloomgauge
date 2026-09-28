@@ -194,13 +194,19 @@ class ProviderTests(unittest.TestCase):
     def test_configuration_review_is_specific_and_never_rewrites_the_file(self):
         p = self.o.home / '.config/darkbloom/provider.toml'
         p.parent.mkdir(parents=True, exist_ok=True)
-        for reserve, blocked in ((4, False), (12, True)):
-            text = '[provider]\nmemory_reserve_gb = ' + str(reserve)
+        # memory_reserve_gb is read into Bloomkeeper's load budgets; an unknown memory
+        # setting only stops automatic moves, and the card says so.
+        for text, blocked in (
+            ('[provider]\nmemory_reserve_gb = 4', False),
+            ('[provider]\nmemory_reserve_gb = 12', False),
+            ('[provider]\nmemory_reserve_gb = 4\nkv_reserve_gb = 1', True),
+        ):
             p.write_text(text)
             value = self.p.snapshot()
             self.assertEqual(bool(value['configurationIssue']), blocked)
             if blocked:
-                self.assertIn('Help & feedback', value['configurationIssue'])
+                self.assertIn('kv_reserve_gb', value['configurationIssue'])
+                self.assertIn('restores and your own picks still work', value['configurationIssue'])
             self.assertEqual(p.read_text(), text)
         self.assertEqual(self.provider_calls(), [])
 
@@ -322,9 +328,13 @@ class ProviderTests(unittest.TestCase):
             ),
             (None, ['--local-endpoint']),
         )
-        for args in (['--local'], ['--model', 'a', '--model', 'a'], ['--anything']):
+        for args in (['--model', 'a', '--model', 'a'], ['anything'], ['--port=8000'], ['--']):
             with self.assertRaises(ValueError):
                 launch_options({'ProgramArguments': ['darkbloom', 'start', *args]}, allow_auto=True)
+        # An unknown flag is kept verbatim, never read as the local endpoint.
+        parsed = launch_options({'ProgramArguments': ['darkbloom', 'start', '--local']}, True)
+        self.assertEqual(parsed, (None, ['--local']))
+        self.assertIn('Prepare', endpoint_issue(parsed[1]))
 
     def test_auto_select_launch_uses_actual_advertised_selection(self):
         self.args = ['--local-endpoint']

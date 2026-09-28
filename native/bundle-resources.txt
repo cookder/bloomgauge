@@ -62,6 +62,7 @@ diagnostics.py
 usage_reporting.py
 usage_integration.py
 feature_discovery.py
+whats_changed.py
 runtime-entry.py
 enable-cache-recovery.sh
 Enable Cache Recovery.command
@@ -89,3 +90,6 @@ stall_recovery.py
 stall_control.py
 manual_selection.py
 optimizer_start.py
+network_evidence.py
+manager.py
+excursions.py

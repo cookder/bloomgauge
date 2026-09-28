@@ -91,7 +91,7 @@ export function PulseEarningsBars({
       label: s.name,
       color:
         s.id === 'other' || s.id === 'unattributed'
-          ? '#899da8'
+          ? 'var(--c-899da8)'
           : modelColor(s.id.replace(/^model:/, '')),
     })) ?? [];
   const stamp = (at: number) =>

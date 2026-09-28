@@ -12,7 +12,9 @@ from model_combinations import (
     pair_budget,
     pair_candidates,
     combination_config_error,
+    configured_reserve_gb,
 )
+from optimizer import memory_budget
 from prewarm import WarmupError
 
 
@@ -32,12 +34,22 @@ class CombinationPolicyTests(unittest.TestCase):
                         self.assertIsNone(combination_config_error(root, [], {}, require_pair=pair))
                 self.assertEqual(p.read_text(), text)
 
-    def test_default_reserve_exception_does_not_accept_other_overrides(self):
+    def test_memory_reserve_is_read_and_other_memory_settings_stop_automatic_moves(self):
         with tempfile.TemporaryDirectory() as root:
             p = pathlib.Path(root) / '.config/darkbloom/provider.toml'
             p.parent.mkdir(parents=True)
+            for text, reserve in (
+                ('[provider]\nmemory_reserve_gb = 8', 8),
+                ('[provider]\nname = "x"\nmemory_reserve_gb = 0 # all of it', 0),
+                ('provider.memory_reserve_gb = 12', 12),
+                ('[backend]\nport = 8100', 4),
+            ):
+                p.write_text(text)
+                self.assertEqual(configured_reserve_gb(root, []), reserve)
+                for pair in (True, False):
+                    with self.subTest(text=text, pair=pair):
+                        self.assertIsNone(combination_config_error(root, [], {}, require_pair=pair))
             for text in (
-                '[provider]\nmemory_reserve_gb = 8',
                 '[provider]\nmemory_reserve_gb = "4"',
                 '[provider]\nmemory_reserve_gb = true',
                 '[backend]\nmemory_reserve_gb = 4',
@@ -45,6 +57,7 @@ class CombinationPolicyTests(unittest.TestCase):
                 '[[provider]]\nmemory_reserve_gb = 4',
                 '[provider]\nmemory_reserve_gb = 4\nkv_reserve_gb = 1',
                 '[provider]\nmemory_reserve_gb = 4\nmemory_reserve_gb = 4',
+                '[provider]\nmemory_reserve_gb = 4.5',
             ):
                 p.write_text(text)
                 for pair in (True, False):
@@ -52,6 +65,63 @@ class CombinationPolicyTests(unittest.TestCase):
                         self.assertIsNotNone(
                             combination_config_error(root, [], {}, require_pair=pair)
                         )
+                        # Restores, the watchdog and the user's own picks don't stop.
+                        self.assertIsNone(
+                            combination_config_error(
+                                root, [], {}, require_pair=pair, voluntary=False
+                            )
+                        )
+                self.assertEqual(configured_reserve_gb(root, []), 4)
+
+    def test_only_env_knobs_that_change_load_admission_stop_automatic_moves(self):
+        with tempfile.TemporaryDirectory() as root:
+            # What Darkbloom's installer copies into the launch agent (LaunchAgent.swift
+            # passthroughEnvKeys) and what its docs suggest: none enter the load gate.
+            for env in (
+                {'DARKBLOOM_PREFIX_CACHE': '0'},
+                {'DARKBLOOM_DRAIN_TIMEOUT_SECONDS': '900', 'DARKBLOOM_CBV2_PAGED_KV': '0'},
+                {'DARKBLOOM_MLX_CACHE_LIMIT_GB': '4', 'DARKBLOOM_MLX_MEMORY_RESERVE_GB': '8'},
+                {'DARKBLOOM_PREFIX_CACHE_MEMORY': '0', 'DARKBLOOM_KV_BACKEND_GUARD': '/tmp/g'},
+                {'MLX_MEMORY_LIMIT': '1', 'METAL_DEVICE_WRAPPER_TYPE': '1'},
+                {'DARKBLOOM_MEM_CAP_FRACTION': ''},
+            ):
+                with self.subTest(env=env):
+                    self.assertIsNone(combination_config_error(root, [], env))
+            for env in (
+                {'DARKBLOOM_MEM_CAP_FRACTION': '0.8'},
+                {'DARKBLOOM_ACTIVATION_RESERVE_GB': '8', 'DARKBLOOM_PREFIX_CACHE': '0'},
+            ):
+                with self.subTest(env=env):
+                    self.assertIn(next(iter(env)), combination_config_error(root, [], env))
+                    self.assertIsNone(combination_config_error(root, [], env, voluntary=False))
+
+    def test_load_reserve_is_darkbloom_s_load_gate_reserve(self):
+        # UnifiedMemoryCap.loadReserveBytes = max(memory_reserve_gb, physical - hard cap),
+        # hard cap = min(90% of RAM, RAM - 2 GiB).
+        for total, configured, reserve in (
+            (48, 4, 4.8),
+            (48, 8, 8),
+            (128, 4, 12.8),
+            (16, 4, 4),
+            (16, 0, 2),
+            (32, 1, 3.2),
+        ):
+            hardware = {'memoryTotalGB': total, 'memoryAvailableGB': total}
+            with self.subTest(total=total, configured=configured):
+                solo = memory_budget(hardware, {'memoryGB': 0}, 'm', 10, config_reserve=configured)
+                self.assertAlmostEqual(solo['reserveGB'], reserve)
+                self.assertAlmostEqual(solo['requiredGB'], 10 + reserve + 5.5 + 1)
+                pair = pair_budget(
+                    hardware, {'memoryGB': 0}, ['a', 'b'], [5, 5], config_reserve=configured
+                )
+                self.assertAlmostEqual(pair['reserveGB'], reserve)
+        # Unchanged for the default reserve.
+        self.assertAlmostEqual(
+            memory_budget({'memoryTotalGB': 48, 'memoryAvailableGB': 20}, {'memoryGB': 0}, 'm', 10)[
+                'reserveGB'
+            ],
+            4.8,
+        )
 
     def test_exact_pair_identity_and_repeatable_cli_arguments(self):
         key = selection_key(['b', 'a'])
@@ -114,13 +184,47 @@ class CombinationPolicyTests(unittest.TestCase):
                 '[backend]\nmax_model_slots = 2\nstartup_preload = true\npreload_models = ["a"]'
             )
             self.assertIsNone(combination_config_error(root, [], {}))
-            self.assertIsNotNone(combination_config_error(root, [], {'MLX_MEMORY_LIMIT': '1'}))
+            self.assertIsNone(combination_config_error(root, [], {'MLX_MEMORY_LIMIT': '1'}))
+            self.assertIsNotNone(
+                combination_config_error(root, [], {'DARKBLOOM_MEM_CAP_FRACTION': '0.8'})
+            )
             self.assertIsNotNone(combination_config_error(root, ['--config', 'relative.toml'], {}))
             p.unlink()
             legacy = pathlib.Path(root) / 'Library/Application Support/darkbloom/provider.toml'
             legacy.parent.mkdir(parents=True)
             legacy.write_text('[backend]\nmax_model_slots = 1')
             self.assertIsNotNone(combination_config_error(root, [], {}))
+
+
+class ReserveControllerTests(unittest.TestCase):
+    """provider.toml memory_reserve_gb is Darkbloom's load reserve; Bloomkeeper budgets with it."""
+
+    setUp = controller_fixture.ControllerTests.setUp
+    tearDown = controller_fixture.ControllerTests.tearDown
+
+    def test_load_budgets_use_the_configured_memory_reserve(self):
+        config = pathlib.Path(self.tmp.name) / '.config/darkbloom/provider.toml'
+        config.parent.mkdir(parents=True)
+        config.write_text('[provider]\nmemory_reserve_gb = 8\n')
+        budget = self.o.selection_budget('b', self.o.live, self.o.raw)
+        self.assertEqual(budget['reserveGB'], 8)  # a 48 GB Mac: 10% alone would be 4.8
+        self.assertEqual(budget['requiredGB'], 12 + 8 + 5.5 + 1)
+        manual = {m['id']: m for m in self.o.manual_snapshot()['models']}
+        self.assertEqual(manual['b']['loadBudget']['requiredGB'], 12 + 8 + 5.5 + 1)
+        config.write_text('[provider]\nmemory_reserve_gb = 4\n')
+        budget = self.o.selection_budget('b', self.o.live, self.o.raw)
+        self.assertAlmostEqual(budget['reserveGB'], 4.8)
+
+    def test_pair_restores_are_budgeted_even_with_knobs_that_stop_automatic_moves(self):
+        pair = selection_key(['a', 'b'])
+        self.o.read_options.return_value = (
+            'a',
+            ['--local-endpoint'],
+            {'DARKBLOOM_MEM_CAP_FRACTION': '0.8'},
+        )
+        self.assertIsNotNone(self.o.selection_budget(pair, self.o.live, self.o.raw))
+        # Voluntary pair tests (legacy combo mode) are still refused.
+        self.assertIn('DARKBLOOM_MEM_CAP_FRACTION', self.o.combo_config_error())
 
 
 class CombinationControllerTests(unittest.TestCase):

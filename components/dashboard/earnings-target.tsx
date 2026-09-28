@@ -27,8 +27,9 @@ const date = (at: number) =>
     minute: '2-digit',
   });
 const statuses = {
-  met: 'Target reached',
-  below: 'Below target',
+  met: 'Goal reached',
+  below: 'Below goal',
+  complete: 'Complete hour',
   unknown: 'Coverage missing',
   partial: 'Partial hour',
   settling: 'Credits settling',
@@ -94,7 +95,7 @@ export function EarningsTarget({ paused }: { paused: boolean }) {
     data?.hourly.find((h) => h.at === selected) ??
     [...(data?.hourly ?? [])]
       .reverse()
-      .find((h) => h.status === 'met' || h.status === 'below') ??
+      .find((h) => ['met', 'below', 'complete'].includes(h.status)) ??
     data?.hourly.at(-1);
   return (
     <section className="panel earnings-target-panel">
@@ -145,28 +146,47 @@ export function EarningsTarget({ paused }: { paused: boolean }) {
                   : 'Partial history · no average inferred'}
               </small>
             </div>
-            <div>
-              <span>Hours at {money(data.targetUsdPerHour)}+</span>
-              <strong
-                className={
-                  data.metPercent != null && data.metPercent >= 80
-                    ? 'good-text'
-                    : ''
-                }
-              >
-                {data.metPercent == null ? '—' : `${num(data.metPercent, 0)}%`}
-              </strong>
-              <small>
-                {data.metHours} of {data.completeHours} complete hours
-              </small>
-            </div>
-            <div>
-              <span>Longest below target</span>
-              <strong>
-                {data.completeHours ? `${num(data.longestBelowHours)}h` : '—'}
-              </strong>
-              <small>Consecutive covered clock hours</small>
-            </div>
+            {data.targetUsdPerHour == null ? (
+              <div>
+                <span>Hourly goal</span>
+                <strong>Set a goal</strong>
+                <small>
+                  {data.completeHours} complete hours ·{' '}
+                  {data.completeHourAverageUsd == null
+                    ? 'no average yet'
+                    : `${money(data.completeHourAverageUsd)} average`}
+                </small>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <span>Hours at {money(data.targetUsdPerHour)}+</span>
+                  <strong
+                    className={
+                      data.metPercent != null && data.metPercent >= 80
+                        ? 'good-text'
+                        : ''
+                    }
+                  >
+                    {data.metPercent == null
+                      ? '—'
+                      : `${num(data.metPercent, 0)}%`}
+                  </strong>
+                  <small>
+                    {data.metHours} of {data.completeHours} complete hours
+                  </small>
+                </div>
+                <div>
+                  <span>Longest below goal</span>
+                  <strong>
+                    {data.completeHours
+                      ? `${num(data.longestBelowHours ?? 0)}h`
+                      : '—'}
+                  </strong>
+                  <small>Consecutive covered clock hours</small>
+                </div>
+              </>
+            )}
             <div>
               <span>Credit coverage</span>
               <strong>
@@ -181,8 +201,9 @@ export function EarningsTarget({ paused }: { paused: boolean }) {
               ? ` + ${money(data.accountBaseUsd)} account base rewards`
               : ' · base rewards excluded'}
             <br />
-            Goal: {money(data.targetUsdPerHour)} / hour ·{' '}
-            {money(data.dailyTargetUsd)} / day if sustained.{' '}
+            {data.targetUsdPerHour == null
+              ? 'No goal set. Pick one in Optimizer settings under Earnings goal. '
+              : `Goal: ${money(data.targetUsdPerHour)} / hour · ${money(data.dailyTargetUsd)} / day if sustained. `}
             {stale
               ? 'Saved data · awaiting refresh.'
               : paused
@@ -190,12 +211,16 @@ export function EarningsTarget({ paused }: { paused: boolean }) {
                 : 'Confirmed ledger history.'}
           </p>
           <details className="target-hour-details" open={mobile}>
-            <summary>
-              Hourly target map · {data.hourly.length} hour slots
-            </summary>
+            <summary>Hourly map · {data.hourly.length} hour slots</summary>
             <div className="target-legend">
-              <span className="met">Reached</span>
-              <span className="below">Below</span>
+              {data.targetUsdPerHour == null ? (
+                <span>Complete</span>
+              ) : (
+                <>
+                  <span className="met">Reached</span>
+                  <span className="below">Below</span>
+                </>
+              )}
               <span className="unknown">Unknown</span>
               <span className="partial">Partial / settling</span>
             </div>

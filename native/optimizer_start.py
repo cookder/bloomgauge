@@ -7,6 +7,7 @@ authorize one cleanup attempt; only a new hardware reading can authorize Start.
 import copy
 import time
 from cache_recovery import clear_file_cache, CacheRecoveryError
+from model_combinations import configured_reserve_gb
 from model_readiness import session_key
 from optimizer_store import device_id
 from provider_control import endpoint_issue
@@ -92,7 +93,11 @@ class OnStart:
                 or 'The saved model is no longer available for automatic selection.'
             )
         budget = memory_budget(
-            live.get('hardware', {}), {'memoryGB': 0}, current['model'], row['memoryGB']
+            live.get('hardware', {}),
+            {'memoryGB': 0},
+            current['model'],
+            row['memoryGB'],
+            config_reserve=configured_reserve_gb(o.home, current['options']),
         )
         if not budget:
             raise ValueError(

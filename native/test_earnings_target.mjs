@@ -67,3 +67,31 @@ test('malformed target cells and aggregates cannot replace displayed data', () =
   ])
     assert.equal(validTargetReport({ ...report(), ...change }), false);
 });
+test('no goal: goal fields are null and hours are complete, not met or below', () => {
+  const r = report();
+  Object.assign(r, {
+    targetUsdPerHour: null,
+    dailyTargetUsd: null,
+    metHours: null,
+    metPercent: null,
+    longestBelowHours: null,
+  });
+  r.hourly[0].status = 'complete';
+  assert.equal(validTargetReport(r), true);
+  // A judged hour or a stray percentage cannot appear without a goal.
+  assert.equal(
+    validTargetReport({ ...r, hourly: [{ ...r.hourly[0], status: 'below' }] }),
+    false,
+  );
+  assert.equal(validTargetReport({ ...r, metPercent: 50 }), false);
+  assert.equal(validTargetReport({ ...r, metHours: 0 }), false);
+  // With a goal, 'complete' is not a status and the goal fields are required.
+  assert.equal(
+    validTargetReport({
+      ...report(),
+      hourly: [{ ...r.hourly[0], status: 'complete' }],
+    }),
+    false,
+  );
+  assert.equal(validTargetReport({ ...report(), metHours: null }), false);
+});

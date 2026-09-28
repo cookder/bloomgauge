@@ -338,6 +338,16 @@ class SupportTests(unittest.TestCase):
         data = {**INPUT, 'category': category, 'context': context, 'automatic': True}
         return self.reporter.send(self.consent(self.reporter.preview(data)))
 
+    def test_validation_is_its_own_kind_of_problem(self):
+        """A response a validator rejected is not filed as a connection problem, and its
+        automatic reports are limited separately (lib/support-issues.ts)."""
+        self.reporter.set_auto({'autoSend': True})
+        self.assertEqual(self.automatic('validation', 'models')['status'], 'sent')
+        self.assertEqual(json.loads(self.calls[0][1])['category'], 'validation')
+        self.assertEqual(self.automatic('connection', 'models')['status'], 'sent')
+        with self.assertRaises(ValueError):
+            self.reporter.preview({**INPUT, 'category': 'validation', 'source': 'run-status'})
+
     def test_automatic_reports_need_the_opt_in_and_carry_no_user_text(self):
         self.error('rate_limited', self.automatic)
         self.reporter.set_auto({'autoSend': True})

@@ -3,6 +3,10 @@
 import hashlib, json, math
 from optimizer_store import device_id
 from model_combinations import members, selection_key
+from provider_reporting import observed_models, preloading, state_fresh
+
+
+STARTING = 'Statistics paused · Darkbloom is starting and loading its models.'
 
 
 def finite(value):
@@ -27,8 +31,22 @@ def readiness(raw, proof, now, identity_verified=False, pending=False):
         'detail': 'Waiting for verified model readiness.',
     }
     written = raw.get('written_at')
-    if not selected or not finite(written) or not -5 < now - written < 15:
-        result['detail'] = 'Statistics paused · waiting for fresh model readings.'
+    offered = observed_models(raw.get('advertised_models'))
+    warm = raw.get('warm_models') if isinstance(raw.get('warm_models'), list) else []
+    if not selected and len(offered) > 2:
+        # Darkbloom manages 3+ models; their work is reported together (provider_reporting).
+        result['detail'] = (
+            'Per-model statistics need one model or a pair. Darkbloom manages the '
+            f'{len(offered)} models this Mac offers; pick one model in Model controls '
+            'to record them.'
+        )
+    elif not selected or not finite(written) or not -5 < now - written < 15:
+        # Counting keeps the 15 s window; 0.9.10's startup preload writes every 30 s.
+        result['detail'] = (
+            STARTING
+            if selected and preloading(raw) and state_fresh(raw, now)
+            else 'Statistics paused · waiting for fresh model readings.'
+        )
     elif (
         not identity_verified
         or not device_id(raw)
@@ -51,7 +69,15 @@ def readiness(raw, proof, now, identity_verified=False, pending=False):
     elif not isinstance(raw.get('warm_models'), list) or not all(
         m in raw['warm_models'] for m in selected
     ):
-        result['detail'] = 'Statistics paused · every selected model must be loaded and warm.'
+        # Darkbloom 0.9.10 unloads idle models and loads them again when work arrives.
+        cold = ', '.join(m for m in selected if m not in warm)
+        result['detail'] = (
+            f"Statistics paused · {cold} isn't loaded right now. Counting resumes when "
+            'Darkbloom loads it again.'
+            if len(selected) == 1
+            else 'Statistics paused · a pair counts only while both models are loaded. '
+            f'Not loaded now: {cold}.'
+        )
     elif written < proof['verifiedAt']:
         result['detail'] = 'Statistics paused · waiting for the first sample after pre-warm.'
     else:

@@ -77,7 +77,7 @@ export function NetworkContributionsPanel({ paused }: { paused: boolean }) {
       g.id === 'other' ||
       g.id === 'unattributed' ||
       data?.attribution === 'unavailable'
-        ? '#899da8'
+        ? 'var(--c-899da8)'
         : modelColor(g.id.replace(/^model:/, '')),
   }));
   const points = useMemo(

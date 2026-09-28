@@ -18,7 +18,7 @@ export function PulseTrend(props: {
   windowSeconds: string;
   range: Range;
   onRangeChange: (range: Range) => void;
-  reference: number;
+  reference: number | null;
   color: string;
 }) {
   const [style, setStyle] = useState<PulseGraphStyle>('earnings');

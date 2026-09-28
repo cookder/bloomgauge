@@ -1,19 +1,11 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { distinctLabels } from '@/lib/model-label';
-import { Check, ChevronDown, LoaderCircle, Search } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { ChevronDown, LoaderCircle, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { startChartPolling } from '@/lib/chart-polling';
 import { usePageVisible } from '@/lib/use-page-visibility';
-import { money, num, shortModel, age } from './shared';
+import { money, num, shortModel } from './shared';
 import { readModelInsights, type ModelInsights } from '@/lib/model-insights';
 
 export type ManualModelOption = {
@@ -22,15 +14,36 @@ export type ManualModelOption = {
   available: boolean;
   reason?: string;
   memoryGB?: number | null;
+  loadBudget?: { afterUnloadGB: number; requiredGB: number } | null;
   requiresRuntimeVerification?: boolean;
 };
-const dollars = (value: number | null | undefined) =>
-  value == null ? 'Not enough history' : money(value);
 
+/** Memory fit in plain words: "Fits · 28.7 GB of 35.1 GB free after unloading". */
+export function memoryFit(
+  model: Pick<ManualModelOption, 'memoryGB' | 'loadBudget'>,
+  running: boolean,
+) {
+  const size = model.memoryGB != null ? `${num(model.memoryGB, 1)} GB` : '';
+  const b = model.loadBudget;
+  if (!b) return size;
+  const free = `${num(b.afterUnloadGB, 1)} GB free${running ? ' after unloading' : ''}`;
+  return b.afterUnloadGB >= b.requiredGB
+    ? `${size ? `${size} · ` : ''}Fits · needs ${num(b.requiredGB, 1)} of ${free}`
+    : `${size ? `${size} · ` : ''}Needs ${num(b.requiredGB - b.afterUnloadGB, 1)} GB more memory (${free})`;
+}
+
+/**
+ * The model list for manual control: an inline radio list sized for touch
+ * (every row is a 56 px+ target), no dialog and no auto-focused search field, so
+ * a phone keyboard never covers it. Arrow keys move through the list, Enter or
+ * Escape closes it. Choosing only fills the selection; the caller confirms.
+ */
 export function ManualModelPicker({
   models,
   value,
   currentModel,
+  homeModel,
+  pinned = false,
   scope = '',
   disabled,
   onChange,
@@ -40,6 +53,9 @@ export function ManualModelPicker({
   models: ManualModelOption[];
   value: string;
   currentModel?: string;
+  /** The manager's home model (or pin), marked in the list. */
+  homeModel?: string | null;
+  pinned?: boolean;
   scope?: string;
   disabled: boolean;
   onChange: (model: string) => void;
@@ -53,6 +69,11 @@ export function ManualModelPicker({
     [revision, setRevision] = useState(0),
     [loading, setLoading] = useState(false);
   const visible = usePageVisible();
+  const listId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  // A change right after a key press came from the keyboard (arrow keys move the
+  // choice and keep the list open); any other change is a tap or click, which closes it.
+  const keyed = useRef(0);
   const ids = JSON.stringify(models.map((m) => m.id).sort());
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   useEffect(() => {
@@ -93,203 +114,177 @@ export function ManualModelPicker({
         setLoading(false);
       },
       onError: () => {
-        setError(
-          'Model statistics are unavailable. You can still choose a model.',
-        );
+        setError('Earnings history is unavailable. You can still choose.');
         setLoading(false);
       },
     });
   }, [open, visible, ids, timezone, scope, revision]);
   const byId = new Map(data?.models?.map((m) => [m.id, m]) ?? []);
   const selected = models.find((m) => m.id === value);
-  const choices = models.filter((m) =>
-    `${m.name} ${m.id}`.toLowerCase().includes(search.toLowerCase()),
-  );
+  const searchable = models.length > 12;
+  const choices = models
+    .filter(
+      (m) =>
+        !searchable ||
+        `${m.name} ${m.id}`.toLowerCase().includes(search.toLowerCase()),
+    )
+    // Loadable models first, then the rest with their reasons; order is otherwise kept.
+    .sort((a, b) => Number(b.available) - Number(a.available));
+  // Catalog names ("Qwen 3.8 27B"), with the quantization added where two collide.
+  const names = new Map(models.map((m) => [m.id, m.name]));
   const labels = distinctLabels(
-    choices.map((m) => m.id),
-    shortModel,
+    models.map((m) => m.id),
+    (id) => names.get(id) || shortModel(id),
   );
-  const time = (at: number) =>
-    new Date(at * 1000).toLocaleTimeString([], {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+  const running = actionLabel === 'Switch';
+  function close(focus = true) {
+    setOpen(false);
+    if (focus) requestAnimationFrame(() => trigger.current?.focus());
+  }
   return (
-    <>
-      <Button
+    <div className={`manual-picker ${open ? 'open' : ''}`}>
+      <button
+        ref={trigger}
         type="button"
-        variant="outline"
         className="manual-picker-trigger"
-        aria-label="Manual serving model"
-        aria-haspopup="dialog"
         aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen(true)}
+        aria-controls={listId}
+        disabled={disabled && !open}
+        onClick={() => setOpen(!open)}
       >
         <span>
-          {selected?.name || 'Choose a model'}
-          <small>Compare earnings & next 8 hours</small>
+          <strong>
+            {selected ? labels(selected.id) : 'Choose a model'}
+            {selected?.id === currentModel && (
+              <span className="manual-picker-badge serving">Serving</span>
+            )}
+          </strong>
+          <small>
+            {open
+              ? 'Tap a model to choose it'
+              : selected
+                ? selected.available
+                  ? memoryFit(selected, running) || 'Available'
+                  : selected.reason || 'Unavailable for this Mac right now'
+                : `${models.filter((m) => m.available).length} of ${models.length} models can load now`}
+          </small>
         </span>
-        <ChevronDown size={16} />
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="manual-model-picker-dialog">
-          <DialogHeader>
-            <DialogTitle>Choose a model</DialogTitle>
-            <DialogDescription>
-              Compare this Mac’s paid history and the next eight hours. Choosing
-              a row fills the selection; use {actionLabel} to apply it.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="manual-picker-toolbar">
-            <label>
-              <Search size={16} />
+        <ChevronDown size={18} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="manual-picker-panel" id={listId}>
+          {searchable && (
+            <label className="manual-picker-search">
+              <Search size={16} aria-hidden="true" />
               <Input
-                aria-label="Search models"
-                placeholder="Search models"
+                aria-label="Filter models"
+                placeholder="Filter models"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </label>
-            <span>
-              {data
-                ? `${time(data.horizon.from)}–${time(data.horizon.to)} · ${data.timezone}`
-                : 'Next 8 hours · ' + timezone}
-            </span>
-          </div>
-          <div className="manual-picker-stat-status" role="status">
+          )}
+          <fieldset className="manual-picker-rows">
+            <legend className="sr-only">Model to run</legend>
+            {choices.map((m) => {
+              const row = byId.get(m.id);
+              const label = labels(m.id);
+              const earned = row?.observed.usdPerWarmHour;
+              const next = row?.incomeNext8h.usdPerWarmHour;
+              const blocked = !m.available;
+              return (
+                <label
+                  key={m.id}
+                  className={`manual-picker-row${m.id === value ? ' selected' : ''}${blocked ? ' unavailable' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name={`${listId}-model`}
+                    value={m.id}
+                    checked={m.id === value}
+                    disabled={disabled || blocked}
+                    onKeyDown={(event) => {
+                      keyed.current = Date.now();
+                      if (event.key === 'Enter' || event.key === 'Escape') {
+                        event.preventDefault();
+                        close();
+                      }
+                    }}
+                    onChange={() => {
+                      onChange(m.id);
+                      if (Date.now() - keyed.current > 150)
+                        requestAnimationFrame(() => close(false));
+                    }}
+                  />
+                  <span className="manual-picker-row-body">
+                    <span className="manual-picker-row-name">
+                      <strong>{label}</strong>
+                      {m.id === currentModel && (
+                        <span className="manual-picker-badge serving">
+                          Serving now
+                        </span>
+                      )}
+                      {m.id === homeModel && (
+                        <span className="manual-picker-badge home">
+                          {pinned ? 'Your pick' : 'Home'}
+                        </span>
+                      )}
+                    </span>
+                    <small>
+                      {blocked
+                        ? m.reason || 'Unavailable for this Mac right now.'
+                        : m.requiresRuntimeVerification
+                          ? `${memoryFit(m, running) || 'Available'} · verified when you ${actionLabel.toLowerCase()}`
+                          : memoryFit(m, running) || 'Available'}
+                    </small>
+                    {(earned != null || next != null) && (
+                      <small className="manual-picker-row-money">
+                        {earned != null
+                          ? `Earned here ${money(earned)} / warm h`
+                          : 'No earnings history here'}
+                        {next != null
+                          ? ` · next 8 h about ${money(next)} / warm h`
+                          : ''}
+                      </small>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+            {!choices.length && (
+              <p className="empty">No models match this filter.</p>
+            )}
+          </fieldset>
+          <p className="manual-picker-note" role="status">
             {loading && !data ? (
               <>
-                <LoaderCircle size={14} className="spin" />
-                Loading model statistics…
+                <LoaderCircle size={13} className="spin" /> Loading earnings
+                history…
               </>
             ) : error ? (
               <>
-                {data ? 'Showing saved statistics. ' : ''}
-                {error}
+                {error}{' '}
                 <button
                   type="button"
                   className="text-link"
                   onClick={() => setRevision((n) => n + 1)}
                 >
-                  Retry statistics
+                  Retry
                 </button>
               </>
-            ) : data ? (
-              `${Date.now() / 1000 - data.at > 90 ? 'Saved statistics · ' : ''}Updated ${age(data.at).toLowerCase()}`
             ) : (
-              'Choose any model while statistics load.'
+              'Earnings are this Mac’s paid history per warm hour over 28 days; the next-8-hour figure is an estimate if the model stays warm.'
             )}
-          </div>
-          <div
-            className="manual-picker-list"
-            aria-label="Models and statistics"
-          >
-            {choices.map((m) => {
-              const row = byId.get(m.id);
-              const label = labels(m.id);
-              return (
-                <button
-                  type="button"
-                  className={`manual-picker-option ${m.id === value ? 'selected' : ''}`}
-                  key={m.id}
-                  aria-label={`Choose ${label}`}
-                  disabled={disabled}
-                  onClick={() => {
-                    onChange(m.id);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="manual-picker-model">
-                    <strong>
-                      {label}
-                      {m.id === value && <Check size={15} />}
-                    </strong>
-                    <small>
-                      {m.id === currentModel ? 'Current · ' : ''}
-                      {m.available
-                        ? m.requiresRuntimeVerification
-                          ? 'Verifies on ' + actionLabel.toLowerCase()
-                          : 'Available'
-                        : 'Unavailable'}
-                      {m.memoryGB != null ? ` · ${num(m.memoryGB, 1)} GB` : ''}
-                    </small>
-                    {!m.available && (
-                      <small>
-                        {m.reason || 'Unavailable for this Mac right now.'}
-                      </small>
-                    )}
-                  </span>
-                  <span className="manual-picker-metrics">
-                    <span title={row?.observed.reason}>
-                      <small>Observed / warm hour</small>
-                      <strong>{dollars(row?.observed.usdPerWarmHour)}</strong>
-                      <small>
-                        {row
-                          ? `${num(row.observed.warmHours, 1)} warm hours · ${row.observed.days} days`
-                          : 'History unavailable'}
-                      </small>
-                      {row?.observed.asOf != null && (
-                        <small>
-                          Last evidence {age(row.observed.asOf).toLowerCase()}
-                        </small>
-                      )}
-                    </span>
-                    <span>
-                      <small>Average request · output</small>
-                      <strong>
-                        {row?.requestSize.meanOutputTokens == null
-                          ? 'Not enough history'
-                          : `${num(row.requestSize.meanOutputTokens)} tokens`}
-                      </strong>
-                      <small>
-                        {row
-                          ? `${num(row.requestSize.outputSamples)} of ${num(row.requestSize.creditedRequests)} requests measured`
-                          : 'Reported output tokens'}
-                      </small>
-                    </span>
-                    <span title={row?.demandNext8h.reason}>
-                      <small>Next 8h · network load</small>
-                      <strong>
-                        {row?.demandNext8h.meanConcurrentRequests == null
-                          ? 'Not enough history'
-                          : num(row.demandNext8h.meanConcurrentRequests, 1)}
-                      </strong>
-                      <small>
-                        {row?.demandNext8h.status === 'partial'
-                          ? `${num(row.demandNext8h.supportedSeconds / 3600, 1)} of 8h supported`
-                          : 'Active + queued · historical'}
-                      </small>
-                    </span>
-                    <span title={row?.incomeNext8h.reason}>
-                      <small>Next 8h · estimate / warm hr</small>
-                      <strong>
-                        {dollars(row?.incomeNext8h.usdPerWarmHour)}
-                      </strong>
-                      <small>
-                        {row?.incomeNext8h.usdPerWarmHour == null
-                          ? row?.incomeNext8h.reason ||
-                            'Waiting for supported history'
-                          : 'If warm throughout · conditional'}
-                      </small>
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-            {!choices.length && (
-              <p className="empty">No models match this search.</p>
-            )}
-          </div>
-          <p className="manual-picker-footnote">
-            History covers 28 days. Earnings include warm idle time and exclude
-            base rewards and cold/loading time. Network load is concurrent
-            requests across the network, not work guaranteed to this Mac.
-            Estimates use comparable historical hours; missing evidence stays
-            unavailable.
           </p>
-        </DialogContent>
-      </Dialog>
-    </>
+          <button
+            type="button"
+            className="manual-picker-done"
+            onClick={() => close()}
+          >
+            Done
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

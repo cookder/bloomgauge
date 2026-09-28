@@ -1,3 +1,4 @@
+// Keep in step with native/support_reports.py CATEGORIES (and the website's list).
 export const supportCategories = [
   'manual',
   'ui',
@@ -5,7 +6,17 @@ export const supportCategories = [
   'setup',
   'model',
   'action',
+  'validation',
 ] as const;
+/** Validators whose rejections are reported as `validation` issues, and what they read. */
+export const validationSources = {
+  'run-status': 'the run status',
+  optimizer: 'the optimizer plan',
+  'optimizer-controls': 'the optimizer controls',
+  'model-controls': 'the model status',
+  reputation: 'the reputation reading',
+} as const;
+export type ValidationSource = keyof typeof validationSources;
 export const supportContexts = [
   'overview',
   'setup',
@@ -19,9 +30,29 @@ export const supportContexts = [
 ] as const;
 export type SupportCategory = (typeof supportCategories)[number];
 export type SupportContext = (typeof supportContexts)[number];
+/**
+ * The report schema has no field for the validator, so a validation report's context
+ * says which one failed: validation · overview = run status, · network = reputation,
+ * · setup = optimizer controls, · models = the optimizer plan or model status.
+ */
+export const validationContexts: Record<ValidationSource, SupportContext> = {
+  'run-status': 'overview',
+  optimizer: 'models',
+  'optimizer-controls': 'setup',
+  'model-controls': 'models',
+  reputation: 'network',
+};
+const validationSource = (category: string, source: unknown) =>
+  category === 'validation' &&
+  typeof source === 'string' &&
+  Object.hasOwn(validationSources, source)
+    ? (source as ValidationSource)
+    : undefined;
 export type SupportIssue = {
   category: SupportCategory;
   context: SupportContext;
+  /** Which validator rejected a response (validation issues only; shown, not uploaded). */
+  source?: ValidationSource;
 };
 type State = {
   prompt: SupportIssue | null;
@@ -129,12 +160,16 @@ export const getServerSupportIssues = () => empty;
 export function recordSupportIssue(
   category: SupportCategory,
   area: SupportContext = context,
+  source?: string,
 ) {
   if (reporting || category === 'manual' || !valid(category, area)) return;
+  const validator = validationSource(category, source);
+  if (validator) area = validationContexts[validator];
   const key = category + ':' + area,
     until = Math.max(cooldowns.get(key) || 0, remembered(key));
   if (until > Date.now() || state.prompt) return;
-  const issue = { category, context: area };
+  const issue: SupportIssue = { category, context: area };
+  if (validator) issue.source = validator;
   mute(issue, 30 * 60000);
   state = { ...state, prompt: issue };
   emit();
@@ -160,6 +195,26 @@ export function clearAutoSentPrompt(issue = state.prompt) {
   )
     clearSupportPrompt();
 }
+/**
+ * Send a prompt automatically. Sent or not, the prompt is cleared and muted for six
+ * hours: while auto-send is on the prompt is never shown, so one the Mac app holds back
+ * (its shared limit) or that fails to send would otherwise block every later problem.
+ * The Mac app's own limit already refuses the same problem for 24 hours, so retrying it
+ * sooner would only be refused again. Resolves true when the report was sent.
+ */
+export async function autoSendSupportPrompt(
+  issue: SupportIssue,
+  send: (issue: SupportIssue) => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await send(issue);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearAutoSentPrompt(issue);
+  }
+}
 export function openSupportReport(
   category: SupportCategory = 'manual',
   area: SupportContext = context,
@@ -176,6 +231,7 @@ export function observeSupportCondition(
   area: SupportContext,
   failed: boolean,
   now = Date.now(),
+  source?: string,
 ) {
   if (!valid(category, area)) return;
   const key = category + ':' + area;
@@ -188,11 +244,26 @@ export function observeSupportCondition(
     conditions.set(key, now);
     return;
   }
-  if (now - since >= 60000) recordSupportIssue(category, area);
+  if (now - since >= 60000) recordSupportIssue(category, area, source);
 }
-export function observeModelResult(value: unknown) {
+/**
+ * The backend writes `failed` when no model was verified after a switch, and
+ * `recovered` after it restored and verified a model: either the manager's routine
+ * self-heal (manager.py restore(), no prompt) or a switch that failed and was rolled
+ * back (optimizer.py switch(): a legacy pause or a failed excursion), which still
+ * needs a report so its failure code reaches triage. lastSwitchResult carries no field
+ * that tells the two apart, so a `recovered` result counts as a failed switch when it
+ * names a failure code or stage, or when the switch run it closed (`runs`, the plan's
+ * switch history: same completion time) ended `recovered`. Manager restores record no run.
+ */
+export function observeModelResult(value: unknown, runs?: unknown) {
   if (!value || typeof value !== 'object') return;
-  const result = value as { at?: unknown; outcome?: unknown };
+  const result = value as {
+    at?: unknown;
+    outcome?: unknown;
+    code?: unknown;
+    stage?: unknown;
+  };
   if (
     typeof result.at !== 'number' ||
     !Number.isFinite(result.at) ||
@@ -200,14 +271,24 @@ export function observeModelResult(value: unknown) {
     !['failed', 'recovered', 'switched', 'deferred'].includes(result.outcome)
   )
     return;
+  const rolledBack =
+    result.outcome === 'recovered' &&
+    (typeof result.code === 'string' ||
+      typeof result.stage === 'string' ||
+      (Array.isArray(runs) &&
+        runs.some(
+          (run) =>
+            !!run &&
+            typeof run === 'object' &&
+            run.completedAt === result.at &&
+            run.result === 'recovered',
+        )));
+  if (result.outcome !== 'failed' && !rolledBack) return;
+  // A routine restore seen first without the switch history must not hide it later.
   const key = result.at + ':' + result.outcome;
   if (key === lastModelResult) return;
   lastModelResult = key;
-  if (
-    result.at >= bootAt &&
-    result.at <= Date.now() / 1000 + 300 &&
-    ['failed', 'recovered'].includes(result.outcome)
-  )
+  if (result.at >= bootAt && result.at <= Date.now() / 1000 + 300)
     recordSupportIssue('model', 'models');
 }
 
@@ -218,4 +299,11 @@ export const supportTitles: Record<SupportCategory, string> = {
   setup: 'Setup needs attention',
   model: 'A model switch needs review',
   action: 'A request could not be confirmed',
+  validation: 'Some data couldn’t be read',
 };
+/** The prompt's title; a validation issue names what couldn't be read. */
+export function supportIssueTitle(issue: SupportIssue): string {
+  return issue.category === 'validation' && issue.source
+    ? `Couldn’t read ${validationSources[issue.source]}`
+    : supportTitles[issue.category];
+}

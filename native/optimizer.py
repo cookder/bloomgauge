@@ -17,6 +17,8 @@ from model_combinations import (
     pair_budget,
     pair_candidates,
     combination_config_error,
+    configured_reserve_gb,
+    DEFAULT_RESERVE_GB,
 )
 from demand_targets import high_earnings, fresh_paid
 from demand_optimizer import (
@@ -26,6 +28,7 @@ from demand_optimizer import (
     POLICY_REVISION,
 )
 import data_gathering
+import manager
 import logging
 import bloom_log  # noqa: F401  (quiet until the app configures logging)
 
@@ -36,6 +39,7 @@ from manual_selection import ManualSelection
 from optimizer_control import OptimizerControl
 from stall_control import StallControl
 from optimizer_live import OptimizerLive
+from manager import ManagerControl
 from demand_confirmation import (
     advance as advance_confirmation,
     pause as pause_confirmation,
@@ -63,10 +67,20 @@ SWITCH_PURGE_GAP = 120
 PURGE_SHORTFALL_HOLD = 3600
 # Planner statistics go stale as history grows; see OptimizerStore.refresh_statistics.
 STATISTICS_SECONDS = 6 * 3600
+# Catalog models with runtime requirements (apple_m5, mlx_nax): see Optimizer.runtime_proof.
+RUNTIME_UNVERIFIED = 'Runtime support is not yet verified for automatic selection.'
+RUNTIME_PROOF_MINUTES = 10  # complete verified ready minutes served alone on this Mac
+RUNTIME_PROOF_DAYS = 30
+RUNTIME_PROOF_CACHE_SECONDS = 600
+RUNTIME_PROOFS_KEY = 'runtime-proofs-v1'  # history cache: {device: {model: lastProvenAt}}
 
 
 class ExternalChange(Exception):
     pass
+
+
+class NothingSent(ExternalChange):
+    """A change seen before a warm-up sent anything (a failed launchctl or settings read)."""
 
 
 class WorkResumed(Exception):
@@ -140,6 +154,24 @@ def launch_signature(options, environment):
     ).hexdigest()
 
 
+def reporting_models_match(roster_models, advertised):
+    """The roster row lists at least one offered model and nothing else.
+
+    Darkbloom's coordinator (0.9.10) builds this row from the models the provider
+    registered, keeping only those that pass the same check that routes public
+    requests to this provider: in the catalog with a matching weight hash, and the
+    model's hardware, runtime and App Attest requirements met (registry/verification.go
+    ForEachProviderVerification; provider_capabilities.go
+    providerModelAllowedByCatalogLocked; routing_eligibility.go
+    providerServesRoutableModelLocked). An offered model the row leaves out gets no
+    network work on this Mac (only the owner's own requests may reach an off-catalog
+    model), so it can't hide another Mac's output; statistics count the models the row
+    lists. The row doesn't depend on which models are loaded: heartbeats update warm
+    models only (registry/heartbeat.go)."""
+    roster_set = set(roster_models)
+    return bool(roster_set) and roster_set <= set(advertised)
+
+
 def roster_identity(raw, rows):
     """Public models are coordinator eligibility, separate from hardware identity."""
     key = raw.get('attestation_public_key')
@@ -163,7 +195,8 @@ def roster_identity(raw, rows):
         'servingEligible': eligible,
         'reportingEligible': bool(
             observed_models(advertised)
-            and observed_models(models) == observed_models(advertised)
+            and observed_models(models)
+            and reporting_models_match(models, advertised)
             and all(isinstance(r, dict) for r in rows)
             and sum(r.get('provider_id') == row['provider_id'] for r in rows if isinstance(r, dict))
             == 1
@@ -173,24 +206,56 @@ def roster_identity(raw, rows):
     }
 
 
-def memory_budget(hardware, provider, model, weights, gpu_cache=0):
-    """v0.8.16 default load reserves. Cached files overlap available pages: don't add them."""
+def memory_budget(
+    hardware, provider, model, weights, gpu_cache=0, held=0, config_reserve=DEFAULT_RESERVE_GB
+):
+    """v0.8.16 default load reserves. Cached files overlap available pages: don't add them.
+
+    `held`: weights of models the provider has loaded, which a switch releases even when
+    its reported active GPU memory misses them.
+    """
     total = hardware.get('memoryTotalGB')
     available = hardware.get('memoryAvailableGB')
     resident = provider.get('memoryGB')
     if not all(finite(v) and v >= 0 for v in (total, available, resident, weights, gpu_cache)):
         return None
-    reserve = max(4, total * 0.1)
+    # UnifiedMemoryCap.loadReserveBytes: provider.toml memory_reserve_gb, but at least what
+    # the 90% cap (with its 2 GiB floor) leaves the OS.
+    reserve = max(config_reserve, total * 0.1, 2)
     activation = 3.5 if model == 'gpt-oss-20b' else 5.5
     return {
-        'afterUnloadGB': min(total, available + resident + gpu_cache),
+        # A switch frees what Darkbloom reports as resident. Only when it reports nothing,
+        # count the loaded models' weights: `held` is the CLI estimate, weights x 1.2.
+        'afterUnloadGB': min(
+            total,
+            available
+            + (resident if resident > 0 else held / 1.2 if finite(held) and held > 0 else 0)
+            + gpu_cache,
+        ),
         'requiredGB': weights + reserve + activation + 1,
         'reserveGB': reserve,
     }
 
 
+def unknown_flag(token):
+    """A `--name`/`-x` option Bloomkeeper does not parse (bare `-`/`--` never qualify)."""
+    known = VALUE_FLAGS | BOOL_FLAGS | {'--model', '--foreground'}
+    return (
+        isinstance(token, str)
+        and re.match(r'--?[A-Za-z]', token) is not None
+        and token.split('=', 1)[0] not in known
+    )
+
+
 def launch_options(plist, allow_auto=False):
-    """Retain the user's endpoint, idle policy, config and coordinator. No shell."""
+    """Retain the user's endpoint, idle policy, config and coordinator. No shell.
+
+    Flags Bloomkeeper does not know (a newer Darkbloom's) are kept verbatim and in order, so a
+    restart passes them on unchanged. `--flag=value` is one token. A bare unknown `--flag`
+    takes the next token as its value unless that token looks like a flag (starts with `-`
+    followed by a letter, or `--`): `--x 5`, `--x -5` and `--x auto` keep their value, while
+    `--x --local-endpoint` is a switch. Either way the tokens keep their order. A known flag
+    written as `--flag=value`, a bare `-`/`--` or a stray word is refused."""
     args = plist.get('ProgramArguments', [])
     if not isinstance(args, list) or not args:
         raise ValueError('No installed Darkbloom service was found.')
@@ -217,6 +282,14 @@ def launch_options(plist, allow_auto=False):
         if flag in BOOL_FLAGS:
             options.append(flag)
             i += 1
+            continue
+        if unknown_flag(flag):
+            value = args[i + 1] if i + 1 < len(args) and '=' not in flag else None
+            takes = isinstance(value, str) and not (
+                value.startswith('--') or re.match(r'-[A-Za-z]', value)
+            )
+            options.extend(args[i : i + 2] if takes else [flag])
+            i += 2 if takes else 1
             continue
         raise ValueError('This provider uses settings that automatic switching does not support.')
     key = selection_key(selected)
@@ -336,7 +409,12 @@ class Optimizer:
         self.state['demandPolicyRevision'] = POLICY_REVISION
         self.status = 'observing'
         self.detail = 'Recording network demand and this Mac’s model performance.'
-        if self.state.pop('pending', None):
+        interrupted = self.state.pop('pending', None)
+        if interrupted and manager.active(self.state):
+            # Automatic control stays on: the manager checks what is serving and restores.
+            manager.interrupted(self.state, interrupted, time.time())
+            self.detail = 'Bloomkeeper closed during a switch. Checking the provider; the manager restores the home model if nothing becomes ready.'
+        elif interrupted:
             self.state['mode'] = 'observe'
             self.detail = 'The dashboard closed during a switch. Automatic switching is paused; check the provider status.'
             self.cancel_combo(self.detail)
@@ -352,12 +430,18 @@ class Optimizer:
                 status='failed',
                 detail='Bloomkeeper reopened before the selected start was verified. Refresh its status; no command was replayed.',
             )
+        result = self.state.get('manualResult') or {}
+        if result.get('status') in ('interrupted', 'failed') and manager.resume_manual(
+            self.state, result.get('id'), result.get('model'), result['status']
+        ):
+            self.detail = 'Bloomkeeper closed during your model pick. It is kept as your pick; automatic control continues.'
         self.live = None
         self.raw = {}
         self.previous = None
         self.idle_since = None
         self.drained_since = None
         self.local = []
+        self.list_all = None  # does this CLI accept `models list --all` (0.9.10+)?
         self.catalog = []
         self.discovery_at = 0
         self.discovery_error = None
@@ -370,8 +454,13 @@ class Optimizer:
         self.reporting_recheck_requested = False
         self.reporting_recheck_after = 0
         self.device_identity_ok = False
+        self.identity_device = None  # device_id of the daemon state the roster matched
         self.identity_hardware = False
         self.eligible_models = []
+        self.proof_lock = threading.Lock()
+        self.proof_minutes = {}  # (device, model) -> (checkedAt, served_minutes), ~10 min
+        self.runtime_proofs = None  # RUNTIME_PROOFS_KEY, read on first use
+        self.proof_seen = {}  # model -> last runtimeProof, logged when it changes
         self.identity_detail = 'Waiting for a fresh match between this Mac and the provider roster.'
         self.next_discovery = 0
         self.next_identity = 0
@@ -388,12 +477,14 @@ class Optimizer:
         self.state.setdefault('device', '')
         if self.demand_auto.interrupt_pending(
             self.state['account'], self.state['device'], time.time()
-        ):
+        ) and not manager.active(self.state):
             self.state['mode'] = 'observe'
             self.detail = 'Bloomkeeper reopened during an automatic attempt. Its result is unverified; switching is paused and its downtime allowance is retained.'
         self.save()
         self.automatic_control = OptimizerControl(self)
         self.stall = StallControl(self)
+        self.network_evidence = None  # collector.NetworkEvidence: public data for excursions
+        self.manager = ManagerControl(self)
         self.live_projection = OptimizerLive(self)
 
     def save(self):
@@ -417,13 +508,22 @@ class Optimizer:
             raise ValueError('Provider status is unavailable.')
         return d
 
-    def read_options(self):
+    def read_options(self, plist_only=False):
         plist = plistlib.loads(self.plist_path.read_bytes())
         model, args = launch_options(plist, allow_auto=True)
         if pathlib.Path(plist['ProgramArguments'][0]).resolve() != self.binary.resolve():
             raise ValueError(
                 'The installed provider executable has changed. Reopen the dashboard before enabling switching.'
             )
+        pinned = None if plist_only else manager.toml_selection(self.home, args)
+        if pinned and pinned != model:
+            # Darkbloom 0.9.10 follows provider.toml enabled_models, not the launch agent's
+            # --model. Use it when the running daemon agrees; otherwise keep the plist.
+            try:
+                if same_selection(self.read_state(), pinned):
+                    model = pinned
+            except (OSError, ValueError):
+                pass
         if not model:
             # New Darkbloom releases can save an auto-select launch. Use the
             # actual advertised selection, still checked against the live session
@@ -566,19 +666,26 @@ class Optimizer:
             if scope is None:
                 self.reporting_recheck_requested = False
             elif scope != self.reporting_scope_seen and provider is None:
-                # A real cold/process/model gap revoked the old proof. Ask the
-                # existing background loop to revalidate the new warm scope;
+                # A real stale/offline/process/model-set gap revoked the old proof.
+                # Ask the existing background loop to revalidate the new scope;
                 # never reuse that proof or perform network work on collection.
                 self.reporting_recheck_requested = True
             self.reporting_scope_seen = scope
             return provider
 
-    def combo_config_error(self):
+    def combo_config_error(self, voluntary=True):
         try:
             _, options, environment = self.read_options()
-            return combination_config_error(self.home, options, environment)
+            return combination_config_error(self.home, options, environment, voluntary=voluntary)
         except (OSError, ValueError, TypeError):
             return 'Provider settings must be readable before pair testing.'
+
+    def config_reserve(self):
+        """provider.toml memory_reserve_gb for load budgets (Darkbloom's default if unreadable)."""
+        try:
+            return configured_reserve_gb(self.home, self.read_options(plist_only=True)[1])
+        except (OSError, ValueError, KeyError, TypeError, plistlib.InvalidFileException):
+            return DEFAULT_RESERVE_GB
 
     def purge_credit(self, target, live, now, require_permission=True):
         """File cache that the purge before every switch may free, in GB.
@@ -615,6 +722,13 @@ class Optimizer:
         if not models or any(m not in rows or not rows[m]['available'] for m in models):
             return None
         cache = raw.get('capacity', {}).get('gpu_memory_cache_gb', 0)
+        warm = raw.get('warm_models') if isinstance(raw.get('warm_models'), list) else []
+        held = sum(
+            rows[m]['memoryGB']
+            for m in set(warm)
+            if m in rows and finite(rows[m].get('memoryGB'))
+        )
+        reserve = self.config_reserve()
         if len(models) == 1:
             return memory_budget(
                 live.get('hardware', {}),
@@ -622,8 +736,11 @@ class Optimizer:
                 target,
                 rows[target]['memoryGB'],
                 cache,
+                held,
+                reserve,
             )
-        if self.combo_config_error():
+        # Knobs Bloomkeeper can't model stop automatic moves (controlError), not restores.
+        if self.combo_config_error(voluntary=False):
             return None
         return pair_budget(
             live.get('hardware', {}),
@@ -631,6 +748,7 @@ class Optimizer:
             models,
             [rows[m]['memoryGB'] for m in models],
             cache,
+            reserve,
         )
 
     def confirmation_scope(self, state, raw):
@@ -673,7 +791,10 @@ class Optimizer:
             }
             admission_activity = copy.deepcopy(proof['activity'])
         rules = demand_policy(settings.get('demandPolicy'))
+        managed = manager.enabled(rules)
         gathering = data_gathering.status(settings.get('dataGathering'), now)
+        if managed:
+            gathering = {**gathering, 'active': False}  # no learning boost under the manager
         if gathering['active']:
             rules = data_gathering.relaxed(rules)
         current = selection_key(raw.get('advertised_models'))
@@ -713,7 +834,10 @@ class Optimizer:
             error = combination_config_error(self.home, options, environment, require_pair=False)
         except Exception:
             error = 'Provider launch settings must be readable before automatic switching.'
-        if len(members(current)) != 1:
+        # The manager holds (and restores) a pair without gemma; legacy compares solo models.
+        if managed and manager.hold_error(current):
+            error = manager.hold_error(current)
+        elif not managed and len(members(current)) != 1:
             error = 'Demand following compares solo models. Select one serving model before enabling it.'
         decision['controlError'] = error
         if error:
@@ -724,6 +848,8 @@ class Optimizer:
                     'eligible': False,
                     'reason': error,
                 }
+        if managed:
+            decision = self.manager.decide(decision, settings, live, raw, rows, now)
         decision['enabled'] = settings['mode'] == 'demand'
         # 'policy' is what is in effect (data gathering loosens limits); edit the saved one.
         decision['savedPolicy'] = demand_policy(settings.get('demandPolicy'))
@@ -764,6 +890,8 @@ class Optimizer:
             live.get('provider', {}),
             raw.get('capacity', {}).get('gpu_memory_cache_gb', 0),
             self.combo_config_error(),
+            manager.SOLO_MODELS if manager.enabled(settings.get('demandPolicy')) else (),
+            self.config_reserve(),
         )
         results = [
             {
@@ -791,15 +919,7 @@ class Optimizer:
         if now >= self.next_discovery:
             self.next_discovery = now + 300
             try:
-                result = self.runner(
-                    [str(self.binary), 'models', 'list', '--json'],
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    text=True,
-                    timeout=25,
-                    check=True,
-                )
-                local = json.loads(result.stdout)['models']
+                local = self.local_models()
                 catalog = self.network.fetch('/v1/models/catalog')['models']
                 if not isinstance(local, list) or not isinstance(catalog, list):
                     raise ValueError()
@@ -853,6 +973,7 @@ class Optimizer:
                     self.identity_at = identity_now
                     self.identity_ok = proof['servingEligible']
                     self.device_identity_ok = True
+                    self.identity_device = device
                     self.identity_hardware = proof['hardwareVerified']
                     self.eligible_models = proof['models']
                     self.identity_session = (raw.get('started_at'), raw.get('pid'))
@@ -864,8 +985,14 @@ class Optimizer:
                         and original_scope is not None
                         and original_scope == reporting_scope(latest_account, latest, checked_at)
                     ):
+                        # The row's models are the offered ones the network routes here.
                         self.reporting_roster.confirm(
-                            latest_account, latest, checked_at, proof['provider'], identity_now
+                            latest_account,
+                            latest,
+                            checked_at,
+                            proof['provider'],
+                            identity_now,
+                            proof['models'],
                         )
                     else:
                         self.reporting_roster.revoke()
@@ -884,6 +1011,7 @@ class Optimizer:
                 with self.lock:
                     self.identity_ok = False
                     self.device_identity_ok = False
+                    self.identity_device = None
                     self.identity_hardware = False
                     self.eligible_models = []
                     self.identity_provider = None
@@ -916,10 +1044,15 @@ class Optimizer:
             disk = by_id.get(model)
             reason = None
             runtime_check = False
+            proof = None
             if not disk:
                 reason = 'Not available in the local CLI model list'
             elif not m.get('active', False):
                 reason = 'Not active in the network catalog'
+            elif disk.get('template_render_ok') is False and model != current:
+                # A switch to it would be refused (verify_local_target) after a purge and
+                # catalog fetch; say so up front instead of dispatching it.
+                reason = 'Its chat template failed Darkbloom’s check. Refresh models to recheck it.'
             elif not finite(m.get('min_ram_gb')) or m['min_ram_gb'] > total:
                 reason = 'Exceeds this Mac’s memory eligibility'
             elif (
@@ -935,16 +1068,17 @@ class Optimizer:
                 )
             ):
                 reason = 'The catalog runtime requirements could not be verified.'
-            # Public eligibility covers advertised models, not every model this
-            # Mac could select. Explicit manual verification is separate from
-            # attested eligibility; automation never uses this exception.
-            elif m.get('required_provider_capabilities') and not self.capability_verified(model):
-                runtime_check = bool(
-                    manual
-                    and self.manual_runtime_allowed(m['required_provider_capabilities'], disk, live)
-                )
-                if not runtime_check:
-                    reason = 'Runtime support is not yet verified for automatic selection. Open the manual model controls in Optimizer → Overview to review availability and runtime verification.'
+            elif m.get('required_provider_capabilities'):
+                required = m['required_provider_capabilities']
+                proof, why = self.runtime_proof(model, required, disk, live)
+                # Never proven on this Mac: only an explicit manual Verify & switch may
+                # try it, and that attempt is not automatic eligibility.
+                if not proof:
+                    runtime_check = bool(
+                        manual and self.manual_runtime_allowed(required, disk, live)
+                    )
+                    if not runtime_check:
+                        reason = RUNTIME_UNVERIFIED + ' ' + why
             result.append(
                 {
                     'id': model,
@@ -954,6 +1088,9 @@ class Optimizer:
                     'downloaded': bool(disk),
                     'memoryGB': disk.get('estimated_memory_gb') if disk else m.get('size_gb'),
                     'requiresRuntimeVerification': runtime_check,
+                    # Why a model with runtime requirements may be picked automatically:
+                    # 'roster', 'history' or None (not allowed, or no requirements).
+                    'runtimeProof': proof,
                     'selected': model in settings.get('models', []),
                     'current': model == current,
                     'evidence': {
@@ -1011,6 +1148,136 @@ class Optimizer:
                 and model in self.eligible_models
             )
 
+    def runtime_proof(self, model, required, disk, live):
+        """Why automatic selection may load a model with catalog runtime requirements.
+
+        Returns ('roster' | 'history', None), or (None, the plain reason it may not).
+        'roster': the coordinator lists the model as eligible for the running session.
+        'history': this Mac's own Darkbloom runtime reports every required capability, the
+        downloaded files and template check out, the roster verified this device, and the
+        device has served the model before (RUNTIME_PROOF_MINUTES complete ready minutes in
+        RUNTIME_PROOF_DAYS, or a saved roster proof). Neither is readiness: a switch must
+        still pass post-start coordinator eligibility and warm-up (verify_started), and one
+        that does not is a failed switch that restores the previous model.
+        """
+        if self.capability_verified(model):
+            self.save_runtime_proof(model, live)
+            verdict = ('roster', None)
+        else:
+            verdict = self.history_proof(model, required, disk, live)
+        with self.proof_lock:
+            changed = self.proof_seen.get(model, False) != verdict[0]
+            self.proof_seen[model] = verdict[0]
+        if changed:
+            log.info(
+                'Automatic selection of %s: %s',
+                model,
+                'allowed (%s proof).' % verdict[0] if verdict[0] else 'not allowed. ' + verdict[1],
+            )
+        return verdict
+
+    def history_proof(self, model, required, disk, live):
+        now = time.time()
+        with self.lock:
+            reported = self.raw.get('runtime_capabilities')
+            device = device_id(self.raw)
+            # The fresh roster match is for this daemon's device, the one history is kept under.
+            verified = bool(
+                device
+                and self.device_identity_ok
+                and self.identity_hardware
+                and 0 <= now - self.identity_at < 180
+                and self.identity_device == device
+                and live.get('device') == device
+            )
+        reported = reported if isinstance(reported, list) else []
+        missing = [c for c in required if c not in reported]
+        if not device:
+            return None, 'Waiting to verify this Mac with the provider roster.'
+        if missing:
+            return None, 'This Mac’s Darkbloom runtime doesn’t report %s.' % ', '.join(missing)
+        if not (
+            disk.get('template_render_ok') is True
+            and finite(disk.get('size_bytes'))
+            and disk['size_bytes'] > 0
+        ):
+            return None, 'Refresh models to verify its downloaded files and template.'
+        if not self.served_here(device, model, now):
+            return (
+                None,
+                'Needs one run on this Mac first: pick it from the manual model list to verify it.',
+            )
+        if not verified:
+            return None, 'Waiting to verify this Mac with the provider roster.'
+        return 'history', None
+
+    def served_here(self, device, model, now):
+        """This device served `model` before: saved roster proof, or enough recent history."""
+        return bool(
+            model in self.saved_runtime_proofs().get(device, {})
+            or self.ready_minutes(device, model, now) >= RUNTIME_PROOF_MINUTES
+        )
+
+    def ready_minutes(self, device, model, now):
+        """Complete ready minutes in RUNTIME_PROOF_DAYS, cached: candidates() runs often."""
+        key = (device, model)
+        with self.proof_lock:
+            hit = self.proof_minutes.get(key)
+        if hit and 0 <= now - hit[0] < RUNTIME_PROOF_CACHE_SECONDS:
+            return hit[1]
+        try:
+            count = self.store.served_minutes(device, model, now - RUNTIME_PROOF_DAYS * 86400)
+        except Exception:
+            log.exception('Could not read ready minutes for %s', model)
+            return 0
+        with self.proof_lock:
+            self.proof_minutes[key] = (now, count)
+        return count
+
+    def saved_runtime_proofs(self):
+        """{device: {model: lastProvenAt}}: roster proofs that outlive history rows."""
+        with self.proof_lock:
+            if self.runtime_proofs is not None:
+                return self.runtime_proofs
+        try:
+            saved = self.h.cache(RUNTIME_PROOFS_KEY)
+        except Exception:
+            log.exception('Could not read saved runtime proofs')
+            return {}
+        proofs = {
+            device: {m: at for m, at in models.items() if isinstance(m, str) and finite(at)}
+            for device, models in (saved.items() if isinstance(saved, dict) else ())
+            if isinstance(device, str) and device and isinstance(models, dict)
+        }
+        with self.proof_lock:
+            if self.runtime_proofs is None:
+                self.runtime_proofs = proofs
+            return self.runtime_proofs
+
+    def save_runtime_proof(self, model, live):
+        """The roster verified `model` and this device has served it: keep that proof."""
+        now = time.time()
+        with self.lock:
+            device = device_id(self.raw)
+        if not device or live.get('device') != device:
+            return
+        last = self.saved_runtime_proofs().get(device, {}).get(model)
+        if finite(last) and 0 <= now - last < RUNTIME_PROOF_CACHE_SECONDS:
+            return
+        if self.ready_minutes(device, model, now) < RUNTIME_PROOF_MINUTES:
+            return
+        with self.proof_lock:
+            if self.runtime_proofs is None:
+                return  # the saved proofs could not be read: never overwrite them
+            proofs = copy.deepcopy(self.runtime_proofs)
+            proofs.setdefault(device, {})[model] = now
+            try:
+                self.h.cache(RUNTIME_PROOFS_KEY, proofs)
+            except Exception:
+                log.exception('Could not save the runtime proof for %s', model)
+                return
+            self.runtime_proofs = proofs
+
     def snapshot(self, start=None, end=None, remote=False):
         now = time.time()
         start = max(0, now - 604800) if start is None else start
@@ -1054,9 +1321,10 @@ class Optimizer:
             raw = copy.deepcopy(self.raw)
         h = live.get('hardware', {})
         gpu_cache = raw.get('capacity', {}).get('gpu_memory_cache_gb', 0)
+        reserve = self.config_reserve()
         for m in candidates:
             m['loadBudget'] = memory_budget(
-                h, live.get('provider', {}), m['id'], m.get('memoryGB'), gpu_cache
+                h, live.get('provider', {}), m['id'], m.get('memoryGB'), gpu_cache, 0, reserve
             )
         try:
             self.read_options()
@@ -1161,6 +1429,7 @@ class Optimizer:
         if not error and (discovery_error or now - discovery_at > 600):
             error = 'Refresh the model list before switching.'
         candidates = self.candidates({}, {}, live, state, manual=True)
+        reserve = self.config_reserve()
         for m in candidates:
             m['loadBudget'] = memory_budget(
                 live.get('hardware', {}),
@@ -1168,6 +1437,7 @@ class Optimizer:
                 m['id'],
                 m.get('memoryGB'),
                 raw.get('capacity', {}).get('gpu_memory_cache_gb', 0),
+                config_reserve=reserve,
             )
         pending = state.get('pending') or {}
         queued_at = state.get('requestedAt') or state.get('manualResult', {}).get('at')
@@ -1207,6 +1477,7 @@ class Optimizer:
                         'memoryGB',
                         'loadBudget',
                         'requiresRuntimeVerification',
+                        'runtimeProof',
                     )
                 }
                 for m in candidates
@@ -1324,6 +1595,7 @@ class Optimizer:
                     'at': time.time(),
                     'detail': 'Manual switch cancelled. The current model stays running.',
                 }
+                self.manager.manual_finished(request_id, None, 'cancelled')
                 self.status = 'observing'
                 self.detail = self.state['manualResult']['detail']
                 self.proposal = None
@@ -1415,8 +1687,10 @@ class Optimizer:
                     'at': now,
                     'detail': 'This model is already serving. No restart was sent.',
                 }
+                self.manager.manual_queued(request_id, model, unchanged=True)
                 self.save()
                 return None
+            self.manager.manual_queued(request_id, model)
             self.state.update(
                 mode='observe',
                 requestedModel=model,
@@ -1690,16 +1964,22 @@ class Optimizer:
             raise ValueError(
                 'The saved plan, provider or account changed. Review it before resuming.'
             )
-        reason = self.wait_reason(live, now)
+        # The manager turns on with a dark or cold model: its watchdog restores home.
+        managed = manager.enabled(saved.get('demandPolicy'))
+        reason = self.wait_reason(live, now, serving=not managed)
         if reason:
             raise ValueError(reason)
-        if not self.tracking(raw, now)['counting']:
+        if not managed and not self.tracking(raw, now)['counting']:
             raise ValueError(
                 'Wait for the current model to be Warm and ready before resuming. Open Optimizer → Overview to check progress.'
             )
         config_error = combination_config_error(self.home, options, environment, require_pair=False)
-        if config_error:
+        # The manager turns on and holds: that error stops only its own moves, while its
+        # watchdog and restores keep the Mac serving.
+        if config_error and not managed:
             raise ValueError(config_error)
+        if managed and manager.hold_error(current):
+            raise ValueError(manager.hold_error(current))
         if self.discovery_error or now - self.discovery_at > 600:
             raise ValueError('Refresh the model catalog before resuming.')
         candidates = self.candidates({}, {}, live, saved)
@@ -1707,7 +1987,11 @@ class Optimizer:
         if serving and serving['selected'] and not serving['available'] and serving.get('reason'):
             raise ValueError(serving['reason'])
         allowed = {r['id'] for r in candidates if r['available'] and r['selected']}
-        if current not in allowed or len(allowed) < 2:
+        pool = saved.get('models', [])
+        if managed and len(members(current)) == 2 and manager.in_pool(current, pool):
+            allowed.add(current)  # a held pair
+        # The manager can hold the serving model alone; excursions only need alternatives.
+        if current not in allowed or (len(allowed) < 2 and not managed):
             raise ValueError(
                 'Review model selection: include the serving model and at least one available alternative.'
             )
@@ -1831,6 +2115,7 @@ class Optimizer:
                 saved = copy.deepcopy(self.state)
                 self.state['demandPolicy'] = rules
                 self.state.pop('demandProposal', None)
+                manager.policy_saved(self.state, previous, rules, now)
                 try:
                     self.save()
                 except Exception:
@@ -1888,15 +2173,20 @@ class Optimizer:
             if not live.get('account') or not live.get('device'):
                 raise ValueError('Wait for this Mac and account to be verified before saving.')
             models = data.get('models', self.state.get('models') or [])
+            # The manager can hold one model; legacy demand following compares two or more.
+            edits = data.get('demandPolicy')
+            policy = dict(self.state.get('demandPolicy') or {})
+            policy.update(edits if isinstance(edits, dict) else {})
+            fewest = 1 if manager.enabled(policy) else 2
             if 'models' in data and (
                 not isinstance(models, list)
-                or not 2 <= len(models) <= 16
+                or not fewest <= len(models) <= 16
                 or len(set(models)) != len(models)
                 or any(not isinstance(m, str) or not m for m in models)
             ):
-                raise ValueError('Choose two to sixteen models.')
+                raise ValueError('Choose %s to sixteen models.' % ('one' if fewest == 1 else 'two'))
             current = selection_key(self.raw.get('advertised_models'))
-            if mode == 'demand' and 'models' in data and current not in models:
+            if mode == 'demand' and 'models' in data and not manager.in_pool(current, models):
                 raise ValueError('Keep the serving model selected while the optimizer is on.')
             previous = demand_policy(self.state.get('demandPolicy'))
             changes = data.get('demandPolicy', {})
@@ -1907,6 +2197,7 @@ class Optimizer:
             self.state['models'] = list(models)
             self.state['demandPolicy'] = rules
             self.state.pop('demandProposal', None)
+            manager.policy_saved(self.state, previous, rules, now)
             try:
                 self.save()
             except Exception:
@@ -1943,6 +2234,10 @@ class Optimizer:
                     'Wait for this Mac and account to be verified before changing learning boost.'
                 )
             saved = copy.deepcopy(self.state)
+            if data['seconds'] and manager.enabled(self.state.get('demandPolicy')):
+                raise ValueError(
+                    'Learning boost is off while Bloomkeeper holds a home model (manager strategy).'
+                )
             if data['seconds'] == 0:
                 if not data_gathering.status(self.state.get('dataGathering'), now)['active']:
                     raise ValueError('Learning boost is not running.')
@@ -2156,7 +2451,10 @@ class Optimizer:
                     )
             self.stop.wait(1)
 
-    def wait_reason(self, live, now, manual=False):
+    def wait_reason(self, live, now, manual=False, serving=True, move=None, target=None):
+        """`serving=False` accepts this Mac's roster match without serving eligibility,
+        which a cold on-demand model may not have yet (manager recovery only). `move` and
+        `target`: see environment_reason."""
         if not live or now - live.get('at', 0) > 10:
             return 'Waiting for fresh local readings.'
         if not live.get('provider', {}).get('online'):
@@ -2165,7 +2463,7 @@ class Optimizer:
             return 'Waiting to verify the new provider session.'
         if not 0 <= now - self.identity_at < 180:
             return 'Waiting for a fresh match between this Mac and the provider roster.'
-        if not self.identity_ok:
+        if not self.identity_ok and (serving or not self.device_identity_ok):
             return (
                 self.identity_detail
                 or 'Waiting for a fresh match between this Mac and the provider roster.'
@@ -2178,23 +2476,42 @@ class Optimizer:
                 return endpoint_issue(options)
         except (OSError, ValueError, KeyError, TypeError, plistlib.InvalidFileException):
             return 'Provider launch settings need review in the manual model controls in Optimizer → Overview on the Mac.'
-        return self.environment_reason(live, now, manual)
+        return self.environment_reason(live, now, manual, move, target)
 
-    def environment_reason(self, live, now, manual=False):
-        """Shared resource/source checks; callers must independently prove identity."""
+    def environment_reason(self, live, now, manual=False, move=None, target=None):
+        """Shared resource/source checks; callers must independently prove identity.
+
+        `move` names a move that restores or follows a choice instead of chasing pay:
+        'restore' (watchdog or failed-switch recovery), 'home' (the manager's return home,
+        including the end of an excursion) or 'manual' (an explicit pick). Those skip the
+        earnings and network feeds, the 95 °C line and battery power: Darkbloom serves on
+        battery, and macOS thermal state Serious or Critical still holds every move. A
+        'restore' or 'home' `target` this Mac has served before also skips the catalog age.
+        """
+        voluntary = move is None
         if not live or not finite(live.get('at')) or not -5 < now - live['at'] < 10:
             return 'Waiting for fresh local readings.'
         if not live.get('provider', {}).get('online'):
             return 'Provider is offline. Start it in Darkbloom to resume; the optimizer will not start a stopped service.'
-        if not manual and (
-            live.get('earnings', {}).get('status') != 'ok'
-            or now - (live.get('earnings', {}).get('updatedAt') or 0) > 180
+        if (
+            not manual
+            and voluntary
+            and (
+                live.get('earnings', {}).get('status') != 'ok'
+                or now - (live.get('earnings', {}).get('updatedAt') or 0) > 180
+            )
         ):
             return 'Waiting for current earnings before changing models.'
         cap = self.network.snapshot('capacity')
-        if not manual and (cap.get('status') != 'ok' or now - cap.get('updatedAt', 0) > 120):
+        if (
+            not manual
+            and voluntary
+            and (cap.get('status') != 'ok' or now - cap.get('updatedAt', 0) > 120)
+        ):
             return 'Network demand is stale. Keeping the current model.'
-        if self.discovery_error or now - self.discovery_at > 600:
+        if (self.discovery_error or now - self.discovery_at > 600) and not self.known_target(
+            move, target, live, now
+        ):
             return 'Waiting for a fresh model catalog.'
         h = live.get('hardware', {})
         if any(
@@ -2202,13 +2519,24 @@ class Optimizer:
             for k in ('memoryUsedGB', 'memoryTotalGB', 'memoryAvailableGB', 'cpuTemp', 'gpuTemp')
         ):
             return 'Waiting for current hardware readings.'
-        if h.get('thermal') in ('Serious', 'Critical') or max(h['cpuTemp'], h['gpuTemp']) >= 95:
+        if h.get('thermal') in ('Serious', 'Critical') or (
+            voluntary and max(h['cpuTemp'], h['gpuTemp']) >= 95
+        ):
             return 'The Mac is hot. Holding the current model until temperatures settle.'
-        if not self.on_ac_power():
+        if voluntary and self.on_ac_power() is False:
             return 'Model switching waits while the Mac is on battery power.'
         return None
 
+    def known_target(self, move, target, live, now):
+        """A return-home or restore target this Mac has served before: its files and catalog
+        entry were verified then, so an overdue catalog refresh does not hold it."""
+        device = (live or {}).get('device')
+        models = members(target) if move in ('home', 'restore') and device else []
+        return bool(models) and all(self.served_here(device, m, now) for m in models)
+
     def on_ac_power(self):
+        """True on AC power, False on battery; None when pmset fails or times out (unknown,
+        which never counts as battery)."""
         try:
             r = self.runner(
                 ['/usr/bin/pmset', '-g', 'batt'],
@@ -2217,9 +2545,9 @@ class Optimizer:
                 timeout=3,
                 check=True,
             )
-            return "'AC Power'" in r.stdout
         except (OSError, subprocess.SubprocessError):
-            return False
+            return None
+        return "'AC Power'" in r.stdout if isinstance(r.stdout, str) else None
 
     def record_decision(self, now):
         with self.lock:
@@ -2338,7 +2666,11 @@ class Optimizer:
             detail = (
                 'Darkbloom was left drained after the failed switch and served no work. Restarted '
                 + selection_label(selection)
-                + '. Automatic switching stays paused.'
+                + (
+                    '. Automatic control continues.'
+                    if manager.active(settings)
+                    else '. Automatic switching stays paused.'
+                )
                 if restarted
                 else 'Darkbloom was left drained after the failed switch, and restarting '
                 + selection_label(selection)
@@ -2367,6 +2699,7 @@ class Optimizer:
             self.command_lock.release()
 
     def _tick(self, now):
+        self.manager.clock_tick(now)
         with self.lock:
             if self.update_guard.active():
                 return
@@ -2408,15 +2741,41 @@ class Optimizer:
             return self.pause_internal(
                 'The account or device identity changed. Automatic switching is paused.'
             )
+        managed = manager.active(settings)
         try:
             current, current_options, current_environment = self.read_options()
         except Exception:
+            if managed:
+                with self.lock:
+                    self.status = 'waiting'
+                    self.detail = 'The provider launch settings are unreadable or unsupported right now. The manager holds and rechecks; nothing is switched.'
+                if live.get('provider', {}).get('online'):
+                    # The watchdog keeps watching readiness: it reports a dark Mac, and its
+                    # restore (which reads the settings again) waits until they can be read.
+                    self.manager.tick(
+                        now,
+                        settings,
+                        live,
+                        raw,
+                        selection_key(raw.get('advertised_models'))
+                        or settings.get('expectedModel'),
+                        [],
+                        {},
+                    )
+                return
             return self.pause_internal(
                 'The provider launch settings changed or are unavailable. Automatic switching is paused.'
             )
         if current != settings.get('expectedModel') or (
             live.get('provider', {}).get('online') and not same_selection(raw, current)
         ):
+            if managed:
+                # Adopt what serves; a stopped or unreadable selection still gets the watchdog.
+                if not self.manager.external(now, settings, live, raw, current):
+                    self.manager.tick(
+                        now, settings, live, raw, current, current_options, current_environment
+                    )
+                return
             return self.pause_internal(
                 'You changed the serving models outside the dashboard. Automatic switching is paused.'
             )
@@ -2435,9 +2794,15 @@ class Optimizer:
                 )
             )
         ):
-            return self.pause_internal(
+            resume = (settings.get('manager') or {}).get('resume') or {}
+            self.pause_internal(
                 'The provider session or launch settings changed while the switch was queued. Refresh and select the model again.'
             )
+            if resume and resume.get('id') == settings.get('requestId'):
+                with self.lock:
+                    self.state['mode'] = 'demand'  # the pick was cancelled; the manager resumes
+                    self.save()
+            return
         if warming:
             return
         failure = raw.get('last_model_load_error') or {}
@@ -2450,6 +2815,16 @@ class Optimizer:
             and now - settings.get('lastSwitchAt', 0) < 600
             and failure.get('model') not in raw.get('warm_models', [])
         ):
+            if managed:
+                self.store.event(
+                    account,
+                    device,
+                    now,
+                    'load-failed',
+                    current,
+                    'Darkbloom reported a model-load failure after reconnecting. The manager restores the previous model unless it recovers.',
+                )
+                return self.manager.load_failed(now, settings, current)
             self.store.event(
                 account,
                 device,
@@ -2479,6 +2854,10 @@ class Optimizer:
                 self.save()
             return
         if settings['mode'] == 'observe' and not settings.get('requestedModel'):
+            return
+        if managed and self.manager.tick(
+            now, settings, live, raw, current, current_options, current_environment
+        ):
             return
         if settings['mode'] in ('week', 'combo') and not settings.get('requestedModel'):
             held = self.scheduled_trial_hold(now, live, raw)
@@ -2523,35 +2902,21 @@ class Optimizer:
             return self.pause_internal(
                 'Combination comparison complete. Automatic switching is paused.'
             )
-        reason = self.wait_reason(
-            live, now, (settings.get('requestedKind') or '').startswith('manual')
-        )
+        manual_pick = (settings.get('requestedKind') or '').startswith('manual')
+        reason = self.wait_reason(live, now, manual_pick, move='manual' if manual_pick else None)
+        home = ((settings.get('manager') or {}).get('home') or {}).get('model')
+        if (
+            reason
+            and managed
+            and not settings.get('requestedModel')
+            and not self.wait_reason(live, now, move='home', target=home)
+        ):
+            # Only a check for voluntary moves failed: the manager may still return home.
+            return self.tick_demand(
+                now, settings, live, raw, current, current_options, current_environment, reason
+            )
         if reason:
-            with self.lock:
-                self.status = 'waiting'
-                self.detail = reason
-                self.proposal = None
-                previous = self.state.get('demandProposal')
-                transient = reason in (
-                    'Waiting for fresh local readings.',
-                    'Waiting for current earnings before changing models.',
-                    'Network demand is stale. Keeping the current model.',
-                    'Waiting for current hardware readings.',
-                )
-                retained = (
-                    pause_confirmation(
-                        previous, self.confirmation_scope(self.state, raw), now, reason
-                    )
-                    if settings['mode'] == 'demand' and transient
-                    else None
-                )
-                if retained != previous:
-                    if retained:
-                        self.state['demandProposal'] = retained
-                    else:
-                        self.state.pop('demandProposal', None)
-                    self.save()
-            return
+            return self.wait_for(reason, settings, raw, now)
         if settings['mode'] == 'demand':
             return self.tick_demand(
                 now, settings, live, raw, current, current_options, current_environment
@@ -2710,22 +3075,63 @@ class Optimizer:
             )
             self.worker.start()
 
-    def tick_demand(self, now, settings, live, raw, current, options, environment):
-        """Confirm successive source observations, then use the guarded switch path."""
-        try:
-            if self.stall.tick(now, settings, live, raw, current, options, environment):
-                return
-        except Exception:
-            log.exception('Stall recovery tick failed')
-            # Stall recovery is an extra; a failure there never blocks demand following.
-            pass
+    def wait_for(self, reason, settings, raw, now):
+        """Hold with `reason`. A passing freshness gap keeps the demand confirmation."""
+        with self.lock:
+            self.status = 'waiting'
+            self.detail = reason
+            self.proposal = None
+            previous = self.state.get('demandProposal')
+            transient = reason in (
+                'Waiting for fresh local readings.',
+                'Waiting for current earnings before changing models.',
+                'Network demand is stale. Keeping the current model.',
+                'Waiting for current hardware readings.',
+            )
+            retained = (
+                pause_confirmation(previous, self.confirmation_scope(self.state, raw), now, reason)
+                if settings['mode'] == 'demand' and transient
+                else None
+            )
+            if retained != previous:
+                if retained:
+                    self.state['demandProposal'] = retained
+                else:
+                    self.state.pop('demandProposal', None)
+                self.save()
+
+    def tick_demand(self, now, settings, live, raw, current, options, environment, blocked=None):
+        """Confirm successive source observations, then use the guarded switch path.
+
+        `blocked`: a check only voluntary moves need failed (earnings or network feed, catalog
+        age, the 95 °C line, battery power). The manager's return home still goes ahead; any
+        other decision waits with that reason."""
+        if not blocked:
+            try:
+                if self.stall.tick(now, settings, live, raw, current, options, environment):
+                    return
+            except Exception:
+                log.exception('Stall recovery tick failed')
+                # Stall recovery is an extra; a failure there never blocks demand following.
+                pass
         decision = self.demand_decision(now, settings, live, raw)
+        target = decision['target']
+        rules = decision['policy']
+        managed = bool((decision.get('manager') or {}).get('active'))
+        # A return home (or the end of an excursion) uses no demand data: no confirmation,
+        # fresh feeds or minimum run, and the model it leaves need not count (it may be
+        # resting after Darkbloom's idle unload). Measuring and leaving home still need it.
+        home_return = managed and decision.get('kind') == 'home' and bool(target)
+        if blocked and home_return:
+            blocked = self.wait_reason(live, now, move='home', target=target)
+        if blocked:
+            return self.wait_for(blocked, settings, raw, now)
         with self.lock:
             self.last_demand_decision = copy.deepcopy(decision)
         self.live_projection.record(decision, settings, live, raw)
-        target = decision['target']
-        rules = decision['policy']
-        if not self.tracking(raw, now)['counting']:
+        if managed and self.tracking(raw, now)['counting']:
+            self.manager.remember(decision, now)
+        if not self.tracking(raw, now)['counting'] and not home_return:
             target = None
             decision['reason'] = 'Waiting for verified warm readiness before following demand.'
         with self.lock:
@@ -2743,11 +3149,22 @@ class Optimizer:
                 )
             self.detail = decision['reason']
             self.status = 'optimizing'
+            if home_return:
+                self.state.pop('demandProposal', None)
+                self.next_switch = now
+                return self.dispatch_demand(
+                    now, target, decision, live, raw, current, options, environment
+                )
             previous = self.state.get('demandProposal') or {}
             ready = self.tracking(raw, now)['counting']
             economic_row = None
             if ready and not decision.get('controlError'):
-                if target and decision.get('kind') != 'explore':
+                if managed:
+                    # Manager moves confirm on steady ticks, not paid-upgrade evidence.
+                    economic_row = (
+                        {'model': target, 'reason': decision['reason']} if target else None
+                    )
+                elif target and decision.get('kind') != 'explore':
                     economic_row = next(
                         (r for r in decision['opportunities'] if r['model'] == target),
                         {'model': target},
@@ -2858,7 +3275,7 @@ class Optimizer:
             if not exploring:
                 self.next_switch = max(
                     0
-                    if trial_exit
+                    if trial_exit or (managed and decision.get('kind') == 'home')
                     else settings.get('lastSwitchAt', 0) + rules['minRunMinutes'] * 60,
                     now + max(0, rules['confirmationMinutes'] * 60 - proposal['seconds']),
                 )
@@ -2867,7 +3284,10 @@ class Optimizer:
                 or proposal['samples'] < rules['confirmationMinutes'] + 1
             ):
                 self.detail = (
-                    'Confirming '
+                    decision['reason']
+                    + ' Confirming for %d minutes before switching.' % rules['confirmationMinutes']
+                    if managed
+                    else 'Confirming '
                     + selection_label(target)
                     + ' for '
                     + str(rules['confirmationMinutes'])
@@ -2877,41 +3297,58 @@ class Optimizer:
             if (
                 not exploring
                 and not trial_exit
+                and not (managed and decision.get('kind') == 'home')
                 and now - settings.get('lastSwitchAt', 0) < rules['minRunMinutes'] * 60
             ):
-                self.detail = 'A better net opportunity is confirmed. Keeping the current model until its minimum run is complete.'
+                self.detail = (
+                    decision['reason']
+                    + ' Waiting for the %d-minute minimum run to finish.' % rules['minRunMinutes']
+                    if managed
+                    else 'A better net opportunity is confirmed. Keeping the current model until its minimum run is complete.'
+                )
                 self.state['demandProposal']['reason'] = self.detail
                 self.save()
                 return
-            self.demand_preflight = {
-                'at': now,
-                'target': target,
-                'session': session_key(raw),
-                'raw': copy.deepcopy(raw),
-                'pulse': copy.deepcopy(live.get('pulse')),
-                'providerSession': copy.deepcopy(live.get('provider', {}).get('session')),
-                'activity': copy.deepcopy(decision.get('activity')),
-            }
-            self.state['pending'] = {
-                'model': target,
-                'previous': current,
-                'at': now,
-                'kind': 'demand',
-                'afterIdleTimeout': False,
-                'automaticMode': 'demand',
-                'demandKind': decision.get('kind', 'earnings'),
-                'session': session_key(raw),
-                'launchSignature': launch_signature(options, environment),
-            }
-            self.save()
-            self.status = 'switching'
-            self.detail = 'Rechecking the confirmed demand opportunity and memory before switching and pre-warming.'
-            self.worker = threading.Thread(
-                target=self.switch,
-                args=(current, target, live['account'], live['device']),
-                daemon=False,
-            )
-            self.worker.start()
+            self.dispatch_demand(now, target, decision, live, raw, current, options, environment)
+
+    def dispatch_demand(self, now, target, decision, live, raw, current, options, environment):
+        """Start a demand move in the worker (caller holds the lock)."""
+        home_return = decision.get('kind') == 'home' and bool(
+            (decision.get('manager') or {}).get('active')
+        )
+        self.demand_preflight = {
+            'at': now,
+            'target': target,
+            'session': session_key(raw),
+            'raw': copy.deepcopy(raw),
+            'pulse': copy.deepcopy(live.get('pulse')),
+            'providerSession': copy.deepcopy(live.get('provider', {}).get('session')),
+            'activity': copy.deepcopy(decision.get('activity')),
+        }
+        self.state['pending'] = {
+            'model': target,
+            'previous': current,
+            'at': now,
+            'kind': 'demand',
+            'afterIdleTimeout': False,
+            'automaticMode': 'demand',
+            'demandKind': decision.get('kind', 'earnings'),
+            'session': session_key(raw),
+            'launchSignature': launch_signature(options, environment),
+        }
+        self.save()
+        self.status = 'switching'
+        self.detail = (
+            decision['reason'] + ' Rechecking readings and memory before switching.'
+            if home_return
+            else 'Rechecking the confirmed demand opportunity and memory before switching and pre-warming.'
+        )
+        self.worker = threading.Thread(
+            target=self.switch,
+            args=(current, target, live['account'], live['device']),
+            daemon=False,
+        )
+        self.worker.start()
 
     def dispatch_stall_restart(self, now, live, raw, current, options, environment, result):
         """Restart the provider on the same model through the guarded switch path."""
@@ -2986,7 +3423,9 @@ class Optimizer:
         budget = self.selection_budget(target, live, raw)
         return bool(budget and file_cache_blocked(raw, h, budget['requiredGB']))
 
-    def prewarm_reason(self, raw, now, allow_cache_recovery=False):
+    def prewarm_reason(self, raw, now, allow_cache_recovery=False, move=None):
+        """`move`: the restore, return home or manual pick this warm-up completes (see
+        environment_reason); None for a synthetic pre-warm of Darkbloom's own start."""
         with self.lock:
             live = copy.deepcopy(self.live) or {}
             observed = copy.deepcopy(self.raw)
@@ -2994,7 +3433,9 @@ class Optimizer:
             return 'Bloomkeeper is closing; warm-up is stopped.'
         if session_key(raw) != session_key(observed):
             return 'Waiting for the new provider session to be observed.'
-        reason = self.wait_reason(live, now, manual=True)
+        reason = self.wait_reason(
+            live, now, manual=True, move=move, target=selection_key(raw.get('advertised_models'))
+        )
         if reason:
             return reason
         if self.identity_session != (raw.get('started_at'), raw.get('pid')):
@@ -3010,7 +3451,8 @@ class Optimizer:
         if not target:
             return 'Automatic pre-warming supports one or two distinct selected models.'
         if len(models) == 2:
-            error = self.combo_config_error()
+            # Knobs Bloomkeeper can't model hold only its own voluntary moves (move None).
+            error = self.combo_config_error(voluntary=move is None)
             if error:
                 return error
         rows = self.candidates({}, {}, live, {})
@@ -3132,7 +3574,11 @@ class Optimizer:
             except (ExternalChange, WarmupError):
                 pass  # Status is recorded, never override an external selection.
 
-    def perform_prewarm(self, target, raw, options, deadline=None):
+    def perform_prewarm(self, target, raw, options, deadline=None, move=None):
+        """One local warm-up. A readiness recheck that fails (a stale reading, memory still
+        being freed, a roster refresh) raises WarmupDeferred: nothing was sent, so the caller
+        keeps waiting; verify_started still fails on a load error, its deadline or memory
+        short past the manager's wait. `move`: see prewarm_reason."""
         key = session_key(raw)
         now = time.time()
         with self.lock:
@@ -3157,19 +3603,19 @@ class Optimizer:
                 or current_options != options
                 or self.service_disabled() is not False
             ):
-                raise ExternalChange('Provider changed before warm-up.')
+                raise NothingSent('Provider changed before warm-up.')
             if self.served_warm(current, time.time()):
                 return True
-            reason = self.prewarm_reason(current, time.time(), allow_cache_recovery=True)
+            reason = self.prewarm_reason(current, time.time(), allow_cache_recovery=True, move=move)
             if current.get('inference_active') is True or not same_activity(current, raw):
                 raise WarmupDeferred(
                     'Paid work arrived before warm-up. Waiting for verified serving output or another idle window.',
                     code='work-arrived',
                 )
             if reason:
-                raise WarmupError(reason, code='readiness-changed')
+                raise WarmupDeferred(reason, code='readiness-changed')
             if self.cache_recovery_needed(current):
-                self.recover_file_cache(current, target, options)
+                self.recover_file_cache(current, target, options, move=move)
                 current = self.read_state()
                 selection, current_options, _ = self.read_options()
                 if (
@@ -3182,14 +3628,14 @@ class Optimizer:
                     raise ExternalChange('Provider changed after cache recovery.')
                 if self.served_warm(current, time.time()):
                     return True
-                reason = self.prewarm_reason(current, time.time())
+                reason = self.prewarm_reason(current, time.time(), move=move)
                 if current.get('inference_active') is True:
                     raise WarmupDeferred(
                         'Paid work arrived after cache recovery. Waiting for verified serving output.',
                         code='work-arrived',
                     )
                 if reason:
-                    raise WarmupError(reason, code='readiness-changed')
+                    raise WarmupDeferred(reason, code='readiness-changed')
             targets = members(target)
             for index, member in enumerate(targets):
                 if index:
@@ -3211,7 +3657,7 @@ class Optimizer:
                             or self.service_disabled() is not False
                         ):
                             raise ExternalChange('Provider changed between model warm-ups.')
-                        reason = self.prewarm_reason(current, time.time())
+                        reason = self.prewarm_reason(current, time.time(), move=move)
                         if (
                             reason
                             or current.get('written_at', 0) < after
@@ -3238,14 +3684,14 @@ class Optimizer:
                     or self.service_disabled() is not False
                 ):
                     raise ExternalChange('Provider changed between model warm-ups.')
-                reason = self.prewarm_reason(current, time.time())
+                reason = self.prewarm_reason(current, time.time(), move=move)
                 if current.get('inference_active') is True:
                     raise WarmupDeferred(
                         'Paid work arrived before the local request. Waiting for verified serving output.',
                         code='work-arrived',
                     )
                 if reason:
-                    raise WarmupError(reason, code='readiness-changed')
+                    raise WarmupDeferred(reason, code='readiness-changed')
                 with self.lock:
                     self.warmup.update(
                         detail='Pre-warming '
@@ -3322,7 +3768,8 @@ class Optimizer:
                 self.previous = None
                 self.idle_since = None
 
-    def recover_file_cache(self, raw, target, options):
+    def recover_file_cache(self, raw, target, options, move=None):
+        """`move`: see prewarm_reason (a restore, return home or pick may purge on battery)."""
         key = session_key(raw)
         now = time.time()
         with self.lock:
@@ -3348,10 +3795,14 @@ class Optimizer:
             or current_options != options
             or self.service_disabled() is not False
         ):
-            raise ExternalChange('Provider changed before cache recovery.')
-        reason = self.prewarm_reason(current, time.time(), allow_cache_recovery=True)
+            raise NothingSent('Provider changed before cache recovery.')
+        reason = self.prewarm_reason(current, time.time(), allow_cache_recovery=True, move=move)
         if reason or not same_activity(current, raw) or not self.cache_recovery_needed(current):
-            raise WarmupError(reason or 'Memory or workload changed; cache recovery was not run.')
+            # Nothing was cleared or sent: the warm-up keeps waiting (its deadline still holds).
+            raise WarmupDeferred(
+                reason or 'Memory or workload changed; cache recovery was not run.',
+                code='readiness-changed',
+            )
         with self.lock:
             self.state['cacheRecovery'] = {
                 'session': key,
@@ -3473,6 +3924,7 @@ class Optimizer:
             self.state['mode'] = 'observe'
             self.state['requestedModel'] = None
             self.state.pop('demandProposal', None)
+            manager.release(self.state)
             try:
                 self.save()
             except Exception:
@@ -3502,6 +3954,7 @@ class Optimizer:
             )
             self.state['mode'] = 'observe'
             self.state['requestedModel'] = None
+            (self.state.get('manager') or {}).pop('resume', None)
             self.status = 'observing'
             self.detail = detail
             self.proposal = None
@@ -3528,8 +3981,38 @@ class Optimizer:
             env={**os.environ, **environment},
         )
 
-    def verify_local_target(self, target, options):
-        """Read-only disk/catalog refresh; never start a model to discover it is missing."""
+    def local_models(self, config=()):
+        """Every downloaded model. Since 0.9.10 `models list` shows only provider.toml's
+        enabled_models unless given --all, which older CLIs reject as an unknown option."""
+
+        def run(flags):
+            result = self.runner(
+                [str(self.binary), 'models', 'list', '--json', *flags, *config],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=25,
+                check=True,
+            )
+            return json.loads(result.stdout)['models']
+
+        if self.list_all is False:
+            return run([])
+        try:
+            rows = run(['--all'])
+        except subprocess.CalledProcessError as error:
+            if self.list_all or '--all' not in f'{error.stderr or ""}{error.stdout or ""}':
+                raise
+            self.list_all = False
+            return run([])
+        self.list_all = True
+        return rows
+
+    def verify_local_target(self, target, options, catalog_optional=False):
+        """Read-only disk/catalog refresh; never start a model to discover it is missing.
+
+        `catalog_optional`: a return home to a model this Mac has served before; its files
+        must still check out, but a failed catalog fetch keeps the last catalog."""
         config = [
             options[i + j]
             for i, v in enumerate(options[:-1])
@@ -3537,18 +4020,15 @@ class Optimizer:
             for j in (0, 1)
         ]
         try:
-            result = self.runner(
-                [str(self.binary), 'models', 'list', '--json', *config],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=25,
-                check=True,
-            )
-            rows = json.loads(result.stdout)['models']
-            catalog = self.network.fetch('/v1/models/catalog')['models']
-            if not isinstance(catalog, list):
-                raise ValueError()
+            rows = self.local_models(config)
+            try:
+                catalog = self.network.fetch('/v1/models/catalog')['models']
+                if not isinstance(catalog, list):
+                    raise ValueError()
+            except Exception:
+                if not catalog_optional:
+                    raise
+                catalog = None
             if not members(target):
                 raise ValueError()
             for model in members(target):
@@ -3562,9 +4042,10 @@ class Optimizer:
                     raise ValueError()
             with self.lock:
                 self.local = rows
-                self.catalog = catalog
-                self.discovery_at = time.time()
-                self.discovery_error = None
+                if catalog is not None:
+                    self.catalog = catalog
+                    self.discovery_at = time.time()
+                    self.discovery_error = None
         except Exception:
             raise DemandDeferred(
                 'The selected model’s local files, working template and fresh catalog could not be verified. Keeping the current model.'
@@ -3585,16 +4066,44 @@ class Optimizer:
         except (OSError, subprocess.SubprocessError):
             return None
 
-    def verify_started(self, target, previous_session, timeout=360, expected_launch=None):
+    def log_memory_projection(self, target, budget):
+        """For calibrating memory admission later: the projected free memory after the unload
+        against the first reading of the new session (free + inactive, and what it holds)."""
+        reading = getattr(self, 'verification_memory', None)
+        projected = (budget or {}).get('afterUnloadGB')
+        if not reading or not finite(projected) or not all(finite(v) for v in reading):
+            return
+        log.info(
+            'Memory after switching to %s: projected %.2f GB free after the unload; the new session saw %.2f GB free with %.2f GB loaded.',
+            target,
+            projected,
+            *reading,
+        )
+
+    def verify_started(
+        self,
+        target,
+        previous_session,
+        timeout=360,
+        expected_launch=None,
+        memory_seconds=None,
+        move=None,
+    ):
+        """`memory_seconds` bounds a pre-warm memory wait (manager); the restore path follows.
+        `move`: see prewarm_reason. Fails only on Darkbloom's load error, a failed local
+        warm-up, the deadline, or memory still short after `memory_seconds`; any other
+        pre-warm reason, including one that appears just before the local request, waits."""
         if len(members(target)) == 2 and timeout == 360:
             timeout = 600
         deadline = time.time() + timeout
+        memory_since = None
         idle_at = None
         previous_stats = None
         attempts = 0
         last_wait = None
         self.verification_failure = None
         self.verification_session = None
+        self.verification_memory = None
         with self.lock:
             expected_device = device_id(self.raw)
         while not self.stop.is_set() and time.time() < deadline:
@@ -3621,6 +4130,15 @@ class Optimizer:
                     key = session_key(d)
                     if self.verification_session is not None and self.verification_session != key:
                         raise ExternalChange('Provider restarted again during switch verification.')
+                    if self.verification_session is None:
+                        # First reading of the new session, for calibrating the memory
+                        # projection: free + inactive now, and what the new process holds.
+                        with self.lock:
+                            hardware = (self.live or {}).get('hardware') or {}
+                        self.verification_memory = (
+                            hardware.get('memoryAvailableGB'),
+                            (d.get('capacity') or {}).get('gpu_memory_active_gb'),
+                        )
                     self.verification_session = key
                     failure = d.get('last_model_load_error') or {}
                     if (
@@ -3637,7 +4155,18 @@ class Optimizer:
                         return False
                     if self.served_warm(d, time.time()):
                         return True
-                    reason = self.prewarm_reason(d, time.time(), allow_cache_recovery=True)
+                    reason = self.prewarm_reason(
+                        d, time.time(), allow_cache_recovery=True, move=move
+                    )
+                    short = bool(reason) and reason.startswith('Waiting for enough available memory')
+                    memory_since = (memory_since or time.time()) if short else None
+                    if (
+                        memory_seconds is not None
+                        and memory_since is not None
+                        and time.time() - memory_since >= memory_seconds
+                    ):
+                        self.verification_failure = WarmupError(reason, code='readiness-timeout')
+                        return False
                     if reason or activity_counters(d) != previous_stats:
                         idle_at = None
                     elif idle_at is None:
@@ -3653,7 +4182,9 @@ class Optimizer:
                     if idle_at is not None and time.time() - idle_at >= 12 and attempts < 3:
                         attempts += 1
                         try:
-                            return self.perform_prewarm(target, d, options, deadline=deadline)
+                            return self.perform_prewarm(
+                                target, d, options, deadline=deadline, move=move
+                            )
                         except WarmupDeferred as error:
                             # The selected model may be serving real work now.
                             # Reset idle proof, retain the original deadline and
@@ -3661,6 +4192,11 @@ class Optimizer:
                             idle_at = None
                             previous_stats = None
                             last_wait = str(error)
+                            if error.code == 'readiness-changed':
+                                # A recheck just before the request: nothing was sent.
+                                attempts -= 1
+                                if last_wait.startswith('Waiting for enough available memory'):
+                                    memory_since = memory_since or time.time()
                             with self.lock:
                                 self.warmup.update(
                                     status='waiting', detail=last_wait, failureCode=error.code
@@ -3739,8 +4275,9 @@ class Optimizer:
             self.recovery_block_code = 'provider-changed'
         return None
 
-    def recovery_identity(self, raw, account, device, now):
-        """Fresh hardware proof permits restoration, never serving eligibility."""
+    def recovery_identity(self, raw, account, device, now, move=None):
+        """Fresh hardware proof permits restoration, never serving eligibility. `move`: see
+        environment_reason."""
         with self.lock:
             live = copy.deepcopy(self.live) or {}
             observed = copy.deepcopy(self.raw)
@@ -3757,7 +4294,7 @@ class Optimizer:
             or raw.get('trust', {}).get('status') != 'online'
             or raw.get('trust', {}).get('trust_level') != 'hardware'
             or matching_process(process_identity(raw)) is not True
-            or self.environment_reason(live, now, manual=True)
+            or self.environment_reason(live, now, manual=True, move=move)
         ):
             return False
         try:
@@ -3770,6 +4307,7 @@ class Optimizer:
     def switch(self, previous, target, account, device):
         start = time.time()
         command_started = None
+        command_returned = None
         attempted = False
         success = False
         recovered = False
@@ -3787,6 +4325,24 @@ class Optimizer:
             request_id = self.state.get('requestId')
             pending = copy.deepcopy(self.state.get('pending')) or {}
             request_kind = request_kind or pending.get('kind') or ''
+            # The manager never pauses after a failed automatic move (manager.switch_failed).
+            managed = request_kind == 'demand' and manager.active(self.state)
+            # Which voluntary-move checks apply (environment_reason `move`). A return home
+            # also skips the readiness preflight; an excursion start meets the daily limit.
+            move = (
+                'manual'
+                if request_kind.startswith('manual')
+                else 'home'
+                if managed and pending.get('demandKind') == 'home'
+                else None
+            )
+            excursion = managed and pending.get('demandKind') == 'excursion'
+            saved_policy = copy.deepcopy(self.state.get('demandPolicy'))
+            # A manual pick made under the manager: automatic control resumes after it.
+            picked = bool(
+                request_id
+                and ((self.state.get('manager') or {}).get('resume') or {}).get('id') == request_id
+            )
             automatic = request_kind in ('demand', 'automatic')
             automatic_mode = 'demand' if request_kind == 'demand' else pending.get('automaticMode')
             verify_runtime = bool(
@@ -3849,6 +4405,17 @@ class Optimizer:
                     raise ExternalChange(
                         'The provider session or launch settings changed before the switch.'
                     )
+                if excursion:
+                    # The daily limit counts excursion starts. Check it before the cleanup,
+                    # CLI listing and catalog fetch that a refused move would waste.
+                    try:
+                        limit = self.demand_auto.excursion_limit(
+                            account, device, saved_policy, time.time()
+                        )
+                    except ValueError as error:
+                        raise DemandDeferred(str(error)) from None
+                    if limit:
+                        raise DemandDeferred(limit)
                 if target != previous and self.purge_before_load(target):
                     # Every later check, including memory, uses post-purge readings.
                     purged = self.read_state()
@@ -3894,12 +4461,23 @@ class Optimizer:
                     if held['active']:
                         raise DemandDeferred(held['reason'])
                 if automatic or verify_runtime or selected_operation:
-                    self.verify_local_target(target, options)
+                    known = move == 'home' and self.known_target(
+                        move, target, self.live, time.time()
+                    )
+                    self.verify_local_target(
+                        target, options, **({'catalog_optional': True} if known else {})
+                    )
                 budget = self.selection_budget(target, self.live or {}, raw, manual=verify_runtime)
                 if (
                     not budget
                     or budget['afterUnloadGB'] < budget['requiredGB']
-                    or self.wait_reason(self.live, time.time(), request_kind.startswith('manual'))
+                    or self.wait_reason(
+                        self.live,
+                        time.time(),
+                        request_kind.startswith('manual'),
+                        move=move,
+                        target=target,
+                    )
                 ):
                     if request_kind == 'demand':
                         if budget and budget['afterUnloadGB'] < budget['requiredGB']:
@@ -3923,7 +4501,13 @@ class Optimizer:
                         and time.time() - self.identity_at < 180
                         and self.identity_session == (raw.get('started_at'), raw.get('pid'))
                     )
-                    if not readiness(raw, self.warmup, time.time(), verified, False)['counting']:
+                    # Leaving a model that is not counting is fine when going home.
+                    if (
+                        move != 'home'
+                        and not readiness(raw, self.warmup, time.time(), verified, False)[
+                            'counting'
+                        ]
+                    ):
                         raise DemandDeferred(
                             'The current model is no longer freshly warm and routable; holding the switch.'
                         )
@@ -4002,10 +4586,13 @@ class Optimizer:
                         not final_budget
                         or final_budget['afterUnloadGB']
                         < final_budget['requiredGB'] + decision['policy']['memoryHeadroomGB']
-                        or self.wait_reason(self.live, time.time())
-                        or not readiness(final, self.warmup, time.time(), verified, False)[
-                            'counting'
-                        ]
+                        or self.wait_reason(self.live, time.time(), move=move, target=target)
+                        or (
+                            move != 'home'
+                            and not readiness(final, self.warmup, time.time(), verified, False)[
+                                'counting'
+                            ]
+                        )
                     ):
                         raise DemandDeferred(
                             'Memory or source freshness changed during preflight; keeping the current model.'
@@ -4019,6 +4606,8 @@ class Optimizer:
                             auto_run = (
                                 self.demand_auto.begin_recovery
                                 if stall_restart
+                                else self.demand_auto.begin_manager
+                                if decision.get('kind') in ('home', 'excursion')
                                 else self.demand_auto.begin
                             )(account, device, decision, time.time())
                         except ValueError as error:
@@ -4116,7 +4705,7 @@ class Optimizer:
                         (verify_runtime and not known_working)
                         or not final_budget
                         or final_budget['afterUnloadGB'] < final_budget['requiredGB']
-                        or self.wait_reason(self.live, time.time(), manual=True)
+                        or self.wait_reason(self.live, time.time(), manual=True, move='manual')
                     ):
                         raise ValueError(
                             'Readiness, memory, power or verification eligibility changed. Keeping the current model.'
@@ -4153,11 +4742,20 @@ class Optimizer:
                 command_started = time.time()
                 attempted = True
                 failure_stage = 'start'
+                self.manager.commanded(target, command_started)
                 self.command(target, options, environment)
+                command_returned = time.time()  # after a >= 0.9.9 drain: the load starts
                 failure_stage = 'verify'
                 success = self.verify_started(
-                    target, raw.get('started_at'), 360, launch_signature(options, environment)
+                    target,
+                    raw.get('started_at'),
+                    360,
+                    launch_signature(options, environment),
+                    # The manager bounds a pre-warm memory wait, then restores (manager.py).
+                    **({'memory_seconds': manager.MEMORY_WAIT_SECONDS} if managed else {}),
+                    **({'move': move} if move else {}),
                 )
+                self.log_memory_projection(target, budget)
                 if not success:
                     raise getattr(self, 'verification_failure', None) or WarmupError(
                         'The selected model did not become ready before the verification deadline.',
@@ -4194,9 +4792,40 @@ class Optimizer:
                     )
                     self.state.pop('demandProposal', None)
                 detail = str(error)
-            except ExternalChange:
-                detail = 'The provider was stopped or its model or launch settings changed during the switch. Automatic switching is paused; your manual choice is preserved.'
+            except ExternalChange as error:
+                with self.lock:
+                    # The result text follows the state now: the user may have turned it off.
+                    managed = managed and manager.active(self.state)
+                taken = (
+                    self.manager.not_taken(target) if attempted and (managed or picked) else None
+                )
+                if taken:
+                    # Bloomkeeper's own command did not take: a failed switch, never a user change.
+                    failure_record = {
+                        'model': target,
+                        'stage': failure_stage,
+                        'code': 'unknown',
+                        'recovery': 'blocked',
+                        'recoveryCode': 'provider-changed',
+                    }
+                    detail = taken + (
+                        '. The manager restores a working model.'
+                        if managed
+                        else '. Your pick is kept; the manager starts or restores it.'
+                    )
+                else:
+                    # Name the check that fired (there are many); the generic text is the fallback.
+                    cause = str(error).strip() or (
+                        'The provider was stopped or its model or launch settings changed during the switch.'
+                    )
+                    detail = cause + (
+                        ' Automatic control continues and keeps that change.'
+                        if managed or picked
+                        else ' Automatic switching is paused; your manual choice is preserved.'
+                    )
             except Exception as error:
+                with self.lock:
+                    managed = managed and manager.active(self.state)
                 code = (
                     error.code
                     if isinstance(error, WarmupError)
@@ -4273,7 +4902,9 @@ class Optimizer:
                                 recovery_budget
                                 and recovery_budget['afterUnloadGB']
                                 >= recovery_budget['requiredGB']
-                                and self.recovery_identity(before, account, device, time.time())
+                                and self.recovery_identity(
+                                    before, account, device, time.time(), move='restore'
+                                )
                             ):
                                 selection, latest_options, latest_environment = self.read_options()
                                 latest = self.read_state()
@@ -4291,7 +4922,7 @@ class Optimizer:
                                     or not finite(latest.get('written_at'))
                                     or not -5 < time.time() - latest['written_at'] < 15
                                     or not self.recovery_identity(
-                                        latest, account, device, time.time()
+                                        latest, account, device, time.time(), move='restore'
                                     )
                                 ):
                                     raise ExternalChange(
@@ -4319,7 +4950,9 @@ class Optimizer:
                                     or not -5 < time.time() - final['written_at'] < 15
                                     or not final_budget
                                     or final_budget['afterUnloadGB'] < final_budget['requiredGB']
-                                    or self.environment_reason(self.live, time.time(), manual=True)
+                                    or self.environment_reason(
+                                        self.live, time.time(), manual=True, move='restore'
+                                    )
                                 ):
                                     raise ExternalChange(
                                         'Work, settings or resources changed after recovery verification.'
@@ -4327,9 +4960,14 @@ class Optimizer:
                                 failure_record.update(
                                     recovery='failed', recoveryCode='restore-not-ready'
                                 )
+                                self.manager.commanded(previous, time.time())
                                 self.command(previous, options, environment)
                                 recovered = self.verify_started(
-                                    previous, before.get('started_at'), 360, expected_launch
+                                    previous,
+                                    before.get('started_at'),
+                                    360,
+                                    expected_launch,
+                                    move='restore',
                                 )
                                 if recovered:
                                     failure_record.update(
@@ -4347,7 +4985,11 @@ class Optimizer:
                             primary
                             + ' Restored and pre-warmed '
                             + selection_label(previous)
-                            + '. Automatic switching is paused.'
+                            + (
+                                '. Automatic control continues.'
+                                if managed
+                                else '. Automatic switching is paused.'
+                            )
                         )
                     else:
                         recovery_detail = (
@@ -4363,16 +5005,25 @@ class Optimizer:
                             primary
                             + ' '
                             + recovery_detail
-                            + ' Automatic switching is paused. Review Help & feedback on the Mac.'
+                            + (
+                                ' The manager checks whether it becomes ready, then restores the previous model.'
+                                if managed
+                                else ' Automatic switching is paused. Review Help & feedback on the Mac.'
+                            )
                         )
                 elif attempted:
                     failure_record.update(recovery='blocked', recoveryCode='provider-changed')
-                    detail = (
-                        primary
-                        + ' The provider stopped or its launch state is unknown. Automatic switching is paused; check Darkbloom on the Mac.'
+                    detail = primary + (
+                        ' The provider stopped or its launch state is unknown. Automatic control continues; nothing is restarted while it is stopped.'
+                        if managed
+                        else ' The provider stopped or its launch state is unknown. Automatic switching is paused; check Darkbloom on the Mac.'
                     )
                 else:
-                    detail = 'The provider became busy or its settings changed before the switch. No restart was sent; automatic switching is paused.'
+                    detail = (
+                        'The provider became busy or its settings changed before the switch. No restart was sent; the manager retries later.'
+                        if managed
+                        else 'The provider became busy or its settings changed before the switch. No restart was sent; automatic switching is paused.'
+                    )
             finally:
                 end = time.time()
                 duration = max(0, end - command_started) if attempted else 0
@@ -4445,6 +5096,7 @@ class Optimizer:
                     self.idle_since = None
                     self.demand_preflight = None
                     if deferred:
+                        self.manager.switch_deferred(request_kind, target, end)
                         if request_kind.startswith('manual'):
                             self.state['manualResult'] = {
                                 **self.state.get('manualResult', {}),
@@ -4485,9 +5137,16 @@ class Optimizer:
                         self.state['expectedModel'] = target
                         self.state['lastSwitchAt'] = end
                         self.state['rollbackModel'] = previous
-                    else:
+                        if command_returned is not None:
+                            self.manager.load_timed(target, end - command_returned, end)
+                    elif not self.manager.switch_failed(
+                        request_kind, previous, target, recovered, attempted, failure_record, end
+                    ):
                         self.state['mode'] = 'observe'
                         self.cancel_combo(detail)
+                    self.manager.switch_done(
+                        request_kind, request_id, pending, previous, target, success, decision, end
+                    )
                     self.status = (
                         'observing'
                         if self.state['mode'] == 'observe'

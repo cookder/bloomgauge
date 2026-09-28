@@ -6,10 +6,13 @@ import { usePageVisible } from '@/lib/use-page-visibility';
 import {
   dailyBounds,
   dayTone,
+  earningsTiers,
   earningsTone,
   earningsToneLabel,
   validDailyEarnings,
+  TIER_MIN_DAYS,
   type DailyEarnings,
+  type EarningsTiers,
 } from '@/lib/daily-earnings';
 import { dayOutlook } from '@/lib/day-outlook';
 import type { ModelProjection } from '@/lib/cumulative-earnings';
@@ -22,6 +25,50 @@ const labels = {
   settling: 'Credits settling',
   unknown: 'Incomplete coverage',
 };
+// This Mac's day scale (all earnings, last 30 days) for the hour-end estimates,
+// shared by every caller and refreshed at most every 10 minutes.
+let tierCache: { at: number; tiers: EarningsTiers | null } | null = null;
+let tierRequest: Promise<void> | null = null;
+function refreshTiers() {
+  if (tierCache && Date.now() - tierCache.at < 600000) return Promise.resolve();
+  return (tierRequest ??= (async () => {
+    const { start, end } = dailyBounds({ preset: '30d' });
+    const params = new URLSearchParams({
+      from: String(start),
+      to: String(end),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    try {
+      const res = await fetch('/api/earnings-daily?' + params, {
+        cache: 'no-store',
+      });
+      const value: unknown = res.ok ? await res.json() : null;
+      if (validDailyEarnings(value))
+        tierCache = { at: Date.now(), tiers: earningsTiers(value.days) };
+    } catch {}
+  })().finally(() => {
+    tierRequest = null;
+  }));
+}
+export function useEarningsTiers(active = true) {
+  const visible = usePageVisible();
+  const [tiers, setTiers] = useState(tierCache?.tiers ?? null);
+  useEffect(() => {
+    if (!active || !visible) return;
+    let stopped = false;
+    const load = () =>
+      refreshTiers().then(() => {
+        if (!stopped) setTiers(tierCache?.tiers ?? null);
+      });
+    load();
+    const timer = setInterval(load, 600000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [active, visible]);
+  return tiers;
+}
 const dateLabel = (date: string) =>
   new Date(date + 'T12:00:00').toLocaleDateString([], {
     weekday: 'short',
@@ -136,7 +183,11 @@ export function DailyEarningsPanel({
     connected && !error,
     paused,
   );
-  const outlookTone = earningsTone(outlook.total);
+  // Colours compare days with this Mac's own last 30 complete days (same filter).
+  const tiers = earningsTiers(
+    (saved?.key === key ? saved.outlook : null)?.days ?? data?.days,
+  );
+  const outlookTone = earningsTone(outlook.total, 24, tiers);
   return (
     <section className="panel daily-earnings-panel" aria-label="Daily earnings">
       <div className="panel-heading">
@@ -205,10 +256,10 @@ export function DailyEarningsPanel({
                 <button
                   type="button"
                   key={day.date}
-                  className={`daily-cell ${dayTone(day)} ${day.status !== 'complete' ? 'partial' : ''}`}
+                  className={`daily-cell ${dayTone(day, tiers)} ${day.status !== 'complete' ? 'partial' : ''}`}
                   aria-pressed={picked?.date === day.date}
                   onClick={() => setSelected(day.date)}
-                  aria-label={`${dateLabel(day.date)}, ${money(day.usd)} recorded, ${labels[day.status]}, ${day.status === 'unknown' ? 'unknown earnings coverage' : earningsToneLabel[dayTone(day)] + ' day'}`}
+                  aria-label={`${dateLabel(day.date)}, ${money(day.usd)} recorded, ${labels[day.status]}${day.status === 'unknown' ? ', unknown earnings coverage' : tiers ? `, ${earningsToneLabel[dayTone(day, tiers)]} day` : ''}`}
                 >
                   <span>
                     {Number(day.date.slice(8)) === 1 || day === days[0]
@@ -235,7 +286,10 @@ export function DailyEarningsPanel({
                 <span>{labels[picked.status]}</span>
               </div>
               <div>
-                <strong className="earnings-tone" data-tone={dayTone(picked)}>
+                <strong
+                  className="earnings-tone"
+                  data-tone={dayTone(picked, tiers)}
+                >
                   {money(picked.usd)}
                 </strong>
                 <span>
@@ -259,13 +313,26 @@ export function DailyEarningsPanel({
             </div>
           )}
           <div className="daily-legend">
-            <span className="quiet">Under $1.50</span>
-            <span className="steady">$1.50+ steady</span>
-            <span className="green">$2.50+ good</span>
-            <span className="purple">$3+ great</span>
-            <span className="gold">$4+ outstanding</span>
+            {tiers ? (
+              <>
+                <span className="quiet">Under {money(tiers.steady)}</span>
+                <span className="steady">{money(tiers.steady)}+ steady</span>
+                <span className="green">{money(tiers.green)}+ good</span>
+                <span className="purple">{money(tiers.purple)}+ great</span>
+                <span className="gold">{money(tiers.gold)}+ outstanding</span>
+              </>
+            ) : (
+              <span className="quiet">
+                Colours start after {TIER_MIN_DAYS} complete days
+              </span>
+            )}
             <span className="unknown">Missing</span>
           </div>
+          {tiers && (
+            <p className="footnote">
+              Compared with this Mac’s last {tiers.days} complete days.
+            </p>
+          )}
           <div
             className="daily-outlook"
             data-tone={outlookTone}
@@ -281,7 +348,9 @@ export function DailyEarningsPanel({
                 data-tone={outlookTone}
               >
                 {outlook.status === 'ready'
-                  ? `${earningsToneLabel[outlookTone]} day`
+                  ? tiers
+                    ? `${earningsToneLabel[outlookTone]} day`
+                    : 'Not rated yet'
                   : outlook.status === 'learning'
                     ? 'Learning'
                     : 'Awaiting data'}

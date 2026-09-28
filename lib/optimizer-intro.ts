@@ -18,6 +18,22 @@ export const introPoints: { title: string; text: string }[] = [
   },
 ];
 
+/** The manager strategy: what "Manager on" does (native/manager.py). No learning trials. */
+export const managerIntroPoints: { title: string; text: string }[] = [
+  {
+    title: 'Holds your best model',
+    text: 'Bloomkeeper keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days, judged day by day so one lucky day can’t decide it. It does not run blind trials of other models.',
+  },
+  {
+    title: 'Recovers by itself',
+    text: 'If a switch fails or no model has been ready for about ten minutes, Bloomkeeper restores the home model instead of turning itself off. If two restores in a row fail, it tells you and keeps retrying, at least every two hours.',
+  },
+  {
+    title: 'Moves only on strong evidence',
+    text: 'With “Switch to better models when network evidence is strong” on, it leaves home only when at least five Macs like this one have clearly earned more on another model for two hours in a row. It comes back when that evidence fades or the model pays less than home would, and turns these moves off if they haven’t clearly paid off.',
+  },
+];
+
 export function learningText(
   protectUsdPerHour: number,
   learningMinutesPerDay: number,

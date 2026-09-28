@@ -98,14 +98,14 @@ export const fahrenheit = (c: number | null | undefined) =>
   c == null ? null : c * 1.8 + 32;
 export const thermalBand = (f: number | null) =>
   f == null
-    ? { label: 'Unavailable', color: '#8291a6' }
+    ? { label: 'Unavailable', color: 'var(--c-8291a6)' }
     : f < 104
-      ? { label: 'Cool', color: '#87b9ff' }
+      ? { label: 'Cool', color: 'var(--c-87b9ff)' }
       : f < 176
-        ? { label: 'Normal', color: '#82efb5' }
+        ? { label: 'Normal', color: 'var(--c-82efb5)' }
         : f < 194
-          ? { label: 'Warm', color: '#f3c57e' }
-          : { label: 'Hot', color: '#ff8d88' };
+          ? { label: 'Warm', color: 'var(--c-f3c57e)' }
+          : { label: 'Hot', color: 'var(--c-ff8d88)' };
 export type Range = { preset: string; start?: number; end?: number };
 const seconds: Record<string, number> = {
   '5m': 300,
@@ -372,10 +372,10 @@ export function useHistory(
   return { data, error };
 }
 const tipStyle = {
-  background: '#171d27',
-  border: '1px solid #354153',
+  background: 'var(--c-171d27)',
+  border: '1px solid var(--c-354153)',
   borderRadius: 10,
-  color: '#edf3fa',
+  color: 'var(--c-edf3fa)',
   fontSize: 14,
 };
 export const TimeChart = memo(function TimeChart({
@@ -425,7 +425,11 @@ export const TimeChart = memo(function TimeChart({
       : 1;
   const common = (
     <>
-      <CartesianGrid stroke="#27303c" vertical={false} strokeDasharray="2 6" />
+      <CartesianGrid
+        stroke="var(--c-27303c)"
+        vertical={false}
+        strokeDasharray="2 6"
+      />
       <XAxis
         dataKey="at"
         type="number"
@@ -434,12 +438,12 @@ export const TimeChart = memo(function TimeChart({
         minTickGap={70}
         axisLine={false}
         tickLine={false}
-        tick={{ fill: '#8997aa', fontSize: 12 }}
+        tick={{ fill: 'var(--c-8997aa)', fontSize: 12 }}
       />
       <YAxis
         axisLine={false}
         tickLine={false}
-        tick={{ fill: '#8997aa', fontSize: 12 }}
+        tick={{ fill: 'var(--c-8997aa)', fontSize: 12 }}
         tickFormatter={(n) =>
           `${unit.includes('USD') ? '$' : ''}${num(n, axisPrecision)}`
         }

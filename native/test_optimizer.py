@@ -222,12 +222,11 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn('--foreground', args)
         self.assertNotIn('--model', args)
 
-    def test_unknown_flags_duplicate_and_unsupported_model_sets_are_rejected(self):
+    def test_duplicate_and_unsupported_model_sets_are_rejected(self):
         for a in [
             ['--model', 'a', '--model', 'b', '--model', 'c'],
             ['--model', 'a', '--model', 'a'],
-            ['--model', 'a', '--unknown'],
-            ['--local'],
+            ['--model', 'a', 'stray'],
             ['--model'],
         ]:
             with self.assertRaises(ValueError):
@@ -589,6 +588,16 @@ class ControllerTests(unittest.TestCase):
         self.o.command.assert_called_once()
         self.assertEqual(self.o.state['mode'], 'observe')
         self.assertIn('manual choice', self.o.detail)
+        self.assertIn('launch settings changed during the switch', self.o.detail)
+
+    def test_provider_change_names_the_check_that_fired(self):
+        # Jason, Sep 27: 23 different checks raise ExternalChange; the result said which one.
+        self.o.command = Mock()
+        self.o.verify_started = Mock(side_effect=ExternalChange('Provider changed during warm-up.'))
+        self.o.switch('a', 'b', 'acct', self.live['device'])
+        self.assertTrue(self.o.detail.startswith('Provider changed during warm-up.'))
+        self.assertNotIn('launch settings changed during the switch', self.o.detail)
+        self.assertIn('manual choice', self.o.detail)
 
     def test_busy_final_recheck_sends_no_restart(self):
         self.o.read_state.return_value = {**self.raw, 'inference_active': True}
@@ -876,20 +885,17 @@ class ControllerTests(unittest.TestCase):
         self.o.worker.join(timeout=2)
         self.o.switch.assert_called_once_with('a', 'b', 'acct', self.live['device'])
 
-    def test_manual_queue_preserves_idle_heat_power_and_memory_gates(self):
+    def test_manual_queue_preserves_idle_heat_and_memory_gates(self):
+        # Battery power and the 95 °C line don't hold an explicit pick; thermal state does.
         self.o.manual_action(self.manual_payload())
         self.o.switch = Mock()
         self.o.tick(self.now)
         self.assertIn('idle', self.o.detail)
         self.o.idle_since = self.now - 30
-        self.o.on_ac_power.return_value = False
-        self.o.tick(self.now)
-        self.assertIn('battery', self.o.detail)
-        self.o.on_ac_power.return_value = True
-        self.o.live['hardware']['gpuTemp'] = 96
+        self.o.live['hardware']['thermal'] = 'Serious'
         self.o.tick(self.now)
         self.assertIn('hot', self.o.detail)
-        self.o.live['hardware']['gpuTemp'] = 65
+        self.o.live['hardware']['thermal'] = 'Nominal'
         self.o.live['hardware']['memoryAvailableGB'] = 1
         self.o.tick(self.now)
         self.assertIn('memory', self.o.detail)

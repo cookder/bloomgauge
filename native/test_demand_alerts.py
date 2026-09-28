@@ -6,7 +6,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock
 
-from demand_alerts import DemandAlerts, _baseline
+from demand_alerts import DemandAlerts, usual_levels
 from history import History
 from model_combinations import selection_key
 from optimizer_store import OptimizerStore
@@ -332,17 +332,36 @@ class DemandAlertTests(unittest.TestCase):
         self.assertEqual(row['baselineLoad'], 1)
         self.assertEqual(row['loadRatio'], 3)
 
-    def test_contextual_baseline_caps_daily_weight(self):
-        groups = [
-            {'day': '2026-09-05', 'hour': 1, 'weekday': 5, 'n': 360, 'load': 3240, 'pressure': 810},
-            {'day': '2026-09-06', 'hour': 1, 'weekday': 6, 'n': 120, 'load': 120, 'pressure': 30},
-            {'day': '2026-09-12', 'hour': 1, 'weekday': 5, 'n': 120, 'load': 120, 'pressure': 30},
-        ]
-        a = _baseline(groups, NOW)
+    def test_usual_is_the_median_so_one_busy_day_does_not_raise_it(self):
+        # Three quiet weekend nights and one busy one; the mean would be 3.
+        for day, load in (('05', 1), ('06', 1), ('12', 1), ('13', 9)):
+            start = datetime.fromisoformat(f'2026-09-{day}T00:00:00-04:00').timestamp()
+            self.samples(start, 120, load=load)
+        a = usual_levels(self.h.db, ['a'], NOW)['a']
         self.assertEqual(a['baselineScope'], 'daytype_hour')
-        self.assertAlmostEqual(a['baselineLoad'], 11 / 3)
-        self.assertEqual(a['dayWeightCapHours'], 1)
-        self.assertEqual(a['baselineHours'], 5)
+        self.assertEqual((a['baselineLoad'], a['baselinePressure']), (1, 0.25))
+        self.assertEqual((a['baselineHours'], a['baselineDays']), (4, 4))
+
+    def test_usual_counts_only_this_time_of_day(self):
+        # 01:30: 00:00-02:59 counts; 22:00 and 04:00 do not.
+        for day in ('05', '06', '12'):
+            for hour, load in (('00', 1), ('02', 3), ('04', 9)):
+                start = datetime.fromisoformat(f'2026-09-{day}T{hour}:00:00-04:00').timestamp()
+                self.samples(start, 60, load=load)
+            start = datetime.fromisoformat(f'2026-09-{day}T22:00:00-04:00').timestamp()
+            self.samples(start, 60, load=9)
+        a = usual_levels(self.h.db, ['a'], NOW)['a']
+        self.assertEqual((a['baselineScope'], a['baselineDays']), ('daytype_hour', 3))
+        self.assertEqual(a['baselineHours'], 3)
+        self.assertEqual(a['baselineLoad'], 2)  # median of 180 ones and 180 threes
+
+    def test_usual_falls_back_to_all_hours_median_while_learning(self):
+        self.samples(NOW - 6 * 3600, 240, load=4)
+        self.samples(NOW - 5 * 3600, 60, load=100)
+        a = usual_levels(self.h.db, ['a', 'b'], NOW)
+        self.assertEqual((a['a']['baselineScope'], a['a']['baselineLoad']), ('all_hours', 4))
+        self.assertEqual(a['b']['baselineScope'], 'learning')
+        self.assertIsNone(a['b']['baselinePressure'])
 
     def test_dst_repeated_hour_counts_elapsed_samples_and_only_one_local_date(self):
         for at in (

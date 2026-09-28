@@ -1,6 +1,6 @@
 import copy
 import unittest
-from demand_targets import GEMMA, target_status, return_evidence
+from demand_targets import GEMMA, chosen_goal, target_status, return_evidence
 from demand_optimizer import decide, policy, estimate
 from test_demand_optimizer import NOW, summary, minutes
 from test_demand_fallback import rows, MODEL
@@ -44,6 +44,15 @@ def choose(data=None, current='a', rates=None, idle=0, runs=None, trial=None):
         activity={'fresh': True, 'idleSeconds': idle},
         trial=trial,
     )
+
+
+class ChosenGoalTests(unittest.TestCase):
+    def test_placeholder_default_is_not_a_goal(self):
+        self.assertIsNone(chosen_goal(policy()))
+        self.assertIsNone(chosen_goal({}))
+        self.assertIsNone(chosen_goal(None))
+        self.assertEqual(chosen_goal(policy({'targetUsdPerHour': 0.2})), 0.2)
+        self.assertEqual(chosen_goal(policy({'targetUsdPerHour': 0.08})), 0.08)
 
 
 class TargetEvidenceTests(unittest.TestCase):

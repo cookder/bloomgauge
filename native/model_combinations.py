@@ -3,6 +3,14 @@
 import itertools, json, math, pathlib, re
 
 PREFIX = '@combo:'
+# Darkbloom's `[provider] memory_reserve_gb` default (ProviderSettings.memoryReserveGB).
+DEFAULT_RESERVE_GB = 4
+# Launch-agent variables that change Darkbloom's load admission in a way Bloomkeeper doesn't
+# model: the memory cap fraction and a raised activation reserve (UnifiedMemoryCap
+# resolvedCapFraction / resolvedActivationReserveBytes). The installer's other pass-throughs
+# (drain, prefix cache, MLX cache and memory guard, KV backend, MTP, prefill) and MLX_/METAL_
+# variables don't enter the load gate.
+ADMISSION_ENV = ('DARKBLOOM_MEM_CAP_FRACTION', 'DARKBLOOM_ACTIVATION_RESERVE_GB')
 
 
 def members(selection):
@@ -47,7 +55,9 @@ def selection_label(selection):
     return ' + '.join(members(selection)) or 'Unknown selection'
 
 
-def pair_budget(hardware, provider, models, weights, gpu_cache=0):
+def pair_budget(
+    hardware, provider, models, weights, gpu_cache=0, config_reserve=DEFAULT_RESERVE_GB
+):
     total = hardware.get('memoryTotalGB')
     available = hardware.get('memoryAvailableGB')
     resident = provider.get('memoryGB')
@@ -63,7 +73,9 @@ def pair_budget(hardware, provider, models, weights, gpu_cache=0):
         return None
     # v0.9 reserves activation space for the largest serving-model floor.
     # Add one GB KV per member, exceeding upstream's shared 1GB load minimum.
-    reserve = max(4, total * 0.1)
+    # UnifiedMemoryCap.loadReserveBytes: memory_reserve_gb, but at least what the 90% cap
+    # (with its 2 GiB floor) leaves the OS.
+    reserve = max(config_reserve, total * 0.1, 2)
     activation = max(3.5 if m == 'gpt-oss-20b' else 5.5 for m in models)
     return {
         'afterUnloadGB': min(total, available + resident + gpu_cache),
@@ -73,12 +85,26 @@ def pair_budget(hardware, provider, models, weights, gpu_cache=0):
     }
 
 
-def pair_candidates(rows, hardware, provider, gpu_cache=0, config_error=None):
+def pair_candidates(
+    rows,
+    hardware,
+    provider,
+    gpu_cache=0,
+    config_error=None,
+    solo=(),
+    config_reserve=DEFAULT_RESERVE_GB,
+):
+    """`solo` models are only served alone (gemma advertised with another model earned ~0.46x)."""
     output = []
     for a, b in itertools.combinations(sorted(rows, key=lambda r: r['id']), 2):
         models = [a['id'], b['id']]
         budget = pair_budget(
-            hardware, provider, models, [a.get('memoryGB'), b.get('memoryGB')], gpu_cache
+            hardware,
+            provider,
+            models,
+            [a.get('memoryGB'), b.get('memoryGB')],
+            gpu_cache,
+            config_reserve,
         )
         reason = config_error or next(
             (
@@ -88,6 +114,8 @@ def pair_candidates(rows, hardware, provider, gpu_cache=0, config_error=None):
             ),
             None,
         )
+        if not reason and set(models) & set(solo):
+            reason = 'Served alone only: advertised with another model it earns about half as much.'
         if not reason and not budget:
             reason = 'Waiting for memory readings.'
         if not reason and budget['requiredGB'] > hardware.get('memoryTotalGB', 0):
@@ -113,13 +141,18 @@ def pair_candidates(rows, hardware, provider, gpu_cache=0, config_error=None):
     )
 
 
-def combination_config_error(home, options, environment, require_pair=True):
-    """Only accept known default memory policy and >=2 slots; never rewrite it."""
-    if any(str(k).startswith(('DARKBLOOM_', 'MLX_', 'METAL_')) for k in environment):
-        return 'Custom Darkbloom, MLX or Metal environment overrides are not supported by automatic switching. Keep your settings and use Help & feedback to review compatibility.'
+def provider_settings(home, options):
+    """What the load gate uses from provider.toml, never rewriting it: (settings, error).
+
+    settings: {'reserveGB': `[provider] memory_reserve_gb` (Darkbloom's default 4 when
+    absent or unreadable), 'memoryError': a memory setting Bloomkeeper can't model,
+    'slotsError': why a pair can't be served}, each None when fine. error: why the file
+    can't be read reliably.
+    """
+    settings = {'reserveGB': DEFAULT_RESERVE_GB, 'memoryError': None, 'slotsError': None}
     paths = [options[i + 1] for i, v in enumerate(options[:-1]) if v in ('--config', '-c')]
     if len(paths) > 1:
-        return 'Multiple custom configs need review before pair testing.'
+        return settings, 'Multiple custom configs need review before pair testing.'
     defaults = [
         pathlib.Path(home) / suffix
         for suffix in (
@@ -135,15 +168,15 @@ def combination_config_error(home, options, environment, require_pair=True):
         else next((p for p in defaults if p.exists()), defaults[0])
     )
     if not path.is_absolute():
-        return 'Use an absolute provider config path before pair testing.'
+        return settings, 'Use an absolute provider config path before pair testing.'
     if not path.exists():
-        return 'The custom provider config is unavailable.' if paths else None
+        return settings, 'The custom provider config is unavailable.' if paths else None
     try:
         text = path.read_text()
     except OSError:
-        return 'The provider config could not be checked.'
+        return settings, 'The provider config could not be checked.'
     section = ''
-    default_reserve_seen = False
+    reserve = None
     for line in text.splitlines():
         line = line.split('#', 1)[0].strip()
         if not line:
@@ -155,33 +188,60 @@ def combination_config_error(home, options, environment, require_pair=True):
             continue
         key, value = (part.strip() for part in line.split('=', 1))
         if value.startswith('{'):
-            return 'Inline provider config tables need review before pair testing.'
+            return settings, 'Inline provider config tables need review before pair testing.'
         if '\\' in key:
-            return 'Escaped provider config keys need review before pair testing.'
+            return settings, 'Escaped provider config keys need review before pair testing.'
         parts = [part.strip().strip('"\'') for part in key.split('.')]
         key = parts[-1]
         key_section = '.'.join(([section.strip('"\'')] if section else []) + parts[:-1])
         if 'memory' in key or any(w in key for w in ('activation_reserve', 'kv_reserve')):
-            # ProviderSettings defaults to UInt64(4), including freshly generated
-            # provider.toml. Both Bloomkeeper load budgets already reserve at least 4 GB.
-            # Accept only this exact known default; do not erase custom settings.
+            # Darkbloom reads a whole number of GB (UInt64) from [provider] only.
             if (
                 key_section == 'provider'
                 and key == 'memory_reserve_gb'
-                and value == '4'
-                and not default_reserve_seen
+                and re.fullmatch(r'[0-9]{1,6}', value)
+                and reserve is None
             ):
-                default_reserve_seen = True
+                reserve = int(value)
                 continue
-            return 'Provider memory settings differ from the defaults Bloomkeeper supports. The standard provider memory_reserve_gb = 4 is supported. Keep your configuration and use Help & feedback to review compatibility; do not delete it.'
-        if (
-            require_pair
-            and key == 'max_model_slots'
-            and (
-                key_section not in ('backend', '')
-                or not re.fullmatch(r'[0-9]+', value)
-                or int(value) < 2
+            settings['memoryError'] = settings['memoryError'] or (
+                'provider.toml sets %s, which Bloomkeeper can’t account for. It won’t '
+                'move models on its own; restores and your own picks still work.' % key
             )
+        if key == 'max_model_slots' and (
+            key_section not in ('backend', '')
+            or not re.fullmatch(r'[0-9]+', value)
+            or int(value) < 2
         ):
-            return 'The provider must allow at least two resident model slots.'
-    return None
+            settings['slotsError'] = 'The provider must allow at least two resident model slots.'
+    if reserve is not None:
+        settings['reserveGB'] = reserve
+    return settings, None
+
+
+def configured_reserve_gb(home, options):
+    """`memory_reserve_gb` for Bloomkeeper's load budgets (Darkbloom's default when unreadable)."""
+    return provider_settings(home, options)[0]['reserveGB']
+
+
+def combination_config_error(home, options, environment, require_pair=True, voluntary=True):
+    """Why Bloomkeeper's load arithmetic can't be trusted here, or None; never rewrites it.
+
+    `memory_reserve_gb` is read into the reserve rather than refused. With `voluntary` (the
+    default), knobs that change Darkbloom's load admission and that Bloomkeeper can't model
+    also count; they stop automatic moves only, never restores or the user's own picks.
+    """
+    if voluntary:
+        knobs = sorted(k for k in environment if k in ADMISSION_ENV and environment[k] != '')
+        if knobs:
+            return (
+                '%s is set for Darkbloom. Bloomkeeper can’t predict memory with it, so it '
+                'won’t move models on its own; restores and your own picks still work.'
+                % ' and '.join(knobs)
+            )
+    settings, error = provider_settings(home, options)
+    return (
+        error
+        or (settings['memoryError'] if voluntary else None)
+        or (settings['slotsError'] if require_pair else None)
+    )

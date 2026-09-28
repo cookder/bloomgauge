@@ -1,4 +1,5 @@
 import copy, json, pathlib, tempfile, unittest
+from datetime import datetime, timezone
 from unittest.mock import Mock
 from history import History
 from provider_sessions import ProviderSessions, process_identity, BSDInfo
@@ -281,6 +282,21 @@ class SessionReputationTests(SessionTests):
         for secret in ('connection', 'secret', 'this-mac', '_baseline', '_lastCounts'):
             self.assertNotIn('"' + secret + '"', json.dumps(b))
 
+    def test_readings_without_a_score_still_observe_the_session(self):
+        # Darkbloom 0.9.10 sends counts only (no composite score).
+        a = self.ingest_rep(1001, score=None)
+        self.assertEqual(a['data']['observedSessionId'], a['session']['id'])
+        b = self.ingest_rep(1004, total=105, score=None)
+        rep = b['session']['reputation']
+        self.assertEqual((rep['totalJobs'], rep['successfulJobs']), (5, 5))
+        self.assertIsNone(rep['scoreChange'])
+        self.assertIsNone(rep['scoreNow'])
+        self.assertEqual(rep['status'], 'observed')
+        # A score that appears or disappears mid-session never breaks the counters.
+        c = self.ingest_rep(1007, total=106, score=0.9)
+        self.assertIsNone(c['session']['reputation']['scoreChange'])
+        self.assertEqual(c['session']['reputation']['totalJobs'], 6)
+
     def test_late_old_session_response_never_baselines_the_new_model(self):
         self.ingest_rep(1001)
         self.observe(1004, advertised_models=['b'])
@@ -365,11 +381,94 @@ class SessionReputationTests(SessionTests):
         self.assertEqual(b['session']['reputation']['asOf'], 1007)
         self.assertEqual(b['session']['reputation']['totalJobs'], 5)
 
+    def test_a_counter_unknown_in_the_first_reading_baselines_when_it_is_known(self):
+        def jobs(now, total, successful):
+            self.observe(now)
+            p = provider(score=None)
+            p.update(id='connection', models=['a'])
+            p['reputation'].update(
+                total_jobs=total, successful_jobs=successful, failed_jobs=1
+            )
+            self.sequence += 1
+            return self.r.ingest(
+                {'sequence': self.sequence, 'status': 'ok', 'requestedAt': now, 'providers': [p]},
+                now,
+            )
+
+        # First reading: parts above the total (merged counters), so only the total is unknown.
+        a = jobs(1001, 100, 100)
+        self.assertIsNone(a['data']['totalJobs'])
+        self.assertIsNone(a['session']['reputation']['totalJobs'])
+        self.assertEqual(a['session']['reputation']['uptimeSeconds'], 0)
+        jobs(1004, 110, 109)
+        c = jobs(1007, 120, 119)
+        rep = c['session']['reputation']
+        # Jobs restart together from the first complete reading, so they add up.
+        self.assertEqual(
+            (rep['totalJobs'], rep['successfulJobs'], rep['failedJobs']), (10, 10, 0)
+        )
+        self.assertEqual(rep['status'], 'observed')
+        self.assertEqual(rep['since'], 1001)
+
 
 # Lifecycle cases belong to SessionTests only, not the reputation fixture subclass.
 for _name in list(SessionTests.__dict__):
     if _name.startswith('test_') and _name not in SessionReputationTests.__dict__:
         setattr(SessionReputationTests, _name, None)
+
+
+class PartlyLoadedReputationTests(unittest.TestCase):
+    """Jason (Sep 27): Darkbloom 0.9.10 loads a large model set on demand, so a
+    3+ model session records reputation and concurrency with any model loaded."""
+
+    tearDown, observe = SessionTests.tearDown, SessionTests.observe
+
+    def setUp(self):
+        SessionTests.setUp(self)
+        self.raw.update(advertised_models=list('abcd'), warm_models=['a', 'c'])
+        self.r = Reputation(self.h, self.home, 'secret', self.s, lambda now: 'connection')
+        self.sequence = 0
+
+    def ingest(self, now, models=None, **raw):
+        session = self.observe(now, **raw)
+        p = provider()
+        p.update(
+            id='connection',
+            models=list('abcd') if models is None else models,
+            online=True,
+            last_heartbeat=datetime.fromtimestamp(now - 2, timezone.utc).isoformat(),
+            pending_requests=1,
+            max_concurrency=8,
+        )
+        p['reputation']['total_jobs'] = now - 900
+        self.sequence += 1
+        result = self.r.ingest(
+            {'sequence': self.sequence, 'status': 'ok', 'requestedAt': now, 'providers': [p]}, now
+        )
+        return session, result
+
+    def test_partly_loaded_set_records_reputation_and_concurrency(self):
+        session, a = self.ingest(1001)
+        self.assertEqual(a['data']['observedSessionId'], session['id'])
+        self.assertEqual(a['data']['concurrency']['pending'], 1)
+        _, b = self.ingest(1004, warm_models=['b'])  # Darkbloom swapped what's loaded
+        self.assertEqual(b['session']['reputation']['status'], 'observed')
+        self.assertIsNotNone(b['data']['concurrency'])
+
+    def test_attribution_checks_still_apply(self):
+        # Nothing loaded, another model list, another connection, or a pair missing one.
+        self.assertIsNone(self.ingest(1001, warm_models=[])[1]['session']['reputation'])
+        rejected = self.ingest(1004, models=list('abc'), warm_models=['a'])
+        self.assertIsNone(rejected[1]['session']['reputation'])
+        self.r.identity_context = lambda now: 'other-connection'
+        self.assertIsNone(self.ingest(1007)[1]['data']['observedSessionId'])
+        self.r.identity_context = lambda now: 'connection'
+        pair = self.ingest(1010, models=list('ab'), advertised_models=list('ab'), warm_models=['a'])
+        self.assertIsNone(pair[1]['session']['reputation'])
+        self.assertIsNotNone(
+            self.ingest(1013, models=list('ab'), warm_models=list('ab'))[1]['session']['reputation']
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -11,6 +11,7 @@ import {
   type OptimizerLive,
   type OptimizerCandidate,
 } from '@/lib/optimizer-live';
+import { loadStrategy, type Strategy } from '@/lib/optimizer-manager';
 import { requestOptimizerDetails } from '@/lib/optimizer-details-intent';
 import { useAppNavigation } from './app-navigation';
 import { age, money, num, shortModel } from './shared';
@@ -23,11 +24,16 @@ const phases = {
   switching: 'Switching',
   measuring: 'Measuring a trial',
 };
+const managerPhases: Partial<Record<keyof typeof phases, string>> = {
+  off: 'Off',
+  watching: 'Manager on',
+};
 
 export function OptimizerLivePanel({ active }: { active: boolean }) {
   const visible = usePageVisible(),
     navigation = useAppNavigation();
   const [data, setData] = useState<OptimizerLive | null>(null),
+    [strategy, setStrategy] = useState<Strategy | null>(null),
     [error, setError] = useState(''),
     [revision, setRevision] = useState(0),
     [received, setReceived] = useState(0),
@@ -42,13 +48,17 @@ export function OptimizerLivePanel({ active }: { active: boolean }) {
     return startChartPolling({
       intervalMs: 30000,
       timeoutMs: 10000,
-      load: async (signal) =>
-        readOptimizerLive(
-          await sharedGet('/api/optimizer/live', 20000, signal, (r) =>
+      load: async (signal) => {
+        const [live, strategy] = await Promise.all([
+          sharedGet('/api/optimizer/live', 20000, signal, (r) =>
             readStatusJSON(r, 'Optimizer status'),
           ),
-        ),
-      onValue: (value) => {
+          loadStrategy(sharedGet, signal),
+        ]);
+        return { live: readOptimizerLive(live), strategy };
+      },
+      onValue: ({ live: value, strategy }) => {
+        setStrategy(strategy);
         setData((old) => (old && old.at > value.at ? old : value));
         setReceived(Date.now() / 1000);
         setNow(Date.now() / 1000);
@@ -62,6 +72,7 @@ export function OptimizerLivePanel({ active }: { active: boolean }) {
         ),
     });
   }, [active, visible, revision]);
+  const managed = strategy === 'manager';
   const transportFresh =
     !!data && !error && now - data.at <= 45 && now - data.at >= -5;
   const fresh = transportFresh && data.fresh;
@@ -127,11 +138,13 @@ export function OptimizerLivePanel({ active }: { active: boolean }) {
       <div className="optimizer-live-heading">
         <div>
           <div className="eyebrow">OPTIMIZER</div>
-          <h2>Next candidates</h2>
+          <h2>{managed ? 'Model comparisons' : 'Next candidates'}</h2>
         </div>
         <span className="optimizer-phase-label">
           {transportFresh && visible
-            ? (confirmationLabel ?? phases[data.phase])
+            ? (confirmationLabel ??
+              (managed ? managerPhases[data.phase] : null) ??
+              phases[data.phase])
             : 'Details updating'}
         </span>
       </div>
@@ -179,6 +192,12 @@ export function OptimizerLivePanel({ active }: { active: boolean }) {
       </div>
       {fresh ? (
         <div className="optimizer-live-rankings">
+          {managed && (
+            <p className="optimizer-live-caveat">
+              For reference: the manager doesn’t switch on these. It holds its
+              home model and moves only on strong network evidence.
+            </p>
+          )}
           <p className="optimizer-live-caveat">
             {data.planningMinutes != null
               ? `Switching advantage · next ${num(data.planningMinutes / 60, 1)}h`
@@ -241,7 +260,9 @@ export function OptimizerLivePanel({ active }: { active: boolean }) {
       ) : (
         <p className="optimizer-live-empty">
           {data?.phase === 'off'
-            ? 'Manual mode leaves model choices to you. Enable the optimizer to follow candidates.'
+            ? managed
+              ? 'Automatic control is off. Model choices are yours.'
+              : 'Manual mode leaves model choices to you. Enable the optimizer to follow candidates.'
             : data
               ? 'Candidate comparisons are waiting for fresh, matching readings.'
               : 'Candidate rankings will appear after a verified evaluation.'}

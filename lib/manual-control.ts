@@ -40,7 +40,8 @@ export type ManualControl = {
   controlError?: string | null;
   providerControl: {
     status: string;
-    version: string;
+    /** Absent while Darkbloom isn't set up (status 'unavailable'). */
+    version?: string;
     model?: string | null;
     detail: string;
     canStart: boolean;
@@ -114,8 +115,12 @@ export function validManualControl(v: unknown): v is ManualControl {
   const p = v.providerControl;
   if (
     !record(p) ||
-    !string(p.version) ||
-    !p.version ||
+    // Darkbloom not set up: status 'unavailable', a setup detail and no version
+    // (native/provider_control.py snapshot).
+    !(
+      (string(p.version) && !!p.version) ||
+      (p.status === 'unavailable' && p.version == null)
+    ) ||
     !string(p.status) ||
     !string(p.detail) ||
     !optionalString(p.model) ||
@@ -284,7 +289,7 @@ export function manualRequest(
     action: 'select',
     requestId,
     model,
-    expectedProvider: state.providerControl.version,
+    expectedProvider: state.providerControl.version ?? '',
     expectedSession: state.session,
     verifyRuntime: !!state.models.find((m) => m.id === model)
       ?.requiresRuntimeVerification,
@@ -335,6 +340,7 @@ export function manualBlocker(
       ['queued', 'working'].includes(state!.selectionResult.status))
   )
     return 'Waiting for the current model command to finish.';
+  if (p.status === 'unavailable' && p.detail) return p.detail;
   if (!['stopped', 'running'].includes(p.status))
     return 'Checking whether Darkbloom is running. Your selection is saved here.';
   if (!target) return 'Choose a downloaded model to continue.';

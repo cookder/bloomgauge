@@ -152,7 +152,7 @@ export function ContributionChart({
           >
             <path
               d="M-1,1L1,-1M0,6L6,0M5,7L7,5"
-              stroke="#788b9a"
+              stroke="var(--c-788b9a)"
               strokeWidth="1"
               opacity=".55"
             />
@@ -165,21 +165,27 @@ export function ContributionChart({
               x2={right}
               y1={y(tick)}
               y2={y(tick)}
-              stroke="#293a42"
+              stroke="var(--c-293a42)"
               strokeDasharray="3 5"
             />
             <text
               x={left - 7}
               y={y(tick) + 4}
               textAnchor="end"
-              fill="#a7b9c5"
+              fill="var(--c-a7b9c5)"
               fontSize="11"
             >
               {format(tick)}
             </text>
           </g>
         ))}
-        <line x1={left} x2={right} y1={y(0)} y2={y(0)} stroke="#80978d" />
+        <line
+          x1={left}
+          x2={right}
+          y1={y(0)}
+          y2={y(0)}
+          stroke="var(--c-80978d)"
+        />
         {active &&
           visible &&
           paths.map((p, k) => (
@@ -218,7 +224,7 @@ export function ContributionChart({
               y={bottom + 5}
               width={Math.max(0, x(r.to) - x(r.from))}
               height="4"
-              fill={totals[i] === null ? '#c49d56' : '#739d88'}
+              fill={totals[i] === null ? 'var(--c-c49d56)' : 'var(--c-739d88)'}
             />
           ) : null,
         )}
@@ -228,9 +234,9 @@ export function ContributionChart({
             y={top}
             width={Math.max(1, x(rows[index].to) - x(rows[index].from))}
             height={bottom - top}
-            fill="#fff"
+            fill="var(--c-ffffff)"
             fillOpacity=".08"
-            stroke="#e4ede6"
+            stroke="var(--c-e4ede6)"
             strokeWidth="1"
           />
         )}
@@ -240,7 +246,7 @@ export function ContributionChart({
             x={left + (right - left) * f}
             y={height - 8}
             textAnchor={f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}
-            fill="#a7b9c5"
+            fill="var(--c-a7b9c5)"
             fontSize="11"
           >
             {time(from + (to - from) * f)}

@@ -83,7 +83,7 @@ test('old trial, preview opportunity and unrelated review cannot label a new run
 test('paused automation and explicit scheduled modes have independent labels', () => {
   const d = base();
   d.mode = 'observe';
-  assert.equal(pulseRunStatus(d, session, now).label, 'Manual / observe');
+  assert.equal(pulseRunStatus(d, session, now).label, 'Automatic control off');
   d.mode = 'week';
   assert.equal(pulseRunStatus(d, session, now).label, 'Scheduled model test');
   d.mode = 'combo';
@@ -152,7 +152,13 @@ test('three-model reporting does not need the optimizer response to describe the
   assert.equal(badge.label, '3-model monitoring');
   assert.equal(badge.progress, 'Managed by Darkbloom');
   assert.equal(badge.tone, 'normal');
-  assert.match(badge.reason, /currently selects one model/);
+  // Beta 41: say what the Manager runs and how to let it (Jason: "IDK what to do here").
+  assert.match(badge.reason, /The Manager runs one model, or a pair without Gemma\./);
+  assert.match(
+    badge.reason,
+    /pick one model in Model controls, then turn the Manager on\./,
+  );
+  assert.doesNotMatch(badge.reason, /demand-following|combination tests/);
   assert.equal(
     pulseRunStatus(null, s, now, { ...reporting, counting: false }).label,
     '3-model monitoring paused',

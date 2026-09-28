@@ -32,6 +32,7 @@ class TargetReportTests(unittest.TestCase):
         self.h.db.commit()
 
     def get(self, **kwargs):
+        kwargs.setdefault('target', 0.12)
         return report(
             self.s,
             kwargs.pop('account', 'owner'),
@@ -131,6 +132,19 @@ class TargetReportTests(unittest.TestCase):
         self.assertEqual(r['completeHours'], 90 * 24)
         self.assertEqual(r['usd'], 0.5)
 
+    def test_no_goal_reports_hours_without_judging_them(self):
+        self.credit(self.start + 1, 240000)
+        r = self.get(target=None)
+        self.assertEqual((r['usd'], r['completeHours']), (0.24, 24))
+        goal_fields = ('targetUsdPerHour', 'dailyTargetUsd', 'metHours', 'metPercent')
+        for key in (*goal_fields, 'longestBelowHours'):
+            self.assertIsNone(r[key], key)
+        self.assertEqual({h['status'] for h in r['hourly']}, {'complete'})
+        # The user's goal, not a built-in $0.12, decides met and below.
+        r = self.get(target=0.2)
+        self.assertEqual((r['metHours'], r['dailyTargetUsd']), (1, 0.2 * 24))
+        self.assertEqual(self.get(target=0.25)['metHours'], 0)
+
     def test_account_switch_and_no_history_leave_empty_result(self):
         r = self.get(account='unknown')
         self.assertEqual(r['completeHours'], 0)
@@ -146,6 +160,7 @@ class TargetReportTests(unittest.TestCase):
             {'end': self.start},
             {'end': float('nan')},
             {'target': 0},
+            {'target': float('nan')},
             {'model': ''},
             {'model': True},
         ):
@@ -220,6 +235,14 @@ class TargetHTTPTests(test_remote.RemoteHTTPBase):
         c.optimizer.live = {'account': 'current', 'device': 'this-mac'}
         c.optimizer.state = {'demandPolicy': {}}
         with patch('earnings_target.report', return_value={'scope': 'fixture'}) as build:
+            with self.read(self.local, '/api/earnings-target') as response:
+                json.load(response)
+            # The policy's placeholder $0.12 is not a goal; the user's choice is.
+            self.assertIsNone(build.call_args.args[6])
+            c.optimizer.state = {'demandPolicy': {'targetUsdPerHour': 0.2}}
+            with self.read(self.local, '/api/earnings-target') as response:
+                json.load(response)
+            self.assertEqual(build.call_args.args[6], 0.2)
             for server, headers in ((self.local, {}), (self.phone, self.headers)):
                 with self.read(
                     server, '/api/earnings-target?account=foreign&device=foreign', headers

@@ -8,14 +8,14 @@ import {
 export const UNATTRIBUTED = '__unattributed_earnings__';
 export const ALL_EARNINGS = '__all_earnings__';
 const colors = [
-  '#82efb5',
-  '#87b9ff',
-  '#f3c57e',
-  '#f798b5',
-  '#78d6da',
-  '#c8adf5',
-  '#e3df85',
-  '#eaa07d',
+  'var(--c-82efb5)',
+  'var(--c-87b9ff)',
+  'var(--c-f3c57e)',
+  'var(--c-f798b5)',
+  'var(--c-78d6da)',
+  'var(--c-c8adf5)',
+  'var(--c-e3df85)',
+  'var(--c-eaa07d)',
 ];
 const known: Record<string, string> = {
   'gemma-4-26b-qat-4bit': colors[0],
@@ -25,8 +25,8 @@ const known: Record<string, string> = {
   'Qwen3.5-9B': colors[6],
   'qwen3.5-35b-a3b': colors[4],
   'qwen3-vl-30b-a3b-instruct': colors[5],
-  base_reward: '#8493a8',
-  [UNATTRIBUTED]: '#b5aa96',
+  base_reward: 'var(--c-8493a8)',
+  [UNATTRIBUTED]: 'var(--c-b5aa96)',
 };
 
 export function modelColor(model: string): string {

@@ -433,7 +433,7 @@ export function RateTrend({
               x2={right}
               y1={y(reference)}
               y2={y(reference)}
-              stroke="#7a8f85"
+              stroke="var(--c-7a8f85)"
               strokeDasharray="3 4"
             />
           )}
@@ -454,7 +454,7 @@ export function RateTrend({
             >
               <path
                 d="M-1,1 L1,-1 M0,5 L5,0 M4,6 L6,4"
-                stroke="#738279"
+                stroke="var(--c-738279)"
                 strokeWidth="1"
                 opacity=".65"
               />
@@ -606,7 +606,7 @@ export function RateTrend({
                   x2={x(inspected.at)}
                   y1="8"
                   y2={bottom}
-                  stroke="#b4c7c0"
+                  stroke="var(--c-b4c7c0)"
                   strokeDasharray="2 3"
                   opacity=".6"
                 />
@@ -615,7 +615,7 @@ export function RateTrend({
                   cy={y(inspected.value)}
                   r="3.5"
                   fill={lineColor(inspected.sessionId)}
-                  stroke="#dcece4"
+                  stroke="var(--c-dcece4)"
                 />
               </g>
             )}

@@ -6,7 +6,8 @@ or the local engine. Bloomkeeper escalates one step at a time, waiting after eac
 
   1. probe    a tiny test request routed back to this Mac through Darkbloom
               (or to the local engine when no API key is stored); no downtime
-  2. restart  restart the provider on the same model (a fresh session)
+  2. restart  restart the provider on the same model (a fresh session), only
+              while the model's network demand is high
   3. escape   let the optimizer move to another model now instead of after
               the ordinary idle escape
   4. hold     stop trying and tell the user; nothing more is automatic
@@ -33,6 +34,10 @@ STEP_WAIT_SECONDS = {'probe': 3 * 60, 'restart': 5 * 60, 'escape': 5 * 60}
 # escape that hasn't led to a switch yet gets longer before Bloomkeeper gives up.
 ESCAPE_UNMOVED_SECONDS = 20 * 60
 DEMAND_HELD = 0.5  # recent load and pressure vs the baseline window
+# A restart also needs this much absolute pressure (active + queued per warm provider over the
+# last 3 minutes). Below it (gap-3's low tercile, 0.10-0.33) a restart earned no more than
+# waiting ($0.00270 vs $0.00268 per stall); PLAN §6.5 gate 1.
+RESTART_MIN_PRESSURE = 0.33
 RESTARTS_PER_DAY = 3
 RESTART_SPACING_SECONDS = 3600
 EPISODE_LIMIT_SECONDS = 3 * 3600  # after this, a silence is ordinary quiet, not a stall
@@ -224,5 +229,19 @@ def assess(minutes, network, attempts, switches, session_start, now, probe_avail
     if step == 'restart' and silence < RESTART_SILENCE_SECONDS:
         result.update(reason='Waiting for 8 minutes of silence before restarting.')
         return result
+    if step == 'restart' and not (recent and recent['pressure'] >= RESTART_MIN_PRESSURE):
+        # The gate skips the restart, not the ladder: the escape (then hold) still follows.
+        step, reason = (
+            'escape',
+            (
+                'Not restarting: demand for this model is low (%.2f requests per warm provider), so a restart does no better than waiting.'
+                % recent['pressure']
+                if recent
+                else 'Not restarting: there are no fresh demand readings for this model.'
+            )
+            + ' Still no work after '
+            + (' and '.join(taken) if taken else 'waiting')
+            + '. Letting the optimizer try another model now.',
+        )
     result.update(step=step, reason=reason)
     return result

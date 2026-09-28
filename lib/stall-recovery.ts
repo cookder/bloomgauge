@@ -18,9 +18,18 @@ const LABELS: Record<StallStep, string> = {
   escape: 'Try another model',
   hold: 'Stop and notify you',
 };
+// The manager never escapes to another model: it holds the home model instead.
+const MANAGER_LABELS: Record<StallStep, string> = {
+  ...LABELS,
+  hold: 'Hold the home model and notify you',
+};
+// A model became ready (or automatic control restarted) after the stall: a new ready
+// period began, so the stall card is history, not news.
+const READY_KINDS = new Set(['switched', 'recovered', 'resumed', 'started']);
 // native/stall_recovery.py EPISODE_LIMIT_SECONDS: longer silences are ordinary quiet.
 const EPISODE_SECONDS = 3 * 3600;
 const RECENT_SECONDS = 86400;
+const RECENT_CARD_SECONDS = 3600;
 
 export type StallSnapshot = {
   status?: string;
@@ -85,12 +94,19 @@ export type StallView = {
 
 const minutes = (seconds: number) => Math.max(1, Math.round(seconds / 60));
 
-/** What to show, or null when there is nothing to report (no stall now or in the last day). */
+/**
+ * What to show, or null when there is nothing to report: no stall now, and the last
+ * one ended (work came back, or a model became ready again after it) or is over a
+ * day old. Under the manager (`manager: true`) the "Try another model" step is not
+ * part of the ladder unless an older episode actually took it.
+ */
 export function stallView(
   snapshot: unknown,
   events: unknown,
   now: number,
+  { manager = false }: { manager?: boolean } = {},
 ): StallView | null {
+  const labels = manager ? MANAGER_LABELS : LABELS;
   const s = validStallSnapshot(snapshot) ? snapshot : null;
   const rows: StallEvent[] = (Array.isArray(events) ? events : []).filter(
     (e): e is StallEvent =>
@@ -153,12 +169,15 @@ export function stallView(
     -1,
     ...STALL_STEPS.map((step, i) => (done.has(step) ? i : -1)),
   );
-  const steps: StallStepView[] = STALL_STEPS.map((step, i) => {
+  const steps: StallStepView[] = STALL_STEPS.filter(
+    (step) => !manager || step !== 'escape' || done.has(step),
+  ).map((step) => {
+    const i = STALL_STEPS.indexOf(step);
     const event = done.get(step);
     if (event)
       return {
         step,
-        label: LABELS[step],
+        label: labels[step],
         state: 'done',
         at: event.at,
         note:
@@ -173,7 +192,7 @@ export function stallView(
       };
     return {
       step,
-      label: LABELS[step],
+      label: labels[step],
       state: i < last ? 'skipped' : 'upcoming',
     };
   });
@@ -203,22 +222,41 @@ export function stallView(
       detail: s!.reason ?? null,
     };
   }
-  // 'quiet' with a short silence is trickling work, not a stall.
+  // Work came back ('quiet' with a short silence is trickling work, not a stall):
+  // the episode is over, so the card goes away.
   const flowing =
     !!s &&
     s.fresh &&
-    (finite(s.silenceSeconds) ? s.silenceSeconds < 300 : s.status === 'ok');
+    (finite(s.silenceSeconds)
+      ? s.silenceSeconds < 300
+      : s.status === 'ok' || s.status === undefined);
+  if (flowing) return null;
+  const ended = Math.max(...episode.map((e) => e.at));
+  // A finished episode is news for an hour at most; after that it is history.
+  if (now - ended > RECENT_CARD_SECONDS) return null;
+  const readyAgain = (Array.isArray(events) ? events : []).some(
+    (e) =>
+      record(e) &&
+      finite(e.at) &&
+      e.at > ended &&
+      text(e.kind) &&
+      (READY_KINDS.has(e.kind) ||
+        (e.kind === 'manager' &&
+          text(e.detail) &&
+          /\b(is ready again|became ready)\b/i.test(e.detail))),
+  );
+  if (readyAgain) return null;
   const gaveUp = done.has('hold');
   return {
     state: 'recent',
     model,
     since: Math.min(...episode.map((e) => e.at)),
     steps,
-    headline: flowing
-      ? 'Work is arriving again.'
-      : gaveUp
-        ? 'Bloomkeeper stopped trying after these steps.'
-        : 'No steady work right now.',
+    headline: gaveUp
+      ? manager
+        ? 'Bloomkeeper held the home model after these steps.'
+        : 'Bloomkeeper stopped trying after these steps.'
+      : 'No steady work right now.',
     detail: null,
   };
 }

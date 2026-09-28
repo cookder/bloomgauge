@@ -113,3 +113,43 @@ test('pace reads in cents by default, dollars only when chosen', async () => {
   for (const value of [null, undefined, NaN, Infinity])
     assert.equal(paceCents(value), '—');
 });
+test('no built-in pace: no rating or routing hint until a baseline exists', async () => {
+  const { pulseReference, pulseDemandView } =
+    await import('../lib/earnings-pulse.ts');
+  // New Mac, history mode, no baseline: nothing to rate against.
+  for (const history of [null, undefined, 0, NaN]) {
+    const basis = pulseReference('history', history, '');
+    assert.deepEqual(basis, { value: null, source: null, routing: false });
+  }
+  const demand = {
+    model: 'm',
+    at: 100,
+    load: 10,
+    warm: 5,
+    pressure: 2,
+    typicalPressure: 2,
+    typicalSamples: 50,
+    ratio: 1.2,
+  };
+  const none = pulseReference('history', null, '');
+  assert.equal(
+    pulseDemandView(demand, 4, none.routing ? 0.3 : null, 100).hint,
+    null,
+  );
+  // This Mac's own history rates the pace and may explain a routing problem.
+  const own = pulseReference('history', 0.04, '');
+  assert.deepEqual(own, { value: 0.04, source: 'history', routing: true });
+  assert.equal(pulseComparison(0.012, own.value).ratio.toFixed(2), '0.30');
+  // A typed reference rates the pace but never implies routing trouble.
+  assert.deepEqual(pulseReference('reference', 0.04, ''), {
+    value: null,
+    source: null,
+    routing: false,
+  });
+  assert.deepEqual(pulseReference('reference', 0.04, '0.10'), {
+    value: 0.1,
+    source: 'custom',
+    routing: false,
+  });
+  assert.equal(pulseReference('reference', null, '0').value, null);
+});

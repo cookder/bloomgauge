@@ -247,6 +247,8 @@ class ControlTests(unittest.TestCase):
     tearDown = fixtures.ControllerTests.tearDown
 
     def send(self, seconds):
+        # Learning boost belongs to legacy demand following; the manager refuses it.
+        self.o.state['demandPolicy'] = policy({'managerStrategy': 0})
         self.o.snapshot = Mock(return_value={})
         return self.o.set_data_gathering(
             {

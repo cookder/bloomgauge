@@ -24,9 +24,10 @@ export type SessionReputation = {
   since: number;
   asOf: number;
   baselineReason: string;
-  scoreStart: number;
-  scoreNow: number;
-  scoreChange: number;
+  // Null from Darkbloom 0.9.10, which no longer sends a score.
+  scoreStart: number | null;
+  scoreNow: number | null;
+  scoreChange: number | null;
   totalJobs: number | null;
   successfulJobs: number | null;
   failedJobs: number | null;
@@ -276,9 +277,11 @@ export function ProviderSessionPanel({
                     )}
                   </TableCell>
                   <TableCell>
-                    {row.reputation
+                    {row.reputation?.scoreChange != null
                       ? `${row.reputation.scoreChange >= 0 ? '+' : ''}${num(row.reputation.scoreChange, 1)} points`
-                      : '—'}
+                      : row.reputation
+                        ? `${num(row.reputation.totalJobs)} jobs · ${num(row.reputation.failedJobs)} failed`
+                        : '—'}
                     <small>
                       {row.reputation
                         ? `Observed from ${sessionStamp(row.reputation.since)}`

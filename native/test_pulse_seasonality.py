@@ -1,5 +1,6 @@
 """Time/day comparisons must stay grounded in qualified warm observations."""
 
+import json
 import os
 import time
 import unittest
@@ -227,7 +228,8 @@ class SeasonalPulseIntegrationTests(unittest.TestCase):
         # Three complete qualified idle hours establish the contextual zero.
         for day in ('05', '06', '12'):
             self.record(minutes(f'2026-09-{day}T01:00:00-04:00', 0))
-        self.record(minutes('2026-09-13T01:15:00-04:00', 0, 30))  # Current session/future.
+        # Established history: the current session is left out.
+        self.record(minutes('2026-09-13T01:15:00-04:00', 0, 30))
         self.record(minutes('2026-08-01T01:00:00-04:00', 0))  # Outside 30 days.
         self.record(minutes('2026-09-04T01:00:00-04:00', 0), account='another')
         self.record(minutes('2026-09-03T01:00:00-04:00', 0), device='another')
@@ -246,6 +248,73 @@ class SeasonalPulseIntegrationTests(unittest.TestCase):
         self.session['models'] = ['a', 'b']
         b = self.snapshot()
         self.assertEqual((b['scope'], b['hours'], b['models']), ('model', 1, ['a', 'b']))
+
+    def test_current_session_settled_minutes_build_a_first_baseline(self):
+        # A new user: no earlier sessions. 45 paid minutes in this session.
+        self.session['startedAt'] = self.now - 45 * 60
+        rows = minutes('2026-09-13T00:45:00-04:00', 0.06, 45)
+        self.record(rows)
+        for i, row in enumerate(rows):  # $0.001 a minute = $0.06/h
+            self.h.db.execute(
+                'INSERT INTO opt_credits VALUES(?,?,?,?,?,?,?)',
+                ('account', i, 'local-provider', row['at'] + 30, 'a', 1000, 0),
+            )
+        a = self.snapshot()
+        # 01:20 cutoff: 35 settled minutes count, the last 10 do not.
+        self.assertEqual((a['scope'], round(a['hours'] * 60)), ('model', 35))
+        self.assertAlmostEqual(a['ratePerHour'], 0.06)
+        # 25 minutes is not yet a baseline.
+        self.session['startedAt'] = self.now - 35 * 60
+        pulse = EarningsPulse(self.h, ModelProjection(self.store))
+        self.h.db.execute('DELETE FROM opt_ready_minutes')
+        self.record(minutes('2026-09-13T00:55:00-04:00', 0.06, 35))
+        missing = {'status': 'missing'}
+        b = pulse.snapshot('account', self.raw, self.session, missing, None, self.now)['baseline']
+        self.assertEqual((b['scope'], b['ratePerHour']), ('learning', None))
+        # 20 earlier minutes are not a baseline either, but with this session's they are.
+        self.record(minutes('2026-09-12T01:00:00-04:00', 0, 20))
+        pulse = EarningsPulse(self.h, ModelProjection(self.store))
+        c = pulse.snapshot('account', self.raw, self.session, missing, None, self.now)['baseline']
+        self.assertEqual((c['scope'], round(c['hours'] * 60)), ('model', 45))
+
+    def test_three_model_set_uses_its_own_session_history(self):
+        from provider_sessions import ProviderSessions
+
+        ProviderSessions(self.h, '/nonexistent')
+        models = ['a', 'b', 'c']
+        start = self.now - 3 * 3600
+        db = self.h.db
+        for sid, served in ((5, ['c', 'a', 'b']), (6, ['a', 'b'])):
+            db.execute(
+                'INSERT INTO provider_sessions(id,scope,data) VALUES(?,?,?)',
+                (sid, 'x', json.dumps({'models': served})),
+            )
+            db.execute(
+                'INSERT INTO pulse_connections VALUES(?,?,?,?)',
+                ('account', sid, self.device, 'p%d' % sid),
+            )
+            db.execute(
+                'INSERT INTO session_ready_intervals VALUES(?,?,?)', (sid, start, start + 3600)
+            )
+        db.execute('INSERT INTO opt_coverage VALUES(?,?,?)', ('account', start - 60, self.now))
+        for i, (provider, model) in enumerate(
+            [('p5', 'a'), ('p5', 'c'), ('p6', 'a'), ('other', 'b'), ('p5', 'z')]
+        ):
+            db.execute(
+                'INSERT INTO opt_credits VALUES(?,?,?,?,?,?,?)',
+                ('account', i, provider, start + 600 + i, model, 20000, 0),
+            )
+        self.session.update(id=7, models=models)
+        a = self.snapshot()
+        # Only session 5 (exactly a+b+c) and its own provider's a/c credits: $0.04 in 1h.
+        self.assertEqual((a['scope'], a['hours'], a['models']), ('model', 1, models))
+        self.assertAlmostEqual(a['ratePerHour'], 0.04)
+        # Without coverage the hour is unknown, not zero pay.
+        db.execute('DELETE FROM opt_coverage')
+        b = EarningsPulse(self.h, self.projection).snapshot(
+            'account', self.raw, self.session, {'status': 'missing'}, None, self.now
+        )['baseline']
+        self.assertEqual((b['scope'], b['ratePerHour']), ('learning', None))
 
     def test_local_hour_boundary_invalidates_baseline_before_cache_timeout(self):
         fake = Mock()

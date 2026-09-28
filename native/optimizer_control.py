@@ -16,6 +16,7 @@ import math
 import threading
 import time
 import uuid
+import manager
 from demand_optimizer import policy as demand_policy
 from model_combinations import members, selection_key
 from model_readiness import session_key
@@ -50,6 +51,39 @@ def saved_plan(state):
     return finite(state.get('startedAt')) and state.get('endsAt') is None
 
 
+def scope_error(current, policy):
+    """Why automatic control can't take this serving selection, or None. The manager holds
+    one model or a pair without gemma (manager.hold_error); legacy follows one model."""
+    if manager.enabled(policy):
+        return manager.hold_error(current)
+    if len(members(current)) != 1:
+        return 'Automatic demand following needs one serving model. Choose one in the manual model controls in Optimizer → Overview; multi-model reporting stays available.'
+    return None
+
+
+def warmup_view(warmup, provider, raw, current):
+    """Warm-up status only when it belongs to the serving model and this provider session;
+    anything older says it is waiting rather than showing a stale 'ready'."""
+    if provider.get('status') != 'running':
+        return {}
+    source = provider.get('raw') or raw
+    warmup = warmup if isinstance(warmup, dict) else {}
+    if (
+        not warmup
+        or warmup.get('session') != session_key(source)
+        or warmup.get('model') != current
+    ):
+        return {'status': 'waiting', 'detail': 'Waiting to check the serving model’s warm-up.'}
+    view = {key: value for key, value in warmup.items() if key in ('status', 'detail')}
+    warm = source.get('warm_models') if isinstance(source.get('warm_models'), list) else []
+    if view.get('status') == 'ready' and not all(m in warm for m in members(current)):
+        view.update(
+            status='cold',
+            detail='Darkbloom unloaded the model after warm-up. Its idle-memory policy is preserved.',
+        )
+    return view
+
+
 class OptimizerControl:
     def __init__(self, optimizer):
         self.o = optimizer
@@ -81,7 +115,10 @@ class OptimizerControl:
             'selected': [],
             'models': [],
             'demandPolicy': copy.deepcopy(optimizer.state.get('demandPolicy', {})),
+            # The effective strategy, so the On card never guesses from a missing key.
+            'strategy': manager.strategy(optimizer.state.get('demandPolicy')),
             'warmup': {},
+            'manager': None,
             'automatic': {
                 'mode': 'manual',
                 'phase': 'waiting',
@@ -235,9 +272,9 @@ class OptimizerControl:
                         'identity',
                         'retry',
                     )
-                elif len(members(current)) != 1:
+                elif scope_error(current, state.get('demandPolicy')):
                     problem = (
-                        'Automatic demand following needs one serving model. Choose one in the manual model controls in Optimizer → Overview; multi-model reporting stays available.',
+                        scope_error(current, state.get('demandPolicy')),
                         'model-scope',
                         'controller',
                     )
@@ -263,7 +300,7 @@ class OptimizerControl:
                         'serving-unavailable',
                         'controller',
                     )
-                elif saved_plan(state) and current not in state.get('models', []):
+                elif saved_plan(state) and not manager.in_pool(current, state.get('models', [])):
                     problem = (
                         'The serving model is not in the saved pool. Review the saved model selection.',
                         'saved-pool',
@@ -321,9 +358,9 @@ class OptimizerControl:
                 'selected': state.get('models', []),
                 'models': models,
                 'demandPolicy': copy.deepcopy(state.get('demandPolicy', {})),
-                'warmup': {
-                    key: value for key, value in o.warmup.items() if key in ('status', 'detail')
-                },
+                'strategy': manager.strategy(state.get('demandPolicy')),
+                'warmup': warmup_view(o.warmup, provider, raw, current),
+                'manager': copy.deepcopy(self.view.get('manager')),  # refreshed just below
                 'automatic': status,
                 'operation': {key: op[key] for key in ('id', 'status', 'detail')} if op else None,
                 'lastRequestId': self.requests[-1]['id'] if self.requests else None,
@@ -331,7 +368,53 @@ class OptimizerControl:
             with self.cache_lock:
                 self.context = context
                 self.view = view
+        try:
+            control = getattr(o, 'manager', None)
+            summary = control.summary(state, provider['raw'] or raw, now) if control else None
+        except Exception:
+            log.exception('Manager summary failed')
+            summary = None
+        with self.cache_lock:
+            if self.view is view:
+                view['manager'] = summary
         return view
+
+    def release_pin(self, data):
+        """Manager: release the user's pin so the manager chooses home again. Same receipts and
+        control-version check as On/Manual; the return home is a normal, confirmed move."""
+        if set(data) != {'action', 'requestId', 'expectedControl'}:
+            raise ValueError('Releasing a pin takes only a request ID and the control version.')
+        try:
+            request_id = str(uuid.UUID(data.get('requestId', '')))
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError('A valid request ID is required.') from None
+        signature = digest(data)
+        o = self.o
+        with o.lock:
+            old = next((row for row in self.requests if row['id'] == request_id), None)
+            if old:
+                if old['signature'] != signature:
+                    raise ValueError('This request ID was already used for another action.')
+                return self.snapshot()
+            view = self.snapshot()
+            if not self.context or data.get('expectedControl') != view['controlVersion']:
+                raise ValueError('The control status changed. Refresh it before trying again.')
+            o.update_guard.require_available()
+            o.manager.release_pin(time.time())
+            before = copy.deepcopy(self.requests)
+            self.requests = (self.requests + [{'id': request_id, 'signature': signature}])[-32:]
+            try:
+                self.save()
+            except Exception:
+                self.requests = before
+                raise
+            with self.cache_lock:
+                self.view['lastRequestId'] = request_id
+                self.view['controlVersion'] = digest([o.control_version(), request_id])
+                if isinstance(self.view.get('manager'), dict):
+                    self.view['manager'] = {**self.view['manager'], 'pinned': False}
+        self.wake.set()
+        return self.snapshot()
 
     def action(self, data, source='mac'):
         """Only validate cached state and persist intent; never inspect or dispatch."""
@@ -347,9 +430,11 @@ class OptimizerControl:
         if (
             not isinstance(data, dict)
             or set(data) - allowed
-            or data.get('action') not in ('set-automatic', 'refresh')
+            or data.get('action') not in ('set-automatic', 'refresh', 'release-pin')
         ):
             raise ValueError('Choose On, Manual or Refresh.')
+        if data['action'] == 'release-pin':
+            return self.release_pin(data)
         try:
             request_id = str(uuid.UUID(data.get('requestId', '')))
         except (ValueError, TypeError, AttributeError):
@@ -412,23 +497,29 @@ class OptimizerControl:
                     and data.get('expectedProvider') != view['providerVersion']
                 ):
                     raise ValueError('Review the stopped provider before turning On.')
-                if len(members(view['currentModel'])) != 1:
-                    raise ValueError(
-                        'Automatic demand following needs one serving model. Use the manual model controls in Optimizer → Overview to choose it.'
-                    )
+                policy = (
+                    demand_policy(data.get('demandPolicy', view['demandPolicy']))
+                    if context['firstPlan']
+                    else o.state.get('demandPolicy')
+                )
+                scope = scope_error(view['currentModel'], policy)
+                if scope:
+                    raise ValueError(scope)
                 if context['firstPlan']:
                     models = data.get('models')
+                    # The manager can hold one model; legacy compares two or more.
+                    fewest = 1 if manager.enabled(policy) else 2
                     if (
                         not isinstance(models, list)
-                        or not 2 <= len(models) <= 16
+                        or not fewest <= len(models) <= 16
                         or any(not isinstance(m, str) or not m for m in models)
                         or len(set(models)) != len(models)
                         or view['currentModel'] not in models
                     ):
                         raise ValueError(
-                            'Review two to sixteen models, including the current model, before turning On.'
+                            'Review %s to sixteen models, including the current model, before turning On.'
+                            % ('one' if fewest == 1 else 'two')
                         )
-                    policy = demand_policy(data.get('demandPolicy', view['demandPolicy']))
                 else:
                     models = None
                     policy = None
@@ -665,6 +756,7 @@ class OptimizerControl:
         try:
             if op['firstPlan']:
                 saved.update(
+                    demandPolicy=op.get('policy') or saved.get('demandPolicy'),
                     models=op['models'],
                     startedAt=now,
                     endsAt=None,
@@ -716,7 +808,10 @@ class OptimizerControl:
                     'operation',
                 )
                 return
-            if not o.tracking(o.raw, time.time())['counting']:
+            # The manager may turn on with no ready model; its watchdog restores home.
+            if not manager.enabled(
+                op.get('policy') if op['firstPlan'] else o.state.get('demandPolicy')
+            ) and not o.tracking(o.raw, time.time())['counting']:
                 self.operation.update(
                     status='waiting',
                     detail='Waiting for fresh verified readiness before turning On.',

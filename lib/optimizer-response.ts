@@ -393,6 +393,13 @@ function execution(v: unknown): boolean {
       ))
   );
 }
+// An ordinary review's rate: settled inference per warm hour after the first paid work
+// when the trial has a steady rate, else per elapsed selection hour
+// (native/trial_economics.py ordinary_review).
+const settledBases = [
+  'settled_inference_per_elapsed_selection_hour',
+  'settled_inference_per_warm_hour_after_first_work',
+];
 function spikeReview(value: unknown): boolean {
   return (
     value == null ||
@@ -406,12 +413,10 @@ function spikeReview(value: unknown): boolean {
         : finite(value.referenceRate)) &&
       ['trialRate', 'liveRate'].every((k) => numeric(value[k])) &&
       (value.rateBasis == null ||
-        ['warm_hour', 'settled_inference_per_elapsed_selection_hour'].includes(
-          String(value.rateBasis),
-        )) &&
+        ['warm_hour', ...settledBases].includes(String(value.rateBasis))) &&
       (value.ordinary == null || typeof value.ordinary === 'boolean') &&
       (value.ordinary !== true ||
-        value.rateBasis === 'settled_inference_per_elapsed_selection_hour') &&
+        settledBases.includes(String(value.rateBasis))) &&
       (value.learning == null || typeof value.learning === 'boolean') &&
       (value.demand == null ||
         (record(value.demand) &&
@@ -570,118 +575,95 @@ function preferredReturn(value: unknown): boolean {
       optionalString(value.selection))
   );
 }
-function demandAuto(value: unknown): boolean {
-  if (
-    !record(value) ||
-    !record(value.policy) ||
-    !record(value.limits) ||
-    !Array.isArray(value.opportunities) ||
-    !Array.isArray(value.runs) ||
-    !demandEstimate(value.baseline) ||
-    typeof value.reason !== 'string' ||
-    typeof value.enabled !== 'boolean' ||
-    typeof value.scanStatus !== 'string' ||
-    !finite(value.at) ||
-    !finite(value.scanAt) ||
-    !finite(value.planningMinutes) ||
-    !optionalString(value.controlError) ||
-    !optionalString(value.target) ||
-    !optionalString(value.currentModel)
-  )
-    return false;
-  const limits = value.limits;
-  const alternative = value.paidAlternative;
-  if (
-    alternative != null &&
-    (!record(alternative) ||
-      typeof alternative.model !== 'string' ||
-      !alternative.model ||
-      typeof alternative.eligible !== 'boolean' ||
-      typeof alternative.reason !== 'string' ||
-      !alternative.reason ||
-      !finite(alternative.at))
-  )
-    return false;
-  if (
-    !optionalString(value.economicRevision) ||
-    !samplingBudget(limits.sampling) ||
-    !optionalString(value.kind) ||
-    !trialOutcome(value.trial) ||
-    !fallback(value.fallback) ||
-    !spikeReview(value.spikeReview) ||
-    !execution(value.execution) ||
-    !earningsTarget(value.earningsTarget) ||
-    !preferredReturn(value.preferredReturn) ||
-    !optionalString(value.explorationTrigger) ||
-    (value.activity != null &&
-      (!record(value.activity) ||
-        typeof value.activity.fresh !== 'boolean' ||
-        !finite(value.activity.idleSeconds)))
-  )
-    return false;
-  if (
-    ![
-      'switchesUsed',
-      'switchLimit',
-      'downtimeMinutesUsed',
-      'downtimeMinutesLimit',
-      'nextRunAt',
-    ].every((k) => finite(limits[k]))
-  )
-    return false;
-  const rules = value.policy;
-  // The saved plan, when present, has the same shape as the effective policy.
-  const saved = value.savedPolicy;
-  if (
-    saved != null &&
-    (!record(saved) ||
-      !Object.values(saved).every(
+function paidAlternative(value: unknown): boolean {
+  return (
+    value == null ||
+    (record(value) &&
+      typeof value.model === 'string' &&
+      !!value.model &&
+      typeof value.eligible === 'boolean' &&
+      typeof value.reason === 'string' &&
+      !!value.reason &&
+      finite(value.at))
+  );
+}
+function activity(value: unknown): boolean {
+  return (
+    value == null ||
+    (record(value) &&
+      typeof value.fresh === 'boolean' &&
+      finite(value.idleSeconds))
+  );
+}
+// Manager strategy switches (native/demand_optimizer.py CHOICES): absent on older
+// backends, 0 or 1 otherwise. The manager view itself is read defensively at
+// render (lib/optimizer-manager.ts), so a new or odd field never blanks the page.
+const managerSwitches = (policy: Record<string, unknown>) =>
+  !['managerStrategy', 'managerExcursions'].some(
+    (k) => policy[k] != null && policy[k] !== 0 && policy[k] !== 1,
+  );
+// The saved plan, when present, has the same shape as the effective policy.
+function savedPolicy(value: unknown): boolean {
+  return (
+    value == null ||
+    (record(value) &&
+      Object.values(value).every(
         (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0,
-      ))
-  )
-    return false;
-  if (
-    value.baselineLearning != null &&
-    (!record(value.baselineLearning) ||
-      typeof value.baselineLearning.enabled !== 'boolean' ||
-      !finite(value.baselineLearning.trialsUsed))
-  )
-    return false;
-  if (
-    rules.baselineLearningEnabled != null &&
-    rules.baselineLearningEnabled !== 0 &&
-    rules.baselineLearningEnabled !== 1
-  )
-    return false;
-  const gathering = value.dataGathering;
-  if (
-    gathering != null &&
-    (!record(gathering) ||
-      typeof gathering.active !== 'boolean' ||
-      (gathering.active &&
-        !['startedAt', 'endsAt', 'remainingSeconds'].every((k) =>
-          finite(gathering[k]),
+      ) &&
+      managerSwitches(value))
+  );
+}
+function baselineLearning(value: unknown): boolean {
+  return (
+    value == null ||
+    (record(value) &&
+      typeof value.enabled === 'boolean' &&
+      finite(value.trialsUsed))
+  );
+}
+function dataGathering(value: unknown): boolean {
+  return (
+    value == null ||
+    (record(value) &&
+      typeof value.active === 'boolean' &&
+      (!value.active ||
+        ['startedAt', 'endsAt', 'remainingSeconds'].every((k) =>
+          finite(value[k]),
         )))
-  )
-    return false;
-  if (
-    rules.fallbackEnabled != null &&
-    rules.fallbackEnabled !== 0 &&
-    rules.fallbackEnabled !== 1
-  )
-    return false;
-  if (
-    rules.targetUsdPerHour != null &&
-    ![0.08, 0.1, 0.12, 0.15, 0.2, 0.25].includes(Number(rules.targetUsdPerHour))
-  )
-    return false;
-  if (
-    rules.targetUsdPerHour != null &&
-    typeof rules.targetUsdPerHour !== 'number'
-  )
-    return false;
-  if (
-    ![
+  );
+}
+function confirmation(value: unknown): boolean {
+  if (value == null) return true;
+  return !(
+    !record(value) ||
+    typeof value.model !== 'string' ||
+    !finite(value.seconds) ||
+    Number(value.seconds) < 0 ||
+    !finite(value.samples) ||
+    !numeric(value.requiredSeconds) ||
+    (value.status != null &&
+      !['confirming', 'paused', 'ready'].includes(String(value.status))) ||
+    !optionalString(value.reason) ||
+    !numeric(value.expiresAt) ||
+    (value.expiresAt != null && Number(value.expiresAt) <= 0) ||
+    (value.status === 'paused' &&
+      !(typeof value.reason === 'string' && value.reason.trim())) ||
+    (value.status === 'ready' &&
+      (!finite(value.requiredSeconds) ||
+        Number(value.requiredSeconds) <= 0 ||
+        Number(value.seconds) < Number(value.requiredSeconds)))
+  );
+}
+function policyRules(rules: Record<string, unknown>): boolean {
+  return (
+    [rules.baselineLearningEnabled, rules.fallbackEnabled].every(
+      (v) => v == null || v === 0 || v === 1,
+    ) &&
+    managerSwitches(rules) &&
+    (rules.targetUsdPerHour == null ||
+      (typeof rules.targetUsdPerHour === 'number' &&
+        [0.08, 0.1, 0.12, 0.15, 0.2, 0.25].includes(rules.targetUsdPerHour))) &&
+    [
       'minRunMinutes',
       'confirmationMinutes',
       'improvementPercent',
@@ -690,49 +672,67 @@ function demandAuto(value: unknown): boolean {
       'maxSwitchesPerDay',
       'maxDowntimeMinutes',
       'memoryHeadroomGB',
-    ].every(
-      (k) =>
-        typeof rules[k] === 'number' &&
-        Number.isFinite(rules[k]) &&
-        rules[k] > 0,
-    )
-  )
-    return false;
-  if (
-    !['idleEscapeMinutes', 'trialMinutes', 'trialCooldownMinutes'].every(
+    ].every((k) => finite(rules[k]) && Number(rules[k]) > 0) &&
+    ['idleEscapeMinutes', 'trialMinutes', 'trialCooldownMinutes'].every(
       (k) => rules[k] == null || (finite(rules[k]) && Number(rules[k]) > 0),
     )
-  )
-    return false;
-  if (
-    value.confirmation != null &&
-    (!record(value.confirmation) ||
-      typeof value.confirmation.model !== 'string' ||
-      !finite(value.confirmation.seconds) ||
-      Number(value.confirmation.seconds) < 0 ||
-      !finite(value.confirmation.samples) ||
-      !numeric(value.confirmation.requiredSeconds) ||
-      (value.confirmation.status != null &&
-        !['confirming', 'paused', 'ready'].includes(
-          String(value.confirmation.status),
-        )) ||
-      !optionalString(value.confirmation.reason) ||
-      !numeric(value.confirmation.expiresAt) ||
-      (value.confirmation.expiresAt != null &&
-        Number(value.confirmation.expiresAt) <= 0) ||
-      (value.confirmation.status === 'paused' &&
-        !(
-          typeof value.confirmation.reason === 'string' &&
-          value.confirmation.reason.trim()
-        )) ||
-      (value.confirmation.status === 'ready' &&
-        (!finite(value.confirmation.requiredSeconds) ||
-          Number(value.confirmation.requiredSeconds) <= 0 ||
-          Number(value.confirmation.seconds) <
-            Number(value.confirmation.requiredSeconds))))
-  )
-    return false;
-  return value.opportunities.every(opportunity) && value.runs.every(run);
+  );
+}
+/** What the plan cannot render without: its policy, limits and scan status. */
+function demandAutoCore(value: unknown): boolean {
+  return (
+    record(value) &&
+    record(value.policy) &&
+    record(value.limits) &&
+    Array.isArray(value.opportunities) &&
+    Array.isArray(value.runs) &&
+    demandEstimate(value.baseline) &&
+    typeof value.reason === 'string' &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.scanStatus === 'string' &&
+    finite(value.at) &&
+    finite(value.scanAt) &&
+    finite(value.planningMinutes) &&
+    optionalString(value.controlError) &&
+    optionalString(value.target) &&
+    optionalString(value.currentModel) &&
+    [
+      'switchesUsed',
+      'switchLimit',
+      'downtimeMinutesUsed',
+      'downtimeMinutesLimit',
+      'nextRunAt',
+    ].every((k) => finite((value.limits as Record<string, unknown>)[k])) &&
+    policyRules(value.policy)
+  );
+}
+// Optional parts of demandAuto: one that fails is dropped and named ("Couldn't read …").
+const demandSections: [string, (value: unknown) => boolean, string][] = [
+  ['paidAlternative', paidAlternative, 'the paid alternative'],
+  ['trial', trialOutcome, 'the trial'],
+  ['fallback', fallback, 'the fallback model'],
+  ['spikeReview', spikeReview, 'the trial review'],
+  ['execution', execution, 'recent decisions'],
+  ['earningsTarget', earningsTarget, 'the earnings target'],
+  ['preferredReturn', preferredReturn, 'the preferred return'],
+  ['activity', activity, 'the activity reading'],
+  ['savedPolicy', savedPolicy, 'the saved plan'],
+  ['baselineLearning', baselineLearning, 'learning status'],
+  ['dataGathering', dataGathering, 'the learning boost'],
+  ['confirmation', confirmation, 'the switch check'],
+  ['economicRevision', optionalString, 'plan details'],
+  ['kind', optionalString, 'plan details'],
+  ['explorationTrigger', optionalString, 'plan details'],
+];
+function demandAuto(value: unknown): boolean {
+  return (
+    demandAutoCore(value) &&
+    record(value) &&
+    demandSections.every(([key, check]) => check(value[key])) &&
+    samplingBudget((value.limits as Record<string, unknown>).sampling) &&
+    (value.opportunities as unknown[]).every(opportunity) &&
+    (value.runs as unknown[]).every(run)
+  );
 }
 
 function run(r: unknown): boolean {
@@ -773,42 +773,41 @@ export function withoutInvalidHistory<T>(value: T): T {
   return out as T;
 }
 
-/** Validate the containers used during render before publishing an API result. */
-export function validOptimizerResponse(value: unknown): boolean {
-  if (
-    !record(value) ||
-    typeof value.at !== 'number' ||
-    !Number.isFinite(value.at) ||
-    !['observe', 'week', 'optimize', 'combo', 'demand'].includes(
+/**
+ * The Overview run chip's reader for `/api/optimizer?view=run` (native/collector.py
+ * `run_view`). That view sends only the live fields and a slice of demandAuto
+ * (enabled, trial, paidAlternative, spikeReview, the current trial's run), so the
+ * full-page validator can never accept it. pulseRunStatus reads every field
+ * defensively; only what it cannot work without is required here.
+ */
+export function readRunView(value: unknown): Record<string, unknown> | null {
+  return record(value) && finite(value.at) && typeof value.mode === 'string'
+    ? value
+    : null;
+}
+
+/** The response's own fields: without these nothing on the Optimizer page renders. */
+function coreResponse(value: unknown): value is Record<string, unknown> & {
+  models: unknown[];
+  events: unknown[];
+} {
+  return (
+    record(value) &&
+    finite(value.at) &&
+    ['observe', 'week', 'optimize', 'combo', 'demand'].includes(
       String(value.mode),
-    ) ||
-    typeof value.detail !== 'string' ||
-    typeof value.status !== 'string' ||
-    !strings(value.selected) ||
-    !Array.isArray(value.models) ||
-    !Array.isArray(value.events) ||
-    typeof value.controlVersion !== 'string' ||
-    typeof value.canManage !== 'boolean' ||
-    typeof value.busy !== 'boolean' ||
-    typeof value.blockHours !== 'number' ||
-    !Number.isFinite(value.blockHours) ||
-    value.blockHours <= 0
-  )
-    return false;
-  if (
-    value.models.some(
-      (model) =>
-        !record(model) ||
-        typeof model.id !== 'string' ||
-        typeof model.name !== 'string' ||
-        typeof model.available !== 'boolean' ||
-        !optionalString(model.reason) ||
-        !evidence(model.evidence),
-    )
-  )
-    return false;
-  if (
-    ![
+    ) &&
+    typeof value.detail === 'string' &&
+    typeof value.status === 'string' &&
+    strings(value.selected) &&
+    Array.isArray(value.models) &&
+    Array.isArray(value.events) &&
+    typeof value.controlVersion === 'string' &&
+    typeof value.canManage === 'boolean' &&
+    typeof value.busy === 'boolean' &&
+    finite(value.blockHours) &&
+    Number(value.blockHours) > 0 &&
+    [
       'currentModel',
       'originalModel',
       'requestedModel',
@@ -816,102 +815,269 @@ export function validOptimizerResponse(value: unknown): boolean {
       'controlError',
       'discoveryError',
     ].every((key) => optionalString(value[key]))
-  )
-    return false;
-  if (!value.events.every(event)) return false;
+  );
+}
+function modelRow(model: unknown): boolean {
+  return (
+    record(model) &&
+    typeof model.id === 'string' &&
+    typeof model.name === 'string' &&
+    typeof model.available === 'boolean' &&
+    optionalString(model.reason) &&
+    evidence(model.evidence)
+  );
+}
+function warmup(value: unknown): boolean {
+  return (
+    value == null ||
+    (record(value) &&
+      typeof value.status === 'string' &&
+      typeof value.detail === 'string')
+  );
+}
+function resumeDemand(resume: unknown): boolean {
+  return (
+    resume == null ||
+    (record(resume) &&
+      typeof resume.hasSavedPlan === 'boolean' &&
+      typeof resume.available === 'boolean' &&
+      optionalString(resume.currentModel) &&
+      optionalString(resume.reason) &&
+      Number.isInteger(resume.selectedCount) &&
+      Number(resume.selectedCount) >= 0 &&
+      // A paused manager can hold the serving model alone, so one available model
+      // is enough (native/optimizer.py demand_resume_context).
+      (!resume.available ||
+        (resume.hasSavedPlan &&
+          typeof resume.currentModel === 'string' &&
+          !!resume.currentModel &&
+          Number.isInteger(resume.availableCount) &&
+          Number(resume.availableCount) >= 1)))
+  );
+}
+function reporting(r: unknown): boolean {
+  return (
+    r == null ||
+    (record(r) &&
+      finite(r.at) &&
+      numeric(r.sessionId) &&
+      strings(r.models) &&
+      r.models.length >= 3 &&
+      r.models.length <= 64 &&
+      new Set(r.models).size === r.models.length &&
+      !r.models.some((m) => !m || m !== m.trim()) &&
+      r.managedBy === 'darkbloom' &&
+      r.automationSupported === false &&
+      typeof r.counting === 'boolean' &&
+      typeof r.detail === 'string')
+  );
+}
+function combinations(combo: unknown): boolean {
+  return (
+    combo == null ||
+    (record(combo) &&
+      Array.isArray(combo.candidates) &&
+      Array.isArray(combo.results) &&
+      combo.candidates.every(
+        (pair) =>
+          record(pair) &&
+          typeof pair.id === 'string' &&
+          strings(pair.models) &&
+          optionalString(pair.reason),
+      ) &&
+      combo.results.every(
+        (pair) =>
+          record(pair) &&
+          typeof pair.id === 'string' &&
+          typeof pair.name === 'string' &&
+          evidence(pair.evidence),
+      ) &&
+      (combo.plan == null ||
+        (record(combo.plan) &&
+          Array.isArray(combo.plan.pairs) &&
+          combo.plan.pairs.every(strings) &&
+          optionalString(combo.plan.detail))))
+  );
+}
+function memory(value: unknown): boolean {
+  if (value == null) return true;
+  if (!record(value)) return false;
+  const recovery = value.cacheRecovery;
+  return (
+    recovery == null ||
+    (record(recovery) &&
+      ['status', 'detail', 'model'].every((key) =>
+        optionalString(recovery[key]),
+      ))
+  );
+}
+// Optional parts of the response: one that fails is dropped and named.
+const responseSections: [string, (value: unknown) => boolean, string][] = [
+  ['warmup', warmup, 'warm-up status'],
+  ['resumeDemand', resumeDemand, 'the resume status'],
+  ['reporting', reporting, 'multi-model reporting'],
+  ['combinations', combinations, 'model pairs'],
+  ['memory', memory, 'memory status'],
+];
+
+/** Validate the containers used during render before publishing an API result. */
+export function validOptimizerResponse(value: unknown): boolean {
+  return (
+    coreResponse(value) &&
+    value.models.every(modelRow) &&
+    value.events.every(event) &&
+    responseSections.every(([key, check]) => check(value[key])) &&
+    (value.demandAuto == null || demandAuto(value.demandAuto))
+  );
+}
+
+export type OptimizerReading<T> = {
+  value: T;
+  /** Short names of the parts that were dropped, for "Couldn't read: …". */
+  unreadable: string[];
+  /**
+   * Whether a dropped part counts toward a validation report. Old-format history rows
+   * (switch runs, activity events) are tolerated, as before (6bf6a75, Sep 26 run 131):
+   * they are named in "Couldn't read" but never reported.
+   */
+  reportable: boolean;
+};
+const HISTORY_LABELS = ['some activity', 'some switch history'];
+// Lists the backend caps at these lengths today (decision_journal.py history,
+// demand_targets.py high_earnings rates). Longer lists are clamped, not rejected.
+const HISTORY_LIMIT = 30;
+const RATES_LIMIT = 3;
+
+/**
+ * Read /api/optimizer section by section. Only the response's own fields are
+ * required (null otherwise); a malformed optional section, row or plan part is
+ * dropped and named, so one odd value never blanks the whole Optimizer page.
+ * Whatever is returned passes validOptimizerResponse.
+ */
+export function readOptimizerResponse<T = Record<string, unknown>>(
+  input: unknown,
+): OptimizerReading<T> | null {
+  if (!coreResponse(input)) return null;
+  const value: Record<string, unknown> = { ...input };
+  const unreadable: string[] = [];
+  const drop = (label: string) => {
+    if (!unreadable.includes(label)) unreadable.push(label);
+  };
+  const rows = (
+    items: unknown[],
+    check: (item: unknown) => boolean,
+    label: string,
+  ) => {
+    const kept = items.filter(check);
+    if (kept.length !== items.length) drop(label);
+    return kept;
+  };
+  value.models = rows(input.models, modelRow, 'some model evidence');
+  value.events = rows(input.events, event, 'some activity');
+  for (const [key, check, label] of responseSections)
+    if (value[key] != null && !check(value[key])) {
+      delete value[key];
+      drop(label);
+    }
+  if (value.demandAuto != null) {
+    const auto = readDemandAuto(value.demandAuto, rows, drop);
+    if (auto) value.demandAuto = auto;
+    else {
+      delete value.demandAuto;
+      drop('the automatic plan');
+    }
+  }
+  return {
+    value: value as T,
+    unreadable,
+    reportable: unreadable.some((label) => !HISTORY_LABELS.includes(label)),
+  };
+}
+
+/** The saved plan couldn't be read, so saving could store something else in its place. */
+export const savedPlanUnreadable = (unreadable: readonly string[]) =>
+  unreadable.includes('the automatic plan') ||
+  unreadable.includes('the saved plan');
+
+/**
+ * Keep the last readable automatic plan, or its saved plan, when this reading dropped
+ * it. Without it a manager Mac would show the legacy controls, and the plan editor
+ * would start from the live policy instead of the saved one.
+ */
+export function keepReadablePlan<T extends { demandAuto?: unknown }>(
+  next: T,
+  unreadable: readonly string[],
+  previous?: { demandAuto?: unknown } | null,
+): T {
+  const last = previous?.demandAuto;
+  if (!record(last)) return next;
+  if (next.demandAuto == null)
+    return unreadable.includes('the automatic plan')
+      ? { ...next, demandAuto: last }
+      : next;
   if (
-    value.warmup != null &&
-    (!record(value.warmup) ||
-      typeof value.warmup.status !== 'string' ||
-      typeof value.warmup.detail !== 'string')
+    record(next.demandAuto) &&
+    next.demandAuto.savedPolicy == null &&
+    last.savedPolicy != null &&
+    unreadable.includes('the saved plan')
   )
-    return false;
-  if (value.resumeDemand != null) {
-    const resume = value.resumeDemand;
-    if (
-      !record(resume) ||
-      typeof resume.hasSavedPlan !== 'boolean' ||
-      typeof resume.available !== 'boolean' ||
-      !optionalString(resume.currentModel) ||
-      !optionalString(resume.reason) ||
-      !Number.isInteger(resume.selectedCount) ||
-      (resume.selectedCount as number) < 0 ||
-      (resume.available &&
-        (!resume.hasSavedPlan ||
-          typeof resume.currentModel !== 'string' ||
-          !resume.currentModel ||
-          !Number.isInteger(resume.availableCount) ||
-          (resume.availableCount as number) < 2))
-    )
-      return false;
+    return {
+      ...next,
+      demandAuto: { ...next.demandAuto, savedPolicy: last.savedPolicy },
+    };
+  return next;
+}
+
+function readDemandAuto(
+  input: unknown,
+  rows: (
+    items: unknown[],
+    check: (item: unknown) => boolean,
+    label: string,
+  ) => unknown[],
+  drop: (label: string) => void,
+): Record<string, unknown> | null {
+  if (!demandAutoCore(input) || !record(input)) return null;
+  const auto: Record<string, unknown> = { ...input };
+  auto.runs = rows(input.runs as unknown[], run, 'some switch history');
+  auto.opportunities = rows(
+    input.opportunities as unknown[],
+    opportunity,
+    'some model comparisons',
+  );
+  const decisions = auto.execution;
+  if (
+    record(decisions) &&
+    Array.isArray(decisions.history) &&
+    decisions.history.length > HISTORY_LIMIT
+  )
+    // Newest first.
+    auto.execution = {
+      ...decisions,
+      history: decisions.history.slice(0, HISTORY_LIMIT),
+    };
+  const target = auto.earningsTarget;
+  const high = record(target) ? target.highEarnings : null;
+  if (
+    record(target) &&
+    record(high) &&
+    Array.isArray(high.rates) &&
+    high.rates.length > RATES_LIMIT
+  )
+    // Oldest first: keep the latest windows.
+    auto.earningsTarget = {
+      ...target,
+      highEarnings: { ...high, rates: high.rates.slice(-RATES_LIMIT) },
+    };
+  for (const [key, check, label] of demandSections)
+    if (auto[key] != null && !check(auto[key])) {
+      delete auto[key];
+      drop(label);
+    }
+  const limits = auto.limits as Record<string, unknown>;
+  if (!samplingBudget(limits.sampling)) {
+    auto.limits = { ...limits, sampling: null };
+    drop('learning time');
   }
-  if (value.reporting != null) {
-    const r = value.reporting;
-    if (
-      !record(r) ||
-      !finite(r.at) ||
-      !numeric(r.sessionId) ||
-      !strings(r.models) ||
-      r.models.length < 3 ||
-      r.models.length > 64 ||
-      new Set(r.models).size !== r.models.length ||
-      r.models.some((m) => !m || m !== m.trim()) ||
-      r.managedBy !== 'darkbloom' ||
-      r.automationSupported !== false ||
-      typeof r.counting !== 'boolean' ||
-      typeof r.detail !== 'string'
-    )
-      return false;
-  }
-  if (value.combinations != null) {
-    const combo = value.combinations;
-    if (
-      !record(combo) ||
-      !Array.isArray(combo.candidates) ||
-      !Array.isArray(combo.results)
-    )
-      return false;
-    if (
-      combo.candidates.some(
-        (pair) =>
-          !record(pair) ||
-          typeof pair.id !== 'string' ||
-          !strings(pair.models) ||
-          !optionalString(pair.reason),
-      )
-    )
-      return false;
-    if (
-      combo.results.some(
-        (pair) =>
-          !record(pair) ||
-          typeof pair.id !== 'string' ||
-          typeof pair.name !== 'string' ||
-          !evidence(pair.evidence),
-      )
-    )
-      return false;
-    if (
-      combo.plan != null &&
-      (!record(combo.plan) ||
-        !Array.isArray(combo.plan.pairs) ||
-        !combo.plan.pairs.every(strings) ||
-        !optionalString(combo.plan.detail))
-    )
-      return false;
-  }
-  if (value.memory != null) {
-    if (!record(value.memory)) return false;
-    const recovery = value.memory.cacheRecovery;
-    if (
-      recovery != null &&
-      (!record(recovery) ||
-        !['status', 'detail', 'model'].every((key) =>
-          optionalString(recovery[key]),
-        ))
-    )
-      return false;
-  }
-  if (value.demandAuto != null && !demandAuto(value.demandAuto)) return false;
-  return true;
+  return demandAuto(auto) ? auto : null;
 }

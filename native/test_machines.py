@@ -36,7 +36,10 @@ class MachineTests(unittest.TestCase):
                 'updatedAt': self.now,
                 'status': 'live',
                 'models': ['gemma'],
-                'windows': {'60': {'ratePerHour': 0.9}, '300': {'ratePerHour': 0.15}},
+                'windows': {
+                    '60': {'ratePerHour': 0.9},
+                    '300': {'ratePerHour': 0.15, 'start': self.now - 300, 'end': self.now},
+                },
             },
         }
         self.c.history.db.executemany(
@@ -173,9 +176,82 @@ class MachineTests(unittest.TestCase):
             {'from': -1},
             {'to': self.now - 5},
             {'scope': {'secret': 1}},
+            {'modelCount': 0},
+            {'modelCount': 65},
+            {'modelCount': '11'},
+            {'modelRates': {'gemma': 1}},
+            {'modelRates': [{'model': 'gemma'}]},
+            {'modelRates': [{'model': 'gemma', 'ratePerHour': 1, 'x': 1}]},
+            {'modelRates': [{'model': 'a', 'ratePerHour': 1}, {'model': 'a', 'ratePerHour': 1}]},
+            {'modelRates': [{'model': str(i), 'ratePerHour': 1} for i in range(9)]},
+            {'strategy': 'legacy'},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 validate_summary({**r, **change}, 24)
+
+    def test_large_set_sends_full_count_and_pace_by_credited_model(self):
+        models = ['m%02d' % i for i in range(11)]
+        self.c.snapshot['pulse']['models'] = models
+        self.c.history.db.executemany(
+            'INSERT INTO opt_credits VALUES(?,?,?,?,?,?,?)',
+            [
+                ('private-account', 10, 'provider-one', self.now - 100, 'm07', 300000, 100),
+                ('private-account', 11, 'provider-one', self.now - 50, 'm09', 100000, 100),
+                # Outside the 5-minute window, another Mac's provider, another account.
+                ('private-account', 12, 'provider-one', self.now - 400, 'm01', 900000, 100),
+                ('private-account', 13, 'provider-other', self.now - 50, 'm02', 900000, 100),
+                ('other-account', 14, 'provider-one', self.now - 50, 'm03', 900000, 100),
+            ],
+        )
+        r = local_summary(self.c, 24, self.now)
+        self.assertEqual(r['modelCount'], 11)
+        # Earning models are named first; older peers accept at most four names.
+        self.assertEqual(r['models'], ['m07', 'm09', 'm00', 'm01'])
+        self.assertEqual([x['model'] for x in r['modelRates']], ['m07', 'm09'])
+        self.assertAlmostEqual(r['modelRates'][0]['ratePerHour'], 0.15 * 3 / 4)
+        self.assertAlmostEqual(r['modelRates'][1]['ratePerHour'], 0.15 / 4)
+        self.assertEqual(validate_summary(r, 24)['modelCount'], 11)
+        self.c.machines.fetcher = lambda u, h: self.report(h)
+        self.connect()
+        rollup = {m['model']: m['ratePerHour'] for m in self.settled()['models']}
+        self.assertAlmostEqual(rollup['m07'], 2 * 0.15 * 3 / 4)
+        self.assertAlmostEqual(rollup['m00'], 0)
+        self.assertAlmostEqual(sum(rollup.values()), 0.3)
+
+    def test_manager_strategy_is_sent_without_breaking_older_peers(self):
+        self.c.optimizer.state['mode'] = 'demand'
+        r = local_summary(self.c, 24, self.now)
+        self.assertEqual((r['optimizer'], r['strategy']), ('demand', 'manager'))
+        self.c.optimizer.state['demandPolicy'] = {'managerStrategy': 0}
+        self.assertIsNone(local_summary(self.c, 24, self.now)['strategy'])
+        self.c.optimizer.state['mode'] = 'observe'
+        self.c.optimizer.state.pop('demandPolicy')
+        self.assertIsNone(local_summary(self.c, 24, self.now)['strategy'])
+        # What older peers check: every old key, four names at most, an old mode.
+        old = {
+            'schema', 'installation', 'deviceKey', 'at', 'hours', 'from', 'to', 'name',
+            'chip', 'memoryGB', 'models', 'ready', 'switching', 'optimizer', 'cpuPercent',
+            'gpuPercent', 'cpuTempF', 'gpuTempF', 'ratePerHour', 'knownInferenceUsd',
+            'earningsFresh', 'coveredSeconds', 'coverageSeconds', 'scope',
+        }  # fmt: skip
+        self.c.snapshot['pulse']['models'] = ['m%d' % i for i in range(9)]
+        r = local_summary(self.c, 24, self.now)
+        self.assertTrue(old <= set(r))
+        self.assertLessEqual(len(r['models']), 4)
+        self.assertIn(r['optimizer'], ('observe', 'demand', 'week', 'optimize', 'combo'))
+
+    def test_older_peer_summary_still_reads_and_its_pair_is_not_split_evenly(self):
+        r = self.report(models=['a', 'b'], ratePerHour=0.2)
+        for key in ('modelCount', 'modelRates', 'strategy'):
+            del r[key]
+        v = validate_summary(r, 24)
+        self.assertEqual((v['modelCount'], v['modelRates'], v['strategy']), (2, None, None))
+        self.c.machines.fetcher = lambda u, h: r
+        self.connect()
+        models = {m['model']: m for m in self.settled()['models']}
+        self.assertEqual(models['a']['macs'], ['1' * 32])
+        self.assertIsNone(models['a']['ratePerHour'])  # unknown, never a guessed 50/50
+        self.assertAlmostEqual(models['gemma']['ratePerHour'], 0.15)
 
     def test_pair_persists_and_duplicate_self_rejected(self):
         self.c.machines.fetcher = lambda url, h: self.report(h)

@@ -75,10 +75,13 @@ def number(value):
 
 
 def normalize(provider):
+    """The allowlisted reputation fields. A missing or malformed field is unknown (None);
+    it never rejects the reading. Darkbloom 0.9.10 drops the 0-1 score ("Remove the
+    composite score calculation and owner API field", coordinator myReputation)."""
     rep = provider.get('reputation')
-    if not isinstance(rep, dict) or not number(rep.get('score')) or rep['score'] > 1:
-        raise ValueError('Missing or invalid official reputation score')
-    result = {'score': rep['score']}
+    rep = rep if isinstance(rep, dict) else {}
+    score = rep.get('score')
+    result = {'score': score if number(score) and score <= 1 else None}
     for source, target in [
         ('total_jobs', 'totalJobs'),
         ('successful_jobs', 'successfulJobs'),
@@ -89,12 +92,12 @@ def normalize(provider):
         ('challenges_failed', 'challengesFailed'),
     ]:
         value = rep.get(source)
-        if value is not None and (not number(value) or value != int(value)):
-            raise ValueError('Invalid reputation counter')
-        result[target] = value
+        result[target] = value if number(value) and value == int(value) else None
     total, passed, failed = (result[k] for k in ('totalJobs', 'successfulJobs', 'failedJobs'))
     if total is not None and passed is not None and failed is not None and passed + failed > total:
-        raise ValueError('Inconsistent reputation counters')
+        # The coordinator adds stored counters to live ones (me_handlers.go,
+        # machine_history.go); a total below its parts is unknown, the rest still counts.
+        result['totalJobs'] = None
     result['trustLevel'] = (
         provider.get('trust_level')
         if provider.get('trust_level') in ('hardware', 'software', 'untrusted', 'unknown')
@@ -106,6 +109,24 @@ def normalize(provider):
         else None
     )
     return result
+
+
+READING_FIELDS = (
+    'score',
+    'totalJobs',
+    'successfulJobs',
+    'failedJobs',
+    'uptimeSeconds',
+    'responseTimeMs',
+    'challengesPassed',
+    'challengesFailed',
+)
+
+
+def blank(reading):
+    """A provider row without any reputation value (e.g. no reputation object): the
+    reading is unavailable, not a fresh all-unknown one to save over the last good."""
+    return all(reading.get(k) is None for k in READING_FIELDS)
 
 
 class Reputation:
@@ -173,7 +194,13 @@ class Reputation:
                     ):
                         self.sequence = payload['sequence']
                         return self.snapshot(now)
-                    data = {**normalize(matches[0]), 'updatedAt': now, 'scope': 'network_record'}
+                    reading = normalize(matches[0])
+                    if blank(reading):
+                        # Keep the last good reading (shown as saved) until a real one arrives.
+                        self.status = 'unavailable'
+                        self.sequence = payload['sequence']
+                        return self.snapshot(now)
+                    data = {**reading, 'updatedAt': now, 'scope': 'network_record'}
                     if number(requested):
                         data['requestedAt'] = requested
                     if self.sessions and self.identity_context:

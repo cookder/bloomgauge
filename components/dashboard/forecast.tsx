@@ -13,6 +13,7 @@ import type { ModelProjection } from '@/lib/cumulative-earnings';
 import { TimeBucketBar } from './time-bucket-bar';
 import { useScreenActive } from './app-navigation';
 import { earningsTone, earningsToneLabel } from '@/lib/daily-earnings';
+import { useEarningsTiers } from './daily-earnings';
 
 export type Forecast = {
   modelProjection?: ModelProjection;
@@ -44,6 +45,7 @@ export function ForecastSummary({
   value?: Forecast;
   kind: 'earnings' | 'throughput';
 }) {
+  const tiers = useEarningsTiers(kind === 'earnings' && !!value);
   if (!value) return null;
   const f = value[kind],
     ready = f.status === 'ready';
@@ -56,6 +58,7 @@ export function ForecastSummary({
   const tone = earningsTone(
     ready ? e.projected : null,
     (value.hourEnd - value.hourStart) / 3600,
+    tiers,
   );
   return (
     <div className={`forecast-summary ${kind}`}>
@@ -72,7 +75,11 @@ export function ForecastSummary({
                 <strong
                   className="earnings-tone"
                   data-tone={tone}
-                  title={`${earningsToneLabel[tone]} pace · daily earnings scale divided by 24`}
+                  title={
+                    tiers
+                      ? `${earningsToneLabel[tone]} pace · this Mac’s daily scale divided by 24`
+                      : 'Not rated until this Mac has 7 complete days'
+                  }
                 >
                   ≈{money(e.projected)}
                 </strong>
@@ -170,7 +177,7 @@ export function HourlyOutputChart({
             >
               <CartesianGrid
                 vertical={false}
-                stroke="#27303c"
+                stroke="var(--c-27303c)"
                 strokeDasharray="2 6"
               />
               <XAxis
@@ -185,7 +192,7 @@ export function HourlyOutputChart({
                     hour: 'numeric',
                   })
                 }
-                tick={{ fill: '#8997aa', fontSize: 12 }}
+                tick={{ fill: 'var(--c-8997aa)', fontSize: 12 }}
                 minTickGap={60}
                 axisLine={false}
                 tickLine={false}
@@ -197,14 +204,14 @@ export function HourlyOutputChart({
                   )
                 }
                 width={70}
-                tick={{ fill: '#8997aa', fontSize: 12 }}
+                tick={{ fill: 'var(--c-8997aa)', fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
               />
               <Tooltip
                 contentStyle={{
-                  background: '#171d27',
-                  border: '1px solid #354153',
+                  background: 'var(--c-171d27)',
+                  border: '1px solid var(--c-354153)',
                   borderRadius: 10,
                 }}
                 labelFormatter={(v) =>
@@ -220,7 +227,7 @@ export function HourlyOutputChart({
               <Bar
                 dataKey="outputTokens"
                 stackId="output"
-                fill="#a995ff"
+                fill="var(--c-a995ff)"
                 maxBarSize={26}
                 shape={
                   <TimeBucketBar
@@ -233,9 +240,9 @@ export function HourlyOutputChart({
               <Bar
                 dataKey="projected"
                 stackId="output"
-                fill="#a995ff"
+                fill="var(--c-a995ff)"
                 fillOpacity={0.22}
-                stroke="#a995ff"
+                stroke="var(--c-a995ff)"
                 strokeOpacity={0.45}
                 strokeDasharray="3 3"
                 radius={[3, 3, 0, 0]}

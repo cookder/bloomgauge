@@ -509,7 +509,9 @@ export const ModelDemandPanel = memo(function ModelDemandPanel({
                         style={{
                           width: `${saved?.sharePercent ?? 0}%`,
                           background:
-                            colorIndex >= 0 ? modelColor(id) : '#657d99',
+                            colorIndex >= 0
+                              ? modelColor(id)
+                              : 'var(--c-657d99)',
                         }}
                       />
                     </div>

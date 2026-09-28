@@ -74,8 +74,8 @@ const metrics = {
     unit: 'tokens / request',
     precision: 0,
     series: [
-      { key: 'meanPrompt', label: 'Prompt', color: '#b49cff' },
-      { key: 'meanOutput', label: 'Output', color: '#82efb5' },
+      { key: 'meanPrompt', label: 'Prompt', color: 'var(--c-b49cff)' },
+      { key: 'meanOutput', label: 'Output', color: 'var(--c-82efb5)' },
     ],
   },
   job: {
@@ -83,7 +83,11 @@ const metrics = {
     unit: 'USD / credited request',
     precision: 6,
     series: [
-      { key: 'usdPerRequest', label: 'Earnings / request', color: '#82efb5' },
+      {
+        key: 'usdPerRequest',
+        label: 'Earnings / request',
+        color: 'var(--c-82efb5)',
+      },
     ],
   },
   tokens: {
@@ -94,7 +98,7 @@ const metrics = {
       {
         key: 'usdPerMillionTokens',
         label: 'Blended earnings / 1M tokens',
-        color: '#91bcff',
+        color: 'var(--c-91bcff)',
       },
     ],
   },
@@ -106,7 +110,7 @@ const metrics = {
       {
         key: 'usdPerMillionOutput',
         label: 'Job earnings / 1M output tokens',
-        color: '#f3c57e',
+        color: 'var(--c-f3c57e)',
       },
     ],
   },
@@ -336,7 +340,10 @@ export function WorkloadPanel({
                   <i
                     style={{
                       width: `${(b.count / peak) * 100}%`,
-                      background: size === 'output' ? '#82efb5' : '#b49cff',
+                      background:
+                        size === 'output'
+                          ? 'var(--c-82efb5)'
+                          : 'var(--c-b49cff)',
                     }}
                   />
                 </div>

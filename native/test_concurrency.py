@@ -100,6 +100,14 @@ class ConcurrencySessionTests(ReputationTests):
             ]['concurrency']
         )
 
+    def test_counts_are_recorded_without_a_reputation_score(self):
+        row = {**provider(), **metrics(), 'models': ['model-a'], 'id': 'verified-connection'}
+        del row['reputation']['score']
+        data = self.ingest(providers=[row], requestedAt=990)['data']
+        self.assertIsNone(data['score'])
+        self.assertEqual(data['concurrency']['pending'], 3)
+        self.assertEqual(data['observedSessionId'], 7)
+
     def test_signin_failure_hides_concurrency_but_keeps_reputation(self):
         self.sample()
         s = self.r.ingest({'sequence': 2, 'status': 'auth_required'}, 1001)

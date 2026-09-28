@@ -45,6 +45,28 @@ class UpdatePlanTests(unittest.TestCase):
         self.assertEqual(self.o.state['models'], ['b', 'c'])
         self.assertEqual(self.o.state['mode'], 'observe')
 
+    def test_the_manager_can_keep_one_model_and_legacy_needs_two(self):
+        self.send(models=['a'])
+        self.assertEqual(self.o.state['models'], ['a'])
+        with self.assertRaisesRegex(ValueError, 'two to sixteen'):
+            self.send(models=['a'], demandPolicy={'managerStrategy': 0})
+        self.o.state['demandPolicy'] = {**self.o.state['demandPolicy'], 'managerStrategy': 0}
+        with self.assertRaisesRegex(ValueError, 'two to sixteen'):
+            self.send(models=['a'])
+        self.assertEqual(self.o.state['models'], ['a'])
+
+    def test_a_held_pair_stays_in_the_pool_through_its_models(self):
+        from model_combinations import selection_key
+
+        pair = selection_key(['a', 'b'])
+        self.o.raw['advertised_models'] = ['a', 'b']
+        self.send(models=['a', 'b', 'c'])
+        self.assertEqual(self.o.state['models'], ['a', 'b', 'c'])
+        with self.assertRaisesRegex(ValueError, 'serving model'):
+            self.send(models=['a', 'c'])
+        self.send(models=[pair, 'c'])
+        self.assertEqual(self.o.state['models'], [pair, 'c'])
+
     def test_rules_only_update_keeps_models_and_merges_policy(self):
         self.send(demandPolicy={'maxSwitchesPerDay': 6})
         self.assertEqual(self.o.state['models'], ['a', 'b'])
@@ -54,7 +76,7 @@ class UpdatePlanTests(unittest.TestCase):
     def test_rejects_invalid_input_stale_control_and_busy_states(self):
         for fields in (
             {},
-            {'models': ['a']},
+            {'models': []},
             {'models': ['a', 'a']},
             {'models': 'a,b'},
             {'demandPolicy': {'targetUsdPerHour': 9}},

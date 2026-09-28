@@ -10,7 +10,10 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { recordSupportIssue } from '@/lib/support-issues';
-import { startChartPolling } from '@/lib/chart-polling';
+import {
+  ResponseValidationError,
+  startChartPolling,
+} from '@/lib/chart-polling';
 import { usePageVisible } from '@/lib/use-page-visibility';
 import { readStatusJSON } from '@/lib/connection-status';
 import {
@@ -29,18 +32,29 @@ import { useScreenActive, useAppNavigation } from './app-navigation';
 import { shortModel, num } from './shared';
 import { ModelWarmup } from './model-warmup';
 import { CacheRecoveryPermission } from './cache-recovery-permission';
-import { ManualModelPicker } from './manual-model-picker';
+import { ManualModelPicker, memoryFit } from './manual-model-picker';
+import { withoutCircularHint } from '@/lib/optimizer-manager';
 
 export function ManualModelControl({
   paused = false,
   embedded = false,
   connectionError = '',
   pickerRequest = 0,
+  managed = false,
+  homeModel,
+  pinned = false,
+  holdReason = '',
 }: {
   paused?: boolean;
   embedded?: boolean;
   connectionError?: string;
   pickerRequest?: number;
+  /** The manager is on: a pick becomes the pinned model and automatic control continues. */
+  managed?: boolean;
+  homeModel?: string | null;
+  pinned?: boolean;
+  /** Why a pick must wait (e.g. the manager is still turning on). */
+  holdReason?: string;
 }) {
   const navigation = useAppNavigation(),
     visible = usePageVisible(),
@@ -57,6 +71,8 @@ export function ManualModelControl({
   const [stopConfirmation, setStopConfirmation] =
     useState<ManualRequest | null>(null);
   const [ownRequestId, setOwnRequestId] = useState('');
+  // A model change is confirmed before it is sent.
+  const [confirming, setConfirming] = useState(false);
   const [permissionBusy, setPermissionBusy] = useState(false);
   const pending = useRef(false),
     epoch = useRef(0),
@@ -101,6 +117,7 @@ export function ManualModelControl({
       remember(null);
       setActionError('');
       setStopConfirmation(null);
+      setConfirming(false);
     }
   }
   useEffect(() => {
@@ -147,7 +164,8 @@ export function ManualModelControl({
         });
         const value = await readStatusJSON(response, 'Model status');
         if (!validManualControl(value))
-          throw Error(
+          throw new ResponseValidationError(
+            'model-controls',
             'Waiting for a complete model status. Retrying automatically.',
           );
         return { own, value };
@@ -215,13 +233,14 @@ export function ManualModelControl({
       setActionError(
         error instanceof Error &&
           !['AbortError', 'TimeoutError'].includes(error.name)
-          ? error.message
+          ? withoutCircularHint(error.message)
           : 'The reply was interrupted. Checking the original request before another command.',
       );
     } finally {
       pending.current = false;
       epoch.current++;
       setBusy(false);
+      setConfirming(false);
       setRevision((n) => n + 1);
     }
   }
@@ -282,9 +301,12 @@ export function ManualModelControl({
       ['queued', 'working'].includes(data.selectionResult.status));
   const warmup = fresh ? currentManualWarmup(data) : undefined;
   const target = data?.models.find((m) => m.id === model);
-  const blocker = manualBlocker(data, model, clock);
+  const blocker = holdReason || manualBlocker(data, model, clock);
   const locked = busy || uncertain || operating || permissionBusy;
-  const label = shortModel(model);
+  // Catalog display names when known ("Qwen 3.8 27B"), else the short id.
+  const nameOf = (id: string) =>
+    data?.models.find((m) => m.id === id)?.name || shortModel(id);
+  const label = nameOf(model);
   const operationTarget =
     data?.switchingModel || data?.queuedModel || data?.selectionResult?.model;
   const description = !visible
@@ -297,13 +319,15 @@ export function ManualModelControl({
           : 'Connecting to this Mac'
       : operating
         ? operationTarget
-          ? `${stopped ? 'Starting' : operationTarget === data?.currentModel ? 'Getting ready:' : 'Changing to'} ${shortModel(operationTarget)}`
+          ? `${stopped ? 'Starting' : operationTarget === data?.currentModel ? 'Getting ready:' : 'Changing to'} ${nameOf(operationTarget)}`
           : 'Updating Darkbloom…'
         : stopped
           ? 'Ready to start a model'
-          : data?.currentModel
-            ? shortModel(data.currentModel)
-            : 'Choose your model';
+          : provider?.status === 'unavailable'
+            ? 'Darkbloom needs setup'
+            : data?.currentModel
+              ? nameOf(data.currentModel)
+              : 'Choose your model';
   const queue = data?.queue;
   const pauseSeconds =
     queue?.pauseInSeconds != null
@@ -329,10 +353,30 @@ export function ManualModelControl({
       : 'Switch to';
   const actionLabel =
     sameRunning && !provider?.endpointSetupRequired
-      ? data?.mode === 'observe'
-        ? 'Already running'
-        : `Keep ${label}, stop auto-switching`
+      ? managed
+        ? pinned && homeModel === model
+          ? `${label} is your pick`
+          : `Pin ${label}`
+        : data?.mode === 'observe'
+          ? 'Already running'
+          : `Keep ${label}, stop auto-switching`
       : `${startOrSwitch} ${label}`;
+  // Nothing to do: the running model is already the pick (or Manual is already on it).
+  const nothingToDo =
+    sameRunning &&
+    !provider?.endpointSetupRequired &&
+    (managed ? pinned && homeModel === model : data?.mode === 'observe');
+  const current = data?.currentModel ? nameOf(data.currentModel) : '';
+  const fit = target ? memoryFit(target, !stopped) : '';
+  const consequence = stopped
+    ? `Starts Darkbloom with ${label} and checks that it is warm and ready.${fit ? ` ${fit}.` : ''}`
+    : sameRunning && !provider?.endpointSetupRequired
+      ? managed
+        ? `Nothing restarts. Bloomkeeper keeps ${label} running, restores it if it fails and never switches away from it.`
+        : `Nothing restarts. Automatic switching turns off and ${label} keeps serving.`
+      : sameRunning
+        ? `Sets up pre-warming for ${label}. Darkbloom restarts once and accepted requests finish first.`
+        : `Darkbloom restarts with ${label}${current ? ` instead of ${current}` : ''}; with Darkbloom 0.9.9 or later, accepted requests finish first.${fit ? ` ${fit}.` : ''} ${managed ? `${label} becomes your pick: Bloomkeeper keeps it running and never switches away from it.` : 'Automatic switching stays off.'}`;
   return (
     <section
       className={`${embedded ? 'manual-model-embedded' : 'panel'} manual-model-control`}
@@ -354,15 +398,23 @@ export function ManualModelControl({
               ? 'In progress'
               : stopped
                 ? 'Stopped'
-                : warmup?.status === 'ready'
-                  ? 'Running · ready'
-                  : 'Checking readiness'}
+                : provider?.status === 'unavailable'
+                  ? 'Not set up'
+                  : warmup?.status === 'ready'
+                    ? 'Running · ready'
+                    : warmup?.status === 'warming'
+                      ? 'Warming up'
+                      : warmup
+                        ? 'Not ready yet'
+                        : 'Waiting for readiness'}
         </span>
       </div>
       <p className="manual-model-intro">
-        {stopped
-          ? 'Choose a model, then start it here. Bloomkeeper starts Darkbloom in the background.'
-          : 'Choose a model and switch here. Bloomkeeper handles the change and checks that the model is ready.'}
+        {managed
+          ? 'Choose the model Bloomkeeper should hold. It keeps your pick running and restores it if it fails.'
+          : stopped
+            ? 'Choose a model, then start it here. Bloomkeeper starts Darkbloom in the background.'
+            : 'Choose a model and switch here. Bloomkeeper handles the change and checks that the model is ready.'}
       </p>
       <div className="manual-model-form">
         <div className="manual-model-choice">
@@ -372,6 +424,8 @@ export function ManualModelControl({
             currentModel={
               !stopped ? (data?.currentModel ?? undefined) : undefined
             }
+            homeModel={homeModel}
+            pinned={pinned}
             scope={data?.session ?? ''}
             openRequest={pickerRequest}
             value={model}
@@ -383,16 +437,17 @@ export function ManualModelControl({
               chosen.current = true;
               setActionError('');
               setStopConfirmation(null);
+              setConfirming(false);
             }}
           />
         </div>
         <Button
           className="manual-model-primary"
-          disabled={locked || !fresh || !!blocker}
+          disabled={locked || !fresh || !!blocker || !model || nothingToDo}
           aria-describedby={explanationId}
+          aria-expanded={confirming}
           onClick={() => {
-            if (data && !blocker)
-              void send(manualRequest(data, model, crypto.randomUUID()));
+            if (data && !blocker && model) setConfirming(true);
           }}
         >
           {busy || operating ? (
@@ -411,6 +466,46 @@ export function ManualModelControl({
                 : actionLabel}
         </Button>
       </div>
+      {confirming && data && !locked && fresh && !blocker && (
+        <div
+          className="notice provider-confirm manual-confirm"
+          role="group"
+          aria-label="Confirm model change"
+        >
+          <strong>
+            {stopped
+              ? `Start ${label}?`
+              : sameRunning && !provider?.endpointSetupRequired
+                ? managed
+                  ? `Pin ${label}?`
+                  : `Keep ${label} and stop auto-switching?`
+                : sameRunning
+                  ? `Prepare ${label}?`
+                  : `Switch to ${label}?`}
+          </strong>
+          <p>{consequence}</p>
+          <div className="provider-actions">
+            <Button
+              onClick={() =>
+                void send(manualRequest(data, model, crypto.randomUUID()))
+              }
+            >
+              {stopped
+                ? 'Start'
+                : sameRunning && !provider?.endpointSetupRequired
+                  ? managed
+                    ? 'Pin'
+                    : 'Keep it'
+                  : sameRunning
+                    ? 'Prepare'
+                    : 'Switch'}
+            </Button>
+            <Button variant="outline" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
       <p
         id={explanationId}
         className={
@@ -422,10 +517,12 @@ export function ManualModelControl({
         {uncertain
           ? 'Your original selection is held while Bloomkeeper checks the command receipt.'
           : blocker && fresh && !operating
-            ? blocker
-            : stopped
-              ? 'Starts the selected model. Automatic switching stays off until you turn the optimizer on.'
-              : 'A manual switch pauses automation. With Darkbloom 0.9.9 or later it starts right away and accepted requests finish first. Older versions wait for an idle gap, then switch after five minutes if still busy, which may interrupt requests.'}
+            ? withoutCircularHint(blocker)
+            : managed
+              ? 'Your pick becomes the model Bloomkeeper holds: it is restored after a failure and never switched away. Choose Manager on to let Bloomkeeper choose again.'
+              : stopped
+                ? 'Starts the selected model. Automatic switching stays off until you turn the optimizer on.'
+                : 'A manual switch pauses automation. With Darkbloom 0.9.9 or later it starts right away and accepted requests finish first. Older versions wait for an idle gap, then switch after five minutes if still busy, which may interrupt requests.'}
       </p>
       {!locked &&
         fresh &&
@@ -508,10 +605,12 @@ export function ManualModelControl({
       {operating && fresh && (
         <div className="manual-model-status" role="status">
           <p>
-            {data?.selectionResult &&
-            ['queued', 'working'].includes(data.selectionResult.status)
-              ? data.selectionResult.detail
-              : data?.detail}
+            {withoutCircularHint(
+              data?.selectionResult &&
+                ['queued', 'working'].includes(data.selectionResult.status)
+                ? data.selectionResult.detail
+                : data?.detail,
+            )}
           </p>
           {data?.queuedModel && !data.switching && queue && (
             <>
@@ -561,7 +660,7 @@ export function ManualModelControl({
           <p className="notice" role="status">
             <strong>Last attempt · {shortModel(result.model)}</strong>
             <br />
-            {result.detail}
+            {withoutCircularHint(result.detail)}
           </p>
         )}
       {warmup && <ModelWarmup value={warmup} />}
@@ -579,7 +678,7 @@ export function ManualModelControl({
             onClick={() =>
               setStopConfirmation({
                 action: 'provider-stop',
-                expectedProvider: provider.version,
+                expectedProvider: provider.version ?? '',
                 requestId: crypto.randomUUID(),
               })
             }
@@ -653,7 +752,7 @@ export function ManualModelControl({
           <p>
             {data?.remote
               ? 'Set up pre-warming once in Optimizer → Overview on the Mac using the manual model controls.'
-              : 'Use Prepare for the current model, or Start or Switch for your selected model, to set up authenticated local pre-warming. Manual actions pause automatic switching.'}
+              : 'Use Prepare for the current model, or Start or Switch for your selected model, to set up authenticated local pre-warming. Stop pauses automatic switching; with the manager on, Prepare and Start keep it running.'}
           </p>
         )}
         {!stopped && provider?.endpoint !== 'ready' && (

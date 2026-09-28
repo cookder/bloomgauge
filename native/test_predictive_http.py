@@ -21,6 +21,15 @@ class PredictiveHTTPTests(unittest.TestCase):
                 self.assertTrue(json.load(r)['enabled'])
             self.assertEqual(c.predictive_lab.report.call_args.args[:2], ('current', 'this-mac'))
         self.denied(self.phone, path)
+        # Model research judges blocks against the user's goal, never a built-in $0.12.
+        for saved, goal in ({}, None), ({'targetUsdPerHour': 0.12}, None), (
+            {'targetUsdPerHour': 0.15},
+            0.15,
+        ):
+            c.optimizer.state = {'demandPolicy': saved}
+            with self.read(self.local, path) as r:
+                json.load(r)
+            self.assertEqual(c.predictive_lab.report.call_args.args[5], goal)
         self.denied(
             self.phone, path, {**self.headers, 'Tailscale-User-Login': 'foreign@example.com'}
         )

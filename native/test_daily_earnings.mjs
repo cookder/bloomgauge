@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   dailyBounds,
   dayTone,
+  earningsTiers,
   earningsTone,
   validDailyEarnings,
 } from '../lib/daily-earnings.ts';
@@ -36,27 +37,55 @@ const report = {
   models: ['a'],
   days: [day],
 };
-test('daily colors preserve missing coverage and goal bands', () => {
+const days = (values, status = 'complete') =>
+  values.map((usd, i) => ({ ...day, at: 100 + i * 86400, usd, status }));
+test('day colours are relative to this Mac and neutral until 7 complete days', () => {
+  // Six complete days (plus partial/unknown ones) are not a scale yet.
+  const six = [...days([1, 2, 3, 4, 5, 6]), ...days([9, 9], 'unknown')];
+  assert.equal(earningsTiers(six), null);
+  assert.equal(dayTone({ ...day, usd: 6 }, earningsTiers(six)), 'neutral');
+  assert.equal(earningsTone(3), 'neutral');
+  // Ten complete days from $1 to $10: quartiles and the 90th percentile.
+  const tiers = earningsTiers(days([10, 1, 9, 2, 8, 3, 7, 4, 6, 5]));
+  assert.deepEqual(tiers, {
+    steady: 3.25,
+    green: 5.5,
+    purple: 7.75,
+    gold: 9.1,
+    days: 10,
+  });
   for (const [usd, tone] of [
     [0, 'quiet'],
-    [1.5, 'steady'],
-    [2.49, 'steady'],
-    [2.5, 'green'],
-    [2.99, 'green'],
-    [3, 'purple'],
-    [3.05, 'purple'],
-    [3.99, 'purple'],
-    [4, 'gold'],
-    [4.47, 'gold'],
     [-1, 'quiet'],
+    [3.2, 'quiet'],
+    [3.25, 'steady'],
+    [5.5, 'green'],
+    [7.75, 'purple'],
+    [9.1, 'gold'],
   ])
-    assert.equal(dayTone({ ...day, usd }), tone);
-  assert.equal(dayTone({ ...day, usd: 9, status: 'unknown' }), 'unknown');
-  for (const usd of [1.5, 2.5, 3, 4])
-    assert.equal(earningsTone(usd / 24, 1), earningsTone(usd));
-  assert.equal(earningsTone(null), 'unknown');
-  assert.equal(earningsTone(NaN), 'unknown');
-  assert.equal(earningsTone(3, 0), 'unknown');
+    assert.equal(dayTone({ ...day, usd }, tiers), tone);
+  assert.equal(
+    dayTone({ ...day, usd: 9, status: 'unknown' }, tiers),
+    'unknown',
+  );
+  // A small Mac's $1.20 day can be outstanding; an Ultra's $4 day can be quiet.
+  const small = earningsTiers(days([0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]));
+  assert.equal(earningsTone(1.2, 24, small), 'gold');
+  const ultra = earningsTiers(days([6, 7, 8, 9, 10, 11, 12]));
+  assert.equal(earningsTone(4, 24, ultra), 'quiet');
+  // Only the last 30 complete days count; no spread means no scale.
+  const old = days([...Array(30).fill(100), ...Array(30).fill(1)]);
+  assert.equal(earningsTiers(old), null);
+  assert.equal(earningsTiers(days(Array(10).fill(0))), null);
+  // Hour estimates use the same scale divided by 24.
+  for (const usd of [3.25, 5.5, 7.75, 9.1])
+    assert.equal(
+      earningsTone(usd / 24, 1, tiers),
+      earningsTone(usd, 24, tiers),
+    );
+  assert.equal(earningsTone(null, 24, tiers), 'unknown');
+  assert.equal(earningsTone(NaN, 24, tiers), 'unknown');
+  assert.equal(earningsTone(3, 0, tiers), 'unknown');
 });
 test('calendar presets include today and midnight boundaries', () => {
   const now = new Date(2026, 8, 17, 10, 23),

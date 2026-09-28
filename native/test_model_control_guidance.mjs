@@ -28,7 +28,7 @@ test('current UI guidance uses the simplified model controls', () => {
     manual,
     /Set up pre-warming once in Optimizer → Overview on the Mac/,
   );
-  assert.match(manual, /Manual actions pause automatic switching/);
+  assert.match(manual, /Stop pauses automatic switching; with the manager on, Prepare and Start keep it running/);
 });
 test('current setup and tester guides do not point to removed controls', () => {
   for (const file of ['BETA_README.txt', 'beta/TESTER_GUIDE.md']) {
@@ -43,4 +43,20 @@ test('current setup and tester guides do not point to removed controls', () => {
     );
     assert.match(value, /Endpoint configuration stays Mac-only/);
   }
+});
+test('the out-of-catalog notice says Darkbloom must restart after removing a model', () => {
+  // `darkbloom models remove` leaves the running provider offering the model.
+  const tab = read('../components/dashboard/optimizer-tab.tsx');
+  assert.match(
+    tab,
+    /darkbloom models remove &lt;id&gt;<\/code>, then\s+restart Darkbloom so it stops offering/,
+  );
+});
+test('the multi-model notice is true for the manager and flags removed models still offered', () => {
+  const tab = read('../components/dashboard/optimizer-tab.tsx');
+  assert.doesNotMatch(tab, /Earnings, traffic and the dashboards work either/);
+  assert.doesNotMatch(tab, /The optimizer switches one model at a time/);
+  assert.match(tab, /The Manager runs one model, or a pair without Gemma/);
+  assert.match(tab, /Restart\s+Darkbloom to stop offering removed models/);
+  assert.match(tab, /offeredNotDownloaded/);
 });

@@ -2,11 +2,11 @@
 import { observeModelResult } from '@/lib/support-issues';
 import { useEffect, useState } from 'react';
 import { ChevronDown, Info } from 'lucide-react';
-import { startChartPolling } from '@/lib/chart-polling';
 import {
-  validOptimizerResponse,
-  withoutInvalidHistory,
-} from '@/lib/optimizer-response';
+  ResponseValidationError,
+  startChartPolling,
+} from '@/lib/chart-polling';
+import { readRunView } from '@/lib/optimizer-response';
 import { pulseRunStatus, type RunSession } from '@/lib/pulse-run-status';
 import { useAppNavigation } from './app-navigation';
 import { shortModel } from './shared';
@@ -50,15 +50,20 @@ export function PulseRunIndicator({
           { signal, cache: 'no-store' },
         );
         if (!response.ok) throw Error('Run status unavailable');
-        const value: unknown = withoutInvalidHistory(await response.json());
-        if (!validOptimizerResponse(value))
-          throw Error('Incomplete run status');
+        const value = readRunView(await response.json());
+        if (!value)
+          throw new ResponseValidationError(
+            'run-status',
+            'Incomplete run status',
+          );
         return value;
       },
       onValue: (value) => {
-        observeModelResult(
-          (value as { lastSwitchResult?: unknown }).lastSwitchResult,
-        );
+        const run = value as {
+          lastSwitchResult?: unknown;
+          demandAuto?: { runs?: unknown };
+        };
+        observeModelResult(run.lastSwitchResult, run.demandAuto?.runs);
         setReading({ key, value });
         setFailed(false);
         setNow(Date.now() / 1000);

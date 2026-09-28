@@ -75,8 +75,9 @@ class ReportingReadinessTests(unittest.TestCase):
         self.assertEqual(observed_models(['c', 'a', 'b']), ['a', 'b', 'c'])
 
     def test_cold_failed_slot_unknown_trust_and_invalid_counters_pause(self):
+        # A partly loaded set keeps counting (test_load_or_unload_...); nothing loaded pauses.
         for changes in (
-            {'warm_models': ['a', 'b']},
+            {'warm_models': []},
             {'slots': []},
             {'slots': [{'model': m, 'kv_backend': None if m == 'b' else 'paged'} for m in 'abc']},
             {
@@ -106,6 +107,53 @@ class ReportingReadinessTests(unittest.TestCase):
     def test_legacy_missing_slots_can_verify_actual_serving(self):
         self.raw.pop('slots')
         self.warm()
+
+    def test_load_or_unload_in_the_same_process_keeps_counting_in_a_new_segment(self):
+        # Darkbloom 0.9.10 loads models on demand and unloads idle ones (Jason, Sep 27).
+        self.warm()
+        with self.assertLogs('bloom.reporting', 'INFO') as logs:
+            unloaded = self.observe(6, warm_models=['a', 'b'])
+            self.assertTrue(unloaded['counting'])
+            self.assertEqual(unloaded['verifiedAt'], T + 6)  # new segment: sets never mix
+            self.assertEqual(unloaded['loaded'], ['a', 'b'])
+            self.assertIn('2 of 3 models loaded now (a, b)', unloaded['detail'])
+            self.assertEqual(self.observe(9)['verifiedAt'], T + 6)
+            loaded = self.observe(12, warm_models=['a', 'b', 'c'])
+            self.assertTrue(loaded['counting'])
+            self.assertEqual(loaded['verifiedAt'], T + 12)
+        self.assertEqual(len(logs.records), 2)
+        self.assertIn('change 1 in this provider process', logs.output[0])
+        self.assertIn('2 of 3 offered loaded (a, b)', logs.output[0])
+        self.assertIn('change 2 in this provider process', logs.output[1])
+        # A change across a gap still needs fresh output.
+        self.assertFalse(self.observe(40, warm_models=['a'])['counting'])
+        # So does loading again after nothing was loaded: the Mac went cold.
+        self.setUp()
+        self.warm()
+        self.assertFalse(self.observe(6, warm_models=[])['counting'])
+        self.assertFalse(self.observe(9, warm_models=['a'])['counting'])
+        self.assertTrue(
+            self.observe(12, stats={'requests_served': 12, 'tokens_generated': 200})['counting']
+        )
+
+    def test_only_models_the_network_routes_here_count_as_loaded(self):
+        # The roster row lists a and b: c gets no network work on this Mac.
+        def observe(delta, **changes):
+            self.raw.update(written_at=T + delta, **changes)
+            return self.r.observe('account', self.raw, T + delta, True, False, 'mac', ('a', 'b'))
+
+        self.assertIn(
+            'none of the 2 models the network sends this Mac work for are loaded yet',
+            observe(0, warm_models=['c'])['detail'],
+        )
+        observe(3, warm_models=['a', 'c'])
+        counting = observe(6, stats={'requests_served': 11, 'tokens_generated': 160})
+        self.assertTrue(counting['counting'])
+        self.assertEqual(counting['loaded'], ['a'])
+        self.assertIn('1 of 2 models loaded now (a)', counting['detail'])
+        self.assertIn('work for 2 of the 3 models your provider offers', counting['detail'])
+        # c loading or unloading changes nothing that counts: same segment.
+        self.assertEqual(observe(9, warm_models=['a'])['verifiedAt'], T + 6)
 
     def test_read_only_proof_cannot_bridge_process_selection_account_or_device(self):
         for changes in (
@@ -170,7 +218,7 @@ class ReportingReadinessTests(unittest.TestCase):
                     ]
                 }
             )
-        for values in (None, ['a', 'b'], ['a', 'b', 'b']):
+        for values in (None, [], ['a', 'b', 'x'], ['a', 'b', 'b']):
             rows = roster(self.raw)
             rows[0]['models'] = values
             self.assertFalse(roster_identity(self.raw, rows)['reportingEligible'])
@@ -275,7 +323,8 @@ class MultiModelCollectorTests(unittest.TestCase):
         self.assertEqual(opt['currentModels'], list('abc'))
         self.assertEqual(opt['reporting']['sessionId'], result['provider']['session']['id'])
         self.assertIsNone(opt['demandAuto']['target'])
-        self.assertIn('solo', opt['demandAuto']['controlError'])
+        # The manager holds one model or a pair; three are left to Darkbloom.
+        self.assertIn('one serving model, or a pair', opt['demandAuto']['controlError'])
 
     def test_four_model_collection_and_cold_model_gap_do_not_bridge(self):
         self.raw['advertised_models'] = list('abcd')
@@ -284,17 +333,33 @@ class MultiModelCollectorTests(unittest.TestCase):
         self.rows = roster(self.raw)
         a = self.run_ready()
         self.assertEqual(len(a['pulse']['models']), 4)
+        proof = self.c.optimizer.reporting_roster.proof
+        # Darkbloom unloading d starts a new segment. The roster row doesn't depend on
+        # loaded models, so the proof stays and counting carries on without a new fetch.
         b = self.step(66, warm_models=list('abc'))
-        self.assertEqual(b['pulse']['status'], 'unmatched')
-        self.assertFalse(b['pulse']['reporting']['counting'])
-        # A changed loaded set is a new scope: the old roster proof never bridges it.
-        self.assertIn('provider roster', b['pulse']['detail'])
-        self.assertIsNone(self.c.optimizer.reporting_roster.proof)
-        c = self.step(69, True, warm_models=list('abcd'))
-        self.assertEqual(c['pulse']['status'], 'paused')
-        d = self.step(72, stats={'requests_served': 90, 'tokens_generated': 2000})
-        self.assertEqual(d['pulse']['status'], 'live')
-        self.assertEqual(d['provider']['session']['performance']['segmentStartedAt'], T + 72)
+        self.assertEqual(b['pulse']['status'], 'live')
+        self.assertTrue(b['pulse']['reporting']['counting'])
+        self.assertIn('3 of 4 models loaded now (a, b, c)', b['pulse']['detail'])
+        self.assertIs(self.c.optimizer.reporting_roster.proof, proof)
+        self.assertFalse(self.c.optimizer.reporting_recheck_requested)
+        c = self.step(69, warm_models=list('abcd'))
+        self.assertEqual(c['pulse']['status'], 'live')
+        # Segments never bridge a change: the ready time between samples straddling it
+        # belongs to neither loaded set.
+        self.assertEqual(c['provider']['session']['performance']['segmentStartedAt'], T + 69)
+
+        def intervals():
+            return [
+                tuple(r)
+                for r in self.c.history.db.execute(
+                    'SELECT start,end FROM session_ready_intervals WHERE session=? ORDER BY start',
+                    (c['provider']['session']['id'],),
+                )
+            ]
+
+        self.assertEqual(intervals(), [(T + 3, T + 63)])
+        self.assertEqual(self.step(72)['pulse']['status'], 'live')
+        self.assertEqual(intervals(), [(T + 3, T + 63), (T + 69, T + 72)])
 
     def test_large_model_set_counts_with_only_some_models_loaded(self):
         # Customer case (Sep 27): 11 models offered, only a few loaded at a time.
@@ -314,15 +379,51 @@ class MultiModelCollectorTests(unittest.TestCase):
         self.assertTrue(reporting['counting'], snap['pulse']['detail'])
         self.assertEqual(len(reporting['models']), 11)
         self.assertIn('2 of 11 models loaded now (m00, m03)', reporting['detail'])
-        # Another model loading is a different set: pause, then a fresh segment.
-        paused = self.step(66, warm_models=['m00', 'm03', 'm07'])
-        self.assertFalse(paused['pulse']['reporting']['counting'])
-        self.step(69, True, slots=[{'model': m, 'kv_backend': 'paged'} for m in ('m00', 'm03', 'm07')])
-        resumed = self.step(72, stats={'requests_served': 90, 'tokens_generated': 2000})
-        self.assertTrue(resumed['pulse']['reporting']['counting'], resumed['pulse']['detail'])
-        self.assertEqual(
-            resumed['provider']['session']['performance']['segmentStartedAt'], T + 72
+        # Another model loading is a different set: a fresh segment, without a pause.
+        loaded = ('m00', 'm03', 'm07')
+        more = self.step(
+            66,
+            warm_models=list(loaded),
+            slots=[{'model': m, 'kv_backend': 'paged'} for m in loaded],
         )
+        self.assertTrue(more['pulse']['reporting']['counting'], more['pulse']['detail'])
+        self.assertIn('3 of 11 models loaded now (m00, m03, m07)', more['pulse']['detail'])
+        self.assertEqual(more['provider']['session']['performance']['segmentStartedAt'], T + 66)
+
+    def test_roster_that_leaves_out_offered_models_matches_the_models_it_routes(self):
+        # Customer case (Sep 27): 11 offered. The coordinator's row lists only the models
+        # it routes to this Mac: none outside its catalog, and no catalog model this Mac
+        # can't serve (weight hash, hardware or runtime capability, App Attest pending).
+        offered = [f'm{i:02d}' for i in range(11)]
+        self.raw['advertised_models'] = offered
+        rows = roster(self.raw)
+        for listed in (offered[:10], offered[:6], offered[1:10], [offered[4]]):
+            rows[0]['models'] = listed
+            proof = roster_identity(self.raw, rows)
+            self.assertTrue(proof['reportingEligible'], listed)
+            self.assertEqual(proof['models'], listed)
+            self.assertFalse(proof['servingEligible'])
+        # An extra, empty, duplicated or malformed row still fails closed.
+        for listed in (offered + ['x'], [], offered[:5] * 2, [offered[0], None], None):
+            rows[0]['models'] = listed
+            self.assertFalse(roster_identity(self.raw, rows)['reportingEligible'], listed)
+
+    def test_collector_counts_when_roster_omits_a_model_outside_the_catalog(self):
+        offered = [f'm{i:02d}' for i in range(11)]
+        self.c.optimizer.catalog = [{'id': m} for m in offered[:10]]
+        self.raw['advertised_models'] = offered
+        self.raw['warm_models'] = ['m00', 'm03']
+        self.raw['current_model'] = 'm00'
+        self.raw['slots'] = [{'model': m, 'kv_backend': 'paged'} for m in ('m00', 'm03')]
+        self.rows = roster(self.raw)
+        self.rows[0]['models'] = offered[:10]
+        self.paid(0, [])
+        self.step(0, True)
+        for delta in range(3, 64, 3):
+            snap = self.step(
+                delta, stats={'requests_served': 10 + delta, 'tokens_generated': 100 + delta * 20}
+            )
+        self.assertTrue(snap['pulse']['reporting']['counting'], snap['pulse']['detail'])
 
     def test_large_model_set_with_nothing_loaded_says_so(self):
         self.raw['advertised_models'] = [f'm{i:02d}' for i in range(11)]
@@ -410,7 +511,7 @@ class MultiModelCollectorTests(unittest.TestCase):
         with patch('optimizer.time.time', return_value=T + 66):
             view = opt.snapshot()
         self.assertIsNone(view['demandAuto']['target'])
-        self.assertIn('solo', view['demandAuto']['controlError'])
+        self.assertIn('one serving model, or a pair', view['demandAuto']['controlError'])
         self.assertEqual(opt.state['mode'], 'observe')
         self.c.network.fetch.side_effect = lambda path: {'providers': self.rows}
         recovered = self.step(69, True)
@@ -458,7 +559,8 @@ class MultiModelCollectorTests(unittest.TestCase):
             [None],
             roster(daemon()) + [None],
             roster(daemon()) + [{**roster(daemon())[0], 'se_public_key': 'different-device'}],
-            [{**roster(daemon())[0], 'models': ['a', 'b']}],
+            [{**roster(daemon())[0], 'models': ['a', 'b', 'c', 'x']}],
+            [{**roster(daemon())[0], 'models': []}],
             [{**roster(daemon())[0], 'models': ['a', 'b', 'b']}],
             [{**roster(daemon())[0], 'models': None}],
             [{**roster(daemon())[0], 'provider_id': None}],
@@ -493,11 +595,10 @@ class MultiModelCollectorTests(unittest.TestCase):
         self.assertIsNone(self.c.optimizer.reporting_roster.proof)
 
     def test_local_readiness_or_scope_gap_revokes_even_while_roster_network_is_down(self):
+        # Loaded models and slots are not identity: see the loaded-set test below.
         changes = [
             {'trust': {'status': 'offline'}},
             {'trust': None},
-            {'warm_models': ['a', 'b']},
-            {'slots': []},
             {'stats': {'requests_served': -1, 'tokens_generated': 200}},
             {'pid': 124},
             {'started_at': T - 90},
@@ -527,6 +628,18 @@ class MultiModelCollectorTests(unittest.TestCase):
         data['account_id'] = 'new-account'
         case.c.accept_earnings(data, T + 66)
         self.assertIsNone(case.c.optimizer.reporting_roster.proof)
+
+    def test_loaded_models_and_slots_are_readiness_not_roster_identity(self):
+        # Darkbloom loading or unloading models, or a slot problem, never revokes the
+        # roster proof; statistics start a new segment or pause on their own.
+        for change, status in (({'warm_models': ['a', 'b']}, 'live'), ({'slots': []}, 'paused')):
+            with self.subTest(change=change):
+                case = self.fresh_ready_case()
+                proof = case.c.optimizer.reporting_roster.proof
+                case.c.network.fetch.side_effect = urllib.error.URLError('synthetic timeout')
+                self.assertEqual(case.step(66, True, **change)['pulse']['status'], status)
+                self.assertIs(case.c.optimizer.reporting_roster.proof, proof)
+                self.assertFalse(case.c.optimizer.reporting_recheck_requested)
 
     def test_transport_grace_never_creates_an_initial_proof_or_counts_before_output(self):
         self.paid(0, [])

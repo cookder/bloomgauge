@@ -202,8 +202,9 @@ def evaluation(records, all_points, now):
     return result
 
 
-def portfolio(evidence):
-    """Exact serving sets; never sum solo rates or invent pair covariance."""
+def portfolio(evidence, target=None):
+    """Exact serving sets; never sum solo rates or invent pair covariance.
+    Blocks below the user's own goal are counted only when there is one."""
     rows = []
     for selection, e in evidence.items():
         groups = defaultdict(list)
@@ -227,8 +228,8 @@ def portfolio(evidence):
                 'blocks': len(blocks),
                 'days': days,
                 'stddevUSDPerHour': statistics.stdev(rates) if repeated else None,
-                'belowTargetPercent': 100 * sum(v < 0.12 for v in rates) / len(rates)
-                if rates
+                'belowTargetPercent': 100 * sum(v < target for v in rates) / len(rates)
+                if rates and target is not None
                 else None,
                 'status': 'measured' if repeated else 'limited',
                 'perModel': e['perModel'],
@@ -341,7 +342,7 @@ class PredictiveLab:
                 self.store.h.db.commit()
             self.next_record = origin + 900
 
-    def report(self, account, device, start, end, now):
+    def report(self, account, device, start, end, now, target=None):
         if not self.enabled:
             return {'enabled': False}
         if not all(finite(v) for v in (start, end, now)) or start < 0 or min(end, now) <= start:
@@ -372,7 +373,8 @@ class PredictiveLab:
             'latest': latest,
             'fresh': bool(latest and 0 <= now - latest['origin'] <= 990),
             'accuracy': evaluation(records, points, now),
-            'portfolios': portfolio(e),
+            'portfolios': portfolio(e, target),
+            'targetUsdPerHour': target,
             'pairSupport': {'maxModels': 2, 'automaticPicker': 'solo', 'jointForecast': False},
             'method': 'Predicted mean concurrent load per warm provider over the next 15 / 60 minutes. Learned from past-only hourly windows; compared with the last 15-minute mean. Shadow forecasts never switch models.',
         }

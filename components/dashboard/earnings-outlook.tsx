@@ -283,8 +283,8 @@ export function EarningsOutlookPanel({ paused }: { paused: boolean }) {
             </p>
           ) : !models.length ? (
             <p className="notice">
-              No model observations yet. Leave Bloomkeeper running to build history;
-              this is not a $0 forecast.
+              No model observations yet. Leave Bloomkeeper running to build
+              history; this is not a $0 forecast.
             </p>
           ) : (
             <>
@@ -413,7 +413,7 @@ export function EarningsOutlookPanel({ paused }: { paused: boolean }) {
                               margin={{ top: 20, right: 8, bottom: 0, left: 0 }}
                             >
                               <CartesianGrid
-                                stroke="#263642"
+                                stroke="var(--c-263642)"
                                 strokeDasharray="3 6"
                                 vertical={false}
                               />
@@ -422,7 +422,7 @@ export function EarningsOutlookPanel({ paused }: { paused: boolean }) {
                                 height={42}
                                 angle={-30}
                                 textAnchor="end"
-                                tick={{ fill: '#99aabd', fontSize: 10 }}
+                                tick={{ fill: 'var(--c-99aabd)', fontSize: 10 }}
                                 interval={0}
                                 tickLine={false}
                               />
@@ -433,13 +433,13 @@ export function EarningsOutlookPanel({ paused }: { paused: boolean }) {
                                 ]}
                                 tickFormatter={(v) => money(v)}
                                 width={50}
-                                tick={{ fill: '#99aabd', fontSize: 11 }}
+                                tick={{ fill: 'var(--c-99aabd)', fontSize: 11 }}
                                 tickLine={false}
                                 tickCount={4}
                               />
-                              <ReferenceLine y={0} stroke="#536578" />
+                              <ReferenceLine y={0} stroke="var(--c-536578)" />
                               <Tooltip
-                                cursor={{ fill: '#ffffff07' }}
+                                cursor={{ fill: 'var(--c-ffffff07)' }}
                                 content={({ active, payload }) =>
                                   active && payload?.[0]?.payload
                                     ? chartTip(
@@ -466,7 +466,7 @@ export function EarningsOutlookPanel({ paused }: { paused: boolean }) {
                                       pressure != null &&
                                       pressure >= b.low &&
                                       (b.high == null || pressure < b.high)
-                                        ? '#edf5ff'
+                                        ? 'var(--c-edf5ff)'
                                         : undefined
                                     }
                                     strokeWidth={2}

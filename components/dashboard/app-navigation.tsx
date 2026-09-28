@@ -21,6 +21,7 @@ import { ScreenErrorBoundary } from './screen-error';
 import { setSupportContext } from '@/lib/support-issues';
 import { bindMobileViewport } from '@/lib/mobile-viewport';
 import { WebsiteLinks } from './website-links';
+import { AppearanceSetting } from './theme-toggle';
 
 const appSections = [
   {
@@ -520,6 +521,7 @@ export function NavigationHub({ optimizer = false }: { optimizer?: boolean }) {
           <h2>{optimizer ? 'Manage & investigate.' : 'A little deeper.'}</h2>
         </div>
       </div>
+      {!optimizer && <AppearanceSetting />}
       {!optimizer && <WebsiteLinks />}
       {groups.map((group) => (
         <div key={group.title}>

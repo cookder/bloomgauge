@@ -12,6 +12,9 @@ export type MultiModelReporting = {
   counting: boolean;
   detail: string;
   automationSupported: false;
+  /** Offered models no longer downloaded here (`darkbloom models remove`): Darkbloom
+   * keeps offering them until it restarts. Empty when none or not yet known. */
+  offeredNotDownloaded?: string[];
 };
 export type PulseRunStatus = {
   label: string;
@@ -89,7 +92,7 @@ export function pulseRunStatus(
       progress: 'Managed by Darkbloom',
       detail: report.detail,
       reason:
-        'Bloomkeeper reports this model set without changing it. Automatic demand-following currently selects one model; optional combination tests cover pairs.',
+        'Darkbloom manages this model set; Bloomkeeper reports on it and never changes it. The Manager runs one model, or a pair without Gemma. To use it, pick one model in Model controls, then turn the Manager on.',
     };
   }
   if (!finite(d.at) || now - d.at > 45 || now - d.at < -5) return unknown;
@@ -243,10 +246,11 @@ export function pulseRunStatus(
   }
   if (d.mode === 'observe')
     return {
-      label: 'Manual / observe',
+      // Neutral for both strategies: legacy calls this Manual, the manager Off.
+      label: 'Automatic control off',
       tone: 'notice',
       detail:
-        'Automatic selection is paused. This model keeps serving while Bloomkeeper records passive history.',
+        'Bloomkeeper isn’t choosing models. This model keeps serving while Bloomkeeper records passive history.',
     };
   return {
     label: 'Normal run',

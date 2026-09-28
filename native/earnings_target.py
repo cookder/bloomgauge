@@ -1,4 +1,8 @@
-"""Confirmed earnings per clock hour. Cold/switch time is never normalized away."""
+"""Confirmed earnings per clock hour. Cold/switch time is never normalized away.
+
+The goal is the user's own (demand_targets.chosen_goal). With no goal, hours are
+reported without a met/below judgement.
+"""
 
 import bisect
 import math
@@ -9,12 +13,12 @@ def finite(v):
     return type(v) in (int, float) and math.isfinite(v)
 
 
-def report(store, account, device, start, end, now, target=0.12, model=None):
+def report(store, account, device, start, end, now, target=None, model=None):
     if (
-        not all(finite(v) for v in (start, end, now, target))
+        not all(finite(v) for v in (start, end, now))
+        or (target is not None and (not finite(target) or target <= 0))
         or start < 0
         or end <= start
-        or target <= 0
     ):
         raise ValueError('Invalid earnings target range.')
     if model is not None and (not isinstance(model, str) or not model or len(model) > 512):
@@ -110,7 +114,9 @@ def report(store, account, device, start, end, now, target=0.12, model=None):
         if valid:
             complete += 1
             complete_usd += usd
-            if usd + 1e-12 >= target:
+            if target is None:
+                pass
+            elif usd + 1e-12 >= target:
                 met += 1
                 streak = 0
             else:
@@ -123,7 +129,7 @@ def report(store, account, device, start, end, now, target=0.12, model=None):
             if full:
                 unknown += 1
         status = (
-            ('met' if usd + 1e-12 >= target else 'below')
+            ('complete' if target is None else 'met' if usd + 1e-12 >= target else 'below')
             if valid
             else 'partial'
             if not full
@@ -157,7 +163,7 @@ def report(store, account, device, start, end, now, target=0.12, model=None):
         'model': model,
         'models': sorted(models),
         'targetUsdPerHour': target,
-        'dailyTargetUsd': target * 24,
+        'dailyTargetUsd': None if target is None else target * 24,
         'usd': total,
         'inferenceUsd': inference / 1e6,
         'accountBaseUsd': base / 1e6,
@@ -170,11 +176,11 @@ def report(store, account, device, start, end, now, target=0.12, model=None):
         else None,
         'settledTo': settled_end,
         'completeHours': complete,
-        'metHours': met,
+        'metHours': None if target is None else met,
         'unknownHours': unknown,
-        'metPercent': met * 100 / complete if complete else None,
+        'metPercent': met * 100 / complete if complete and target is not None else None,
         'completeHourAverageUsd': complete_usd / complete if complete else None,
-        'longestBelowHours': longest,
+        'longestBelowHours': None if target is None else longest,
         'switchSeconds': sum(r['downtime'] for r in switches),
         'switchCount': len(switches),
         'hourly': hourly,

@@ -1,0 +1,226 @@
+[
+ {
+  "at": 1790555345.5,
+  "mode": "demand",
+  "status": "optimizing",
+  "detail": "Holding home model gemma-4-26b-qat-4bit.",
+  "selected": [
+   "gemma-4-26b-qat-4bit",
+   "gpt-oss-20b"
+  ],
+  "blockHours": 2,
+  "controlVersion": "c0ffee",
+  "canManage": true,
+  "busy": false,
+  "currentModel": "gemma-4-26b-qat-4bit",
+  "currentModels": [
+   "gemma-4-26b-qat-4bit"
+  ],
+  "originalModel": "gpt-oss-20b",
+  "requestedModel": null,
+  "requestedKind": null,
+  "controlError": null,
+  "discoveryError": null,
+  "nextSwitchAt": null,
+  "warmup": {
+   "model": "gemma-4-26b-qat-4bit",
+   "status": "ready",
+   "detail": "Warm and ready \u00b7 serving output verified.",
+   "verifiedAt": 1790555285.5,
+   "attempts": 0
+  },
+  "reporting": null,
+  "lastSwitchResult": {
+   "at": 1790554515.5,
+   "outcome": "recovered"
+  },
+  "models": [],
+  "events": [],
+  "demandAuto": {
+   "enabled": true,
+   "trial": {
+    "runId": 141,
+    "model": "gemma-4-26b-qat-4bit",
+    "current": false,
+    "status": "productive",
+    "paymentSeen": true,
+    "competitive": null,
+    "clock": {},
+    "occupancy": null,
+    "learning": null,
+    "warmSeconds": 420.0,
+    "trialMinutes": 15,
+    "warmStartedAt": 1790554925.5,
+    "windowEnd": 1790555825.5,
+    "firstTrafficSeconds": 61.0,
+    "rampSeconds": 61.0,
+    "steadyUsdPerHour": 0.09,
+    "requests": 13.0,
+    "tokens": 858.0,
+    "idlePercent": 71.2,
+    "paidWarmSeconds": 360.0,
+    "usd": 0.009,
+    "paidJobs": 13,
+    "usdPerHour": 0.081,
+    "cooldownUntil": null,
+    "pressure": 0.13,
+    "load": 51.8,
+    "evaluatedAt": 1790555340.5,
+    "complete": true,
+    "settled": false,
+    "coveragePercent": 93.3,
+    "settlementDeadline": 1790556125.5,
+    "partial": false
+   },
+   "paidAlternative": null,
+   "spikeReview": null,
+   "runs": [
+    {
+     "id": 141,
+     "at": 1790554445.5,
+     "previousModel": "gpt-oss-20b",
+     "model": "gemma-4-26b-qat-4bit",
+     "reservedSeconds": 160.6,
+     "completedAt": 1790554515.5,
+     "result": "switched",
+     "downtime": 69.1,
+     "decision": {
+      "kind": "explore",
+      "reason": "Measure gemma-4-26b-qat-4bit while the network is busy.",
+      "explorationTrigger": "demand_spike",
+      "planningMinutes": 60,
+      "trialMinutes": 15,
+      "candidate": {
+       "model": "gemma-4-26b-qat-4bit",
+       "signal": {},
+       "selected": true
+      },
+      "outcome": null,
+      "spikeTrial": true,
+      "learningTrial": null
+     }
+    }
+   ]
+  }
+ },
+ {
+  "at": 1790555345.5,
+  "mode": "demand",
+  "status": "optimizing",
+  "detail": "Measuring gemma-4-26b-qat-4bit.",
+  "selected": [
+   "gemma-4-26b-qat-4bit",
+   "gpt-oss-20b"
+  ],
+  "blockHours": 2,
+  "controlVersion": "c0ffee",
+  "canManage": true,
+  "busy": false,
+  "currentModel": "gemma-4-26b-qat-4bit",
+  "currentModels": [
+   "gemma-4-26b-qat-4bit"
+  ],
+  "originalModel": "gpt-oss-20b",
+  "requestedModel": null,
+  "requestedKind": null,
+  "controlError": null,
+  "discoveryError": null,
+  "nextSwitchAt": null,
+  "warmup": {
+   "model": "gemma-4-26b-qat-4bit",
+   "status": "ready",
+   "detail": "Warm and ready \u00b7 serving output verified.",
+   "verifiedAt": 1790555285.5,
+   "attempts": 0
+  },
+  "reporting": null,
+  "lastSwitchResult": {
+   "at": 1790554515.5,
+   "outcome": "recovered"
+  },
+  "models": [],
+  "events": [],
+  "demandAuto": {
+   "enabled": true,
+   "trial": {
+    "runId": 141,
+    "model": "gemma-4-26b-qat-4bit",
+    "current": true,
+    "status": "running",
+    "paymentSeen": true,
+    "competitive": null,
+    "clock": {},
+    "occupancy": null,
+    "learning": null,
+    "warmSeconds": 420.0,
+    "trialMinutes": 15,
+    "warmStartedAt": 1790554925.5,
+    "windowEnd": 1790555825.5,
+    "firstTrafficSeconds": 61.0,
+    "rampSeconds": 61.0,
+    "steadyUsdPerHour": 0.09,
+    "requests": 13.0,
+    "tokens": 858.0,
+    "idlePercent": 71.2,
+    "paidWarmSeconds": 360.0,
+    "usd": 0.009,
+    "paidJobs": 13,
+    "usdPerHour": 0.081,
+    "cooldownUntil": null,
+    "pressure": 0.13,
+    "load": 51.8,
+    "evaluatedAt": 1790555340.5,
+    "complete": false,
+    "settled": false,
+    "coveragePercent": 93.3,
+    "settlementDeadline": 1790556125.5,
+    "partial": false
+   },
+   "paidAlternative": {
+    "model": "gpt-oss-20b",
+    "eligible": false,
+    "reason": "The trial is still measuring.",
+    "at": 1790555342.5
+   },
+   "spikeReview": {
+    "runId": 141,
+    "incumbent": "gpt-oss-20b",
+    "status": "measuring",
+    "reason": "Measuring paid work during the demand spike.",
+    "at": 1790555340.5,
+    "deadline": 1790555825.5,
+    "referenceRate": 0.05,
+    "trialRate": 0.081,
+    "liveRate": null,
+    "rateBasis": "settled_inference_per_warm_hour_after_first_work"
+   },
+   "runs": [
+    {
+     "id": 141,
+     "at": 1790554445.5,
+     "previousModel": "gpt-oss-20b",
+     "model": "gemma-4-26b-qat-4bit",
+     "reservedSeconds": 160.6,
+     "completedAt": 1790554515.5,
+     "result": "switched",
+     "downtime": 69.1,
+     "decision": {
+      "kind": "explore",
+      "reason": "Measure gemma-4-26b-qat-4bit while the network is busy.",
+      "explorationTrigger": "demand_spike",
+      "planningMinutes": 60,
+      "trialMinutes": 15,
+      "candidate": {
+       "model": "gemma-4-26b-qat-4bit",
+       "signal": {},
+       "selected": true
+      },
+      "outcome": null,
+      "spikeTrial": true,
+      "learningTrial": null
+     }
+    }
+   ]
+  }
+ }
+]

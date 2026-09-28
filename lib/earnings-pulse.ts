@@ -106,6 +106,24 @@ export function pulseComparison(
   };
 }
 
+/** What the Pulse rates against. There is no built-in pace: until this model set
+ * has 30 settled warm minutes (native/live_earnings.py) the meter shows no rating,
+ * and only this Mac's own history can suggest work isn't reaching it. */
+export function pulseReference(
+  mode: string,
+  historical: number | null | undefined,
+  custom: string,
+) {
+  const typed = custom.trim() === '' ? NaN : Number(custom);
+  if (mode === 'reference')
+    return Number.isFinite(typed) && typed > 0
+      ? { value: typed, source: 'custom' as const, routing: false }
+      : { value: null, source: null, routing: false };
+  return historical != null && Number.isFinite(historical) && historical > 0
+    ? { value: historical, source: 'history' as const, routing: true }
+    : { value: null, source: null, routing: false };
+}
+
 export function creditBursts(events: PulseCredit[]) {
   const individual = events
     .slice(0, 10)
@@ -135,16 +153,16 @@ export function pulseDial(ratio: number | null | undefined, previousScale = 4) {
     while (scale > 4 && value < scale * 0.3) scale /= 2;
   }
   const band = !valid
-    ? ['#91a497', 'Waiting']
+    ? ['var(--c-91a497)', 'Waiting']
     : value < 1
-      ? ['#87b9ff', 'Below reference']
+      ? ['var(--c-87b9ff)', 'Below reference']
       : value < 2
-        ? ['#82efb5', 'Above reference']
+        ? ['var(--c-82efb5)', 'Above reference']
         : value < 3
-          ? ['#ffd079', 'Running hot']
+          ? ['var(--c-ffd079)', 'Running hot']
           : value < 5
-            ? ['#ff9b64', 'On fire']
-            : ['#f68cce', 'Supercharged'];
+            ? ['var(--c-ff9b64)', 'On fire']
+            : ['var(--c-f68cce)', 'Supercharged'];
   return {
     scale,
     fraction: Math.min(1, value / scale),
@@ -198,9 +216,9 @@ export function pulseDemandView(
     ratio == null || pace == null
       ? null
       : ratio >= 0.8 && pace < 0.5
-        ? 'Demand is normal or higher but pay is low. Work may not be reaching this Mac.'
+        ? 'Demand is usual or higher for this time of day, but pay is low. Work may not be reaching this Mac.'
         : ratio < 0.5 && pace < 0.5
-          ? 'Network demand for this model is low, which explains the slower pace.'
+          ? 'Network demand for this model is low for this time of day, which explains the slower pace.'
           : null;
   return {
     ratio,
@@ -208,7 +226,7 @@ export function pulseDemandView(
     label:
       ratio == null
         ? 'Network demand'
-        : `Demand ${ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1)}× usual`,
+        : `Demand ${ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1)}× usual for this time of day`,
     detail:
       ratio == null
         ? `${requests} · usual level still being measured`

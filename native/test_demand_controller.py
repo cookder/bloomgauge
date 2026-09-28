@@ -17,8 +17,12 @@ class DemandControllerTests(unittest.TestCase):
     tearDown = test_optimizer.ControllerTests.tearDown
 
     def setup_demand(self):
+        # These cover legacy demand following; test_manager.py covers the manager strategy.
         self.o.state.update(
-            mode='demand', demandPolicy=policy({'minRunMinutes': 30, 'confirmationMinutes': 5})
+            mode='demand',
+            demandPolicy=policy(
+                {'minRunMinutes': 30, 'confirmationMinutes': 5, 'managerStrategy': 0}
+            ),
         )
         self.o.raw.update(warm_models=['a'], trust={'status': 'online', 'trust_level': 'hardware'})
         self.o.warmup = {
@@ -170,20 +174,24 @@ class DemandControllerTests(unittest.TestCase):
         self.assertFalse(result['paidAlternative']['eligible'])
         self.assertEqual(result['paidAlternative']['reason'], result['controlError'])
 
-    def test_default_memory_reserve_allows_the_supported_opportunity(self):
+    def test_memory_reserve_is_budgeted_and_unknown_memory_settings_stop_moves(self):
         self.setup_demand()
         p = self.o.home / '.config/darkbloom/provider.toml'
         p.parent.mkdir(parents=True, exist_ok=True)
         self.o.demand_auto.evaluate = Mock(return_value=copy.deepcopy(self.value))
-        p.write_text('[provider]\nmemory_reserve_gb = 4')
-        result = Optimizer.demand_decision(self.o, self.now)
-        self.assertIsNone(result['controlError'])
-        self.assertEqual(result['target'], self.value['target'])
-        p.write_text('[provider]\nmemory_reserve_gb = 12')
+        for reserve in (4, 12):
+            p.write_text('[provider]\nmemory_reserve_gb = %d' % reserve)
+            self.o.demand_auto.evaluate.return_value = copy.deepcopy(self.value)
+            result = Optimizer.demand_decision(self.o, self.now)
+            self.assertIsNone(result['controlError'])
+            self.assertEqual(result['target'], self.value['target'])
+        # Darkbloom's load reserve: memory_reserve_gb, at least 10% of this 48 GB Mac.
+        self.assertEqual(self.o.selection_budget('b', self.o.live, self.o.raw)['reserveGB'], 12)
+        p.write_text('[provider]\nmemory_reserve_gb = 4\nkv_reserve_gb = 1')
         self.o.demand_auto.evaluate.return_value = copy.deepcopy(self.value)
         result = Optimizer.demand_decision(self.o, self.now)
         self.assertIsNone(result['target'])
-        self.assertIn('memory_reserve_gb', result['controlError'])
+        self.assertIn('kv_reserve_gb', result['controlError'])
         self.assertEqual(result['reason'], result['controlError'])
 
     def test_dispatch_preserves_trigger_and_paid_evidence_for_audit(self):

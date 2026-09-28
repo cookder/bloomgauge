@@ -215,6 +215,18 @@ class OptimizerStore:
             )
             self.h.db.commit()
 
+    def served_minutes(self, device, model, start):
+        """Complete verified ready minutes this device served `model` alone since `start`.
+
+        Any account: it proves the runtime ran here. Same complete-minute rule as evidence().
+        """
+        with self.h.lock:
+            return self.h.db.execute(
+                """SELECT COUNT(*) FROM opt_ready_minutes WHERE device=? AND model=? AND at>=?
+                AND seconds>=59.999999 AND seconds<=60.000001""",
+                (device, model, start),
+            ).fetchone()[0]
+
     def evidence(self, account, device, start, end, now):
         # A 2-minute settlement lag plus verified poll coverage prevents a fresh, unpaid
         # minute from becoming evidence of zero revenue. Require a complete warm

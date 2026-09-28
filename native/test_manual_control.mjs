@@ -105,6 +105,45 @@ test('incomplete data, nonboolean availability, malformed queue and receipts fai
   ])
     assert.equal(validManualControl({ ...snapshot(), ...patch }), false);
 });
+test('Darkbloom not set up: readable without a version token, and its setup text is the blocker', () => {
+  // native/provider_control.py snapshot() when the launch agent can't be read,
+  // decorated by manual_selection.py.
+  const detail =
+    'Set up and start Darkbloom once on this Mac, then refresh the model controls in Optimizer → Overview. Your existing configuration is kept.';
+  const s = {
+    ...snapshot(),
+    currentModel: null,
+    status: 'observing',
+    models: [],
+    warmup: null,
+    providerControl: {
+      status: 'unavailable',
+      detail,
+      canStart: false,
+      canStop: false,
+      canEnableEndpoint: false,
+      selectionActionSupported: true,
+      endpointSetupRequired: false,
+    },
+  };
+  assert.ok(validManualControl(s));
+  assert.equal(manualBlocker(s, '', 100), detail);
+  // Every other status still needs its version token, and a token is never empty.
+  for (const change of [
+    { status: 'running' },
+    { status: 'stopped' },
+    { status: 'unknown' },
+    { version: '' },
+    { version: 7 },
+  ])
+    assert.equal(
+      validManualControl({
+        ...s,
+        providerControl: { ...s.providerControl, ...change },
+      }),
+      false,
+    );
+});
 test('old backend stays readable but cannot receive a target-aware start', () => {
   const s = snapshot();
   delete s.providerControl.selectionActionSupported;

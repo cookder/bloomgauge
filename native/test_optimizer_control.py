@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from optimizer_control import OptimizerControl, PLAN_FIELDS
 from model_readiness import session_key
 from model_combinations import selection_key
+from demand_targets import GEMMA
 import test_optimizer as fixtures
 
 
@@ -109,7 +110,24 @@ class ControlTests(unittest.TestCase):
             self.control.action(self.request(expectedControl='stale'))
         self.assertEqual(self.o.state['mode'], 'observe')
 
+    def test_status_names_the_effective_strategy(self):
+        # A saved policy without the key runs the manager (the default); the On card reads this.
+        self.o.state['demandPolicy'].pop('managerStrategy', None)
+        self.control.projection(time.time())
+        self.assertEqual(self.control.snapshot()['strategy'], 'manager')
+        self.legacy()
+        self.assertEqual(self.control.snapshot()['strategy'], 'legacy')
+        self.assertEqual(OptimizerControl(self.o).snapshot()['strategy'], 'legacy')
+
+    def legacy(self):
+        # Legacy demand following waits for a warm model before On; the manager does not
+        # (test_manager.AndrewSep27Tests).
+        self.o.state['demandPolicy'] = {**self.o.state['demandPolicy'], 'managerStrategy': 0}
+        self.o.save()
+        self.control.projection(time.time())
+
     def test_cold_readiness_waits_then_manual_prevents_late_enable(self):
+        self.legacy()
         self.o.warmup = {}
         self.o.raw['warm_models'] = []
         self.o.read_state.return_value = copy.deepcopy(self.o.raw)
@@ -251,6 +269,8 @@ class ControlTests(unittest.TestCase):
                 case = ControlTests()
                 case.setUp()
                 self.addCleanup(case.tearDown)
+                if change == 'warm':
+                    case.legacy()
                 case.enable()
                 original = case.o.demand_resume_context
 
@@ -346,7 +366,7 @@ class ControlTests(unittest.TestCase):
     def test_first_plan_is_reviewed_once_and_saved_plan_rejects_replacement(self):
         self.o.state.update(startedAt=None, models=[], originalModel=None)
         self.control.projection(time.time())
-        with self.assertRaisesRegex(ValueError, 'Review two'):
+        with self.assertRaisesRegex(ValueError, 'Review one'):
             self.enable()
         self.enable(models=['a', 'b'], demandPolicy={'targetUsdPerHour': 0.15})
         self.control.tick()
@@ -394,8 +414,9 @@ class ControlTests(unittest.TestCase):
                 if code == 'identity':
                     case.o.live['account'] = ''
                 elif code == 'model-scope':
+                    # The manager holds a pair without gemma; gemma is served alone.
                     case.o.read_options.return_value = (
-                        selection_key(['a', 'b']),
+                        selection_key([GEMMA, 'b']),
                         ['--local-endpoint'],
                         {},
                     )
@@ -413,6 +434,69 @@ class ControlTests(unittest.TestCase):
                 )
                 if code == 'completed-plan':
                     self.assertFalse(view['firstPlan'])
+
+    def test_manager_turns_on_with_one_model_and_legacy_still_needs_two(self):
+        self.o.state.update(startedAt=None, models=[], originalModel=None)
+        self.control.projection(time.time())
+        self.enable(models=['a'])
+        self.control.tick()
+        self.assertEqual(self.o.state['mode'], 'demand')
+        self.assertEqual(self.o.state['models'], ['a'])
+        legacy = ControlTests()
+        legacy.setUp()
+        self.addCleanup(legacy.tearDown)
+        legacy.o.state.update(startedAt=None, models=[], originalModel=None)
+        legacy.control.projection(time.time())
+        with self.assertRaisesRegex(ValueError, 'Review two'):
+            legacy.enable(models=['a'], demandPolicy={'managerStrategy': 0})
+
+    def test_manager_turns_on_and_holds_a_pair_without_gemma(self):
+        pair = selection_key(['a', 'b'])
+        self.o.read_options.return_value = (pair, ['--local-endpoint', '--port', '8000'], {})
+        self.o.raw.update(advertised_models=['a', 'b'], warm_models=['a', 'b'])
+        self.o.read_state.return_value = copy.deepcopy(self.o.raw)
+        view = self.control.projection(time.time())
+        self.assertTrue(view['automatic']['canEnable'], view['automatic'])
+        self.enable()
+        self.control.tick()
+        self.assertEqual(self.o.state['mode'], 'demand', self.control.operation)
+        self.assertEqual(self.o.state['expectedModel'], pair)
+        decision = self.o.demand_decision(time.time())
+        self.assertIsNone(decision['controlError'])
+        self.assertIsNone(decision['target'])
+        self.assertEqual(decision['reason'], 'Holding home model a + b.')
+        # Legacy demand following still compares solo models.
+        self.o.state['demandPolicy'] = {**self.o.state['demandPolicy'], 'managerStrategy': 0}
+        self.assertIn('solo models', self.o.demand_decision(time.time())['controlError'])
+
+    def test_knobs_bloomkeeper_cannot_model_stop_automatic_moves_not_on(self):
+        options = ['--local-endpoint', '--port', '8000']
+        self.o.read_options.return_value = ('a', options, {'DARKBLOOM_MEM_CAP_FRACTION': '0.8'})
+        self.control.projection(time.time())
+        self.enable()
+        self.control.tick()
+        # The manager turns on and holds: its watchdog and restores keep working.
+        self.assertEqual(self.o.state['mode'], 'demand', self.control.operation)
+        decision = self.o.demand_decision(time.time())
+        self.assertIn('DARKBLOOM_MEM_CAP_FRACTION', decision['controlError'])
+        self.assertIsNone(decision['target'])
+        # What Darkbloom's installer itself writes into the launch agent is fine.
+        self.o.read_options.return_value = ('a', options, {'DARKBLOOM_PREFIX_CACHE': '0'})
+        self.assertIsNone(self.o.demand_decision(time.time())['controlError'])
+
+    def test_legacy_on_is_still_refused_when_moves_cannot_be_modelled(self):
+        self.legacy()
+        self.o.read_options.return_value = (
+            'a',
+            ['--local-endpoint', '--port', '8000'],
+            {'DARKBLOOM_ACTIVATION_RESERVE_GB': '8'},
+        )
+        self.control.projection(time.time())
+        self.enable()
+        self.control.tick()
+        self.assertEqual(self.o.state['mode'], 'observe')
+        self.assertEqual(self.control.operation['status'], 'blocked')
+        self.assertIn('DARKBLOOM_ACTIVATION_RESERVE_GB', self.control.operation['detail'])
 
     def test_failed_intent_persistence_dispatches_nothing(self):
         with patch.object(self.control, 'save', side_effect=OSError('fixture failure')):

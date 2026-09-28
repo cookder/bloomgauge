@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  clearAutoSentPrompt,
+  autoSendSupportPrompt,
   clearSupportPrompt,
   dismissSupportIssue,
   getServerSupportIssues,
@@ -23,6 +23,7 @@ import {
   recordSupportIssue,
   setSupportReporting,
   subscribeSupportIssues,
+  supportIssueTitle,
   supportTitles,
   type SupportIssue,
 } from '@/lib/support-issues';
@@ -48,7 +49,7 @@ export function SupportReporting({ children }: { children: ReactNode }) {
     const polling = (event: Event) => {
       const detail = (event as CustomEvent).detail;
       if (detail && typeof detail === 'object')
-        recordSupportIssue(detail.category, detail.context);
+        recordSupportIssue(detail.category, detail.context, detail.source);
     };
     window.addEventListener('error', runtime);
     window.addEventListener('unhandledrejection', rejection);
@@ -210,7 +211,8 @@ function SupportReportHost() {
   const request = useRef<AbortController | null>(null),
     generation = useRef(0),
     handled = useRef(0),
-    pending = useRef(false);
+    pending = useRef(false),
+    autoSending = useRef<SupportIssue | null>(null);
   const busy = phase === 'preparing' || phase === 'sending';
   // Opt-in automatic reports: same allowlisted report as a tap, sent when a problem is recorded.
   const [autoSend, setAutoSend] = useState(false),
@@ -224,20 +226,21 @@ function SupportReportHost() {
   }, []);
   useEffect(() => {
     const issue = notifications.prompt;
-    if (!issue || !autoSend || open) return;
-    // The prompt stays until the Mac app confirms delivery: if it holds the report
-    // back (its shared limit) or sending fails, the user can still report it.
-    quickSupportReport(
-      { ...issue, description: '', contact: '' },
-      AbortSignal.timeout(30000),
-      true,
-    )
-      .then(() => {
-        clearAutoSentPrompt(issue);
-        setAutoNotice(true);
-        setTimeout(() => setAutoNotice(false), 10000);
-      })
-      .catch(() => {});
+    if (!issue || !autoSend || open || autoSending.current === issue) return;
+    // Sent or held back, the prompt is cleared so later problems can still be reported.
+    autoSending.current = issue;
+    void autoSendSupportPrompt(issue, (fields) =>
+      quickSupportReport(
+        { ...fields, description: '', contact: '' },
+        AbortSignal.timeout(30000),
+        true,
+      ),
+    ).then((sent) => {
+      if (autoSending.current === issue) autoSending.current = null;
+      if (!sent) return;
+      setAutoNotice(true);
+      setTimeout(() => setAutoNotice(false), 10000);
+    });
   }, [notifications.prompt, autoSend, open]);
   useEffect(() => {
     const next = notifications.request;
@@ -663,7 +666,7 @@ function QuickReportPrompt({
     >
       <MessageSquareWarning size={18} aria-hidden="true" />
       <div>
-        <strong>{supportTitles[issue.category]}</strong>
+        <strong>{supportIssueTitle(issue)}</strong>
         <span>
           Send a quick report so it can be fixed?{' '}
           <button

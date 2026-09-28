@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote, parse_qs
 from history import History
 from network import Network
+from network_evidence import NetworkEvidence
 from opportunity_lab import OpportunityLab
 from predictive_lab import PredictiveLab
 from earnings_forecast_journal import ForecastJournal
@@ -32,7 +33,13 @@ from network_contributions import NetworkContributions, ContributionsUnavailable
 from reputation import Reputation
 from model_projection import ModelProjection
 from provider_sessions import ProviderSessions
-from provider_reporting import ProviderReporting, observed_models
+from provider_reporting import (
+    ProviderReporting,
+    observed_models,
+    offered_not_downloaded,
+    preloading,
+    state_fresh,
+)
 from live_earnings import EarningsPulse, POLL_SECONDS, CACHE_SECONDS, credit_rows, retry_delay
 from traffic_pulse import TrafficPulse
 from pulse_demand import PulseDemand
@@ -40,6 +47,7 @@ from web_push import WebPush
 from community_insights import CommunityInsights
 from usage_integration import UsageIntegration
 from feature_discovery import FeatureDiscovery
+from whats_changed import WhatsChanged
 from optimizer_store import device_id
 from update_guard import UpdateBlocked
 from support_reports import (
@@ -223,6 +231,11 @@ class Collector:
         self.account = self.history.cache('account') or ''
         self.network = Network(self.history, self.stop)
         self.optimizer = Optimizer(self.history, self.network, self.home, self.stop)
+        self.network_evidence = NetworkEvidence(
+            self.history, self.network_self_ids, lambda: self.hardware
+        )
+        self.network.listeners.append(self.network_evidence.on_network)
+        self.optimizer.network_evidence = self.network_evidence  # manager excursions
         self.opportunity_lab = OpportunityLab(self.optimizer.store)
         self.predictive_lab = PredictiveLab(self.optimizer.store, enabled=personal_edition())
         self.earnings_forecast = ForecastJournal(self.optimizer.store, enabled=forecast_enabled)
@@ -287,6 +300,7 @@ class Collector:
         self.threads = []
         self.usage = UsageIntegration(self, data_path, network_enabled=usage_network_enabled)
         self.discovery = FeatureDiscovery(self, enabled=discovery_enabled)
+        self.whats_changed = WhatsChanged(self, enabled=discovery_enabled)
         self.support_reports = SupportReports(self, network_enabled=support_network_enabled)
         self.demand_curves.hardware = self.hardware_class
         self.contact = UserContact(self.history, network_enabled=support_network_enabled)
@@ -309,6 +323,20 @@ class Collector:
             ):
                 return self.optimizer.identity_provider
         return None
+
+    def network_self_ids(self):
+        """This Mac's provider ids, to find it in /v1/stats; used in memory only."""
+        ids = {self.optimizer.identity_provider}
+        device = self.demand_identity()[1]
+        if device:
+            with self.history.lock:
+                ids.update(
+                    r[0]
+                    for r in self.history.db.execute(
+                        'SELECT provider FROM opt_identity WHERE device=?', (device,)
+                    )
+                )
+        return ids - {None, ''}
 
     def start(self):
         self.network.start()
@@ -682,6 +710,7 @@ class Collector:
         tracking = self.optimizer.tracking(daemon, now)
         provider = {
             'online': False,
+            'starting': False,
             'active': False,
             'model': '',
             'version': '',
@@ -696,7 +725,8 @@ class Collector:
             d = read_json(self.home / '.darkbloom/daemon-state.json')
             daemon = d
             written = d.get('written_at', 0)
-            online = finite(written) and -5 < now - written < 15
+            # 0.9.10's startup preload refreshes the file every 30 s: starting, not stopped.
+            online = state_fresh(d, now)
             stats = d.get('stats', {})
             tokens = stats.get('tokens_generated')
             tracking = self.optimizer.tracking(d, now)
@@ -708,13 +738,20 @@ class Collector:
                     )
                     roster_provider = self.optimizer.reporting_identity(d, now, self.account)
                     tracking = self.provider_reporting.observe(
-                        self.account, d, now, bool(roster_provider), pending, roster_provider
+                        self.account,
+                        d,
+                        now,
+                        bool(roster_provider),
+                        pending,
+                        roster_provider,
+                        self.optimizer.reporting_roster.routed if roster_provider else None,
                     )
             else:
                 self.provider_reporting.reset()
                 self.optimizer.invalidate_reporting_identity()
             provider.update(
                 online=online,
+                starting=online and preloading(d) and (d.get('trust') or {}).get('status') != 'online',
                 active=online and bool(d.get('inference_active')),
                 model=d.get('current_model', ''),
                 version=d.get('version', ''),
@@ -764,6 +801,8 @@ class Collector:
             self.previous = None
         provider['tracking'] = tracking
         if len(observed_models(daemon.get('advertised_models'))) > 2:
+            with self.optimizer.lock:
+                local, listed_at = self.optimizer.local, self.optimizer.discovery_at
             provider['multiModelReporting'] = {
                 'at': now,
                 'sessionId': (session or {}).get('id'),
@@ -772,6 +811,13 @@ class Collector:
                 'counting': tracking['counting'],
                 'detail': tracking['detail'],
                 'automationSupported': False,
+                # Removed with `darkbloom models remove`, still offered until Darkbloom restarts.
+                'offeredNotDownloaded': offered_not_downloaded(
+                    daemon.get('advertised_models'),
+                    local,
+                    listed_at,
+                    (session or {}).get('startedAt'),
+                ),
             }
         if session and session['status'] == 'ended':
             provider.update(online=False, active=False, tokensPerSecond=None)
@@ -1193,6 +1239,41 @@ class Handler(BaseHTTPRequestHandler):
             '/api/usage',
         ):
             self.send_error(403)
+            return
+        if urlsplit(self.path).path == '/api/whats-changed':
+            if not self.permitted() or self.headers.get_all('X-Bloom-Action', []) != [
+                'whats-changed'
+            ]:
+                self.send_error(403)
+                return
+            if self.remote_view and self.headers.get_all('Origin', []) != [
+                'https://' + self.headers.get('Host', '')
+            ]:
+                self.send_error(403)
+                return
+            try:
+                lengths = self.headers.get_all('Content-Length', [])
+                if len(lengths) != 1:
+                    raise ValueError('Invalid request.')
+                size = int(lengths[0])
+                if (
+                    not 0 < size <= 256
+                    or self.headers.get_all('Content-Type', []) != ['application/json']
+                    or self.headers.get('Transfer-Encoding')
+                ):
+                    raise ValueError('Invalid request.')
+                data = json.loads(self.rfile.read(size))
+                self.respond_json(self.collector.whats_changed.action(data, self.setup_preview))
+            except PermissionError:
+                self.send_error(403)
+            except (ValueError, TypeError):
+                self.respond_json({'error': 'Choose a valid note.'}, 400)
+            except Exception:
+                log.exception('Request failed: %s', urlsplit(self.path).path)
+                self.respond_json(
+                    {'error': 'Could not save this choice. It stays closed on this device.'},
+                    503,
+                )
             return
         if urlsplit(self.path).path == '/api/discovery':
             if not self.permitted() or self.headers.get_all('X-Bloom-Action', []) != ['discovery']:
@@ -1765,6 +1846,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/optimizer/control':
             self.respond_json(self.collector.optimizer.automatic_control.snapshot())
             return
+        if path == '/api/whats-changed':
+            self.respond_json(self.collector.whats_changed.status(self.setup_preview))
+            return
         if path == '/api/discovery':
             configured = bool(self.remote and self.remote.config.get('enabled'))
             self.respond_json(
@@ -1938,7 +2022,19 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/opportunities':
                     data = self.collector.opportunity_lab.report(account, device, start, end, now)
                 elif path == '/api/predictive-lab':
-                    data = self.collector.predictive_lab.report(account, device, start, end, now)
+                    from demand_optimizer import policy
+                    from demand_targets import chosen_goal
+
+                    try:
+                        with self.collector.optimizer.lock:
+                            goal = chosen_goal(
+                                policy(self.collector.optimizer.state.get('demandPolicy'))
+                            )
+                    except ValueError:
+                        goal = None
+                    data = self.collector.predictive_lab.report(
+                        account, device, start, end, now, goal
+                    )
                 else:
                     from demand_detail import detail
 
@@ -2022,6 +2118,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == '/api/earnings-target':
                     from earnings_target import report
                     from demand_optimizer import policy
+                    from demand_targets import chosen_goal
 
                     with self.collector.optimizer.lock:
                         live = copy.deepcopy(self.collector.optimizer.live) or {}
@@ -2036,7 +2133,7 @@ class Handler(BaseHTTPRequestHandler):
                         start,
                         end,
                         now,
-                        rules['targetUsdPerHour'],
+                        chosen_goal(rules),
                         q.get('model', [None])[0],
                     )
                 elif path == '/api/optimizer/earnings-outlook':

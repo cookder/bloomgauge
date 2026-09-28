@@ -43,7 +43,11 @@ export function BloomStatus({
       ? health.tone
       : (state?.tone ?? health.tone);
   const label =
-    tone === 'neutral' && !paused ? 'Background' : bloomStatusLabel[tone];
+    tone === health.tone && health.label
+      ? health.label
+      : tone === 'neutral' && !paused
+        ? 'Background'
+        : bloomStatusLabel[tone];
   const recovering = tone !== health.tone && health.tone === 'green';
   return (
     <details
@@ -85,7 +89,8 @@ export function BloomStatus({
         )}
         <p className="small muted">
           Green: current readings. Yellow: updating or degraded. Red: needs
-          attention. Gray: this view is paused or in the background. Model
+          attention. Gray: this view is paused or in the background, or
+          statistics are paused for a lasting reason shown above. Model
           controls keep their own safety checks.
         </p>
       </div>

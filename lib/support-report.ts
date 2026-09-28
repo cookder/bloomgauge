@@ -330,10 +330,13 @@ export async function quickSupportReport(
   signal: AbortSignal,
   automatic = false,
 ): Promise<string> {
+  // Only the report's own fields go to the Mac app; a prompt's validator name stays here.
+  const { category, context, description, contact } = fields;
+  const request = { category, context, description, contact };
   // Automatic reports are limited by the Mac app, shared across every window.
   const preview = await supportRequest(
     'preview',
-    automatic ? { ...fields, automatic: true } : fields,
+    automatic ? { ...request, automatic: true } : request,
     signal,
   );
   if (!validSupportPreview(preview, fields))

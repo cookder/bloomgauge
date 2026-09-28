@@ -233,7 +233,9 @@ export function EnergyPanel({ paused }: { paused: boolean }) {
       </p>
       <StudyChart
         data={data?.samples ?? []}
-        series={[{ key: 'watts', label: 'System power', color: '#f3c57e' }]}
+        series={[
+          { key: 'watts', label: 'System power', color: 'var(--c-f3c57e)' },
+        ]}
         from={from}
         to={to}
         unit="W"
@@ -264,9 +266,13 @@ export function EnergyPanel({ paused }: { paused: boolean }) {
           {
             key: 'inferenceRate',
             label: 'Confirmed inference',
-            color: '#82efb5',
+            color: 'var(--c-82efb5)',
           },
-          { key: 'costRate', label: 'Estimated electricity', color: '#f3c57e' },
+          {
+            key: 'costRate',
+            label: 'Estimated electricity',
+            color: 'var(--c-f3c57e)',
+          },
         ]}
         from={from}
         to={to}
@@ -316,16 +322,38 @@ export function ConcurrencyHistoryPanel({ paused }: { paused: boolean }) {
   const series =
     metric === 'counts'
       ? [
-          { key: 'running', label: 'Generating', color: '#82efb5' },
-          { key: 'waiting', label: 'Backend waiting', color: '#f3c57e' },
-          { key: 'pending', label: 'Coordinator in flight', color: '#b49cff' },
+          { key: 'running', label: 'Generating', color: 'var(--c-82efb5)' },
+          {
+            key: 'waiting',
+            label: 'Backend waiting',
+            color: 'var(--c-f3c57e)',
+          },
+          {
+            key: 'pending',
+            label: 'Coordinator in flight',
+            color: 'var(--c-b49cff)',
+          },
         ]
       : metric === 'limits'
         ? [
-            { key: 'providerLimit', label: 'Machine limit', color: '#91bcff' },
-            { key: 'slotLimit', label: 'Slot limits', color: '#f3c57e' },
+            {
+              key: 'providerLimit',
+              label: 'Machine limit',
+              color: 'var(--c-91bcff)',
+            },
+            {
+              key: 'slotLimit',
+              label: 'Slot limits',
+              color: 'var(--c-f3c57e)',
+            },
           ]
-        : [{ key: 'score', label: 'Network reputation', color: '#82efb5' }];
+        : [
+            {
+              key: 'score',
+              label: 'Network reputation',
+              color: 'var(--c-82efb5)',
+            },
+          ];
   return (
     <section className="panel research-panel" aria-label="Concurrency history">
       <div className="panel-heading">

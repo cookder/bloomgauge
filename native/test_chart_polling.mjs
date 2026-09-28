@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startChartPolling } from '../lib/chart-polling.ts';
+import {
+  ResponseValidationError,
+  startChartPolling,
+} from '../lib/chart-polling.ts';
 
 const settle = async () => {
   for (let index = 0; index < 6; index++) await Promise.resolve();
@@ -106,4 +109,90 @@ test('slow requests do not stack up and paused queries fetch only once', async (
   await settle();
   assert.equal(frozenRequests, 1);
   stopFrozen();
+});
+
+test('a response a validator rejects is reported as validation, naming the validator', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const issues = [];
+  const target = new EventTarget();
+  target.addEventListener('bloom-support-issue', (event) =>
+    issues.push(event.detail),
+  );
+  globalThis.window = target;
+  t.after(() => delete globalThis.window);
+  const run = async (error) => {
+    issues.length = 0;
+    const stop = startChartPolling({
+      load: async () => {
+        throw error;
+      },
+      onValue: () => assert.fail('no value'),
+      onError: () => {},
+      intervalMs: 15000,
+      issueContext: 'models',
+    });
+    // Failures at 0 s and 30 s stay local; the one at 60 s is reported.
+    for (let i = 0; i < 3; i++) {
+      if (i) t.mock.timers.tick(30000);
+      await settle();
+      if (i < 2) assert.deepEqual(issues, []);
+    }
+    stop();
+    return [...issues];
+  };
+  assert.deepEqual(
+    await run(
+      new ResponseValidationError('run-status', 'Incomplete run status'),
+    ),
+    [{ category: 'validation', context: 'models', source: 'run-status' }],
+  );
+  assert.deepEqual(await run(new Error('Run status unavailable')), [
+    { category: 'connection', context: 'models' },
+  ]);
+  assert.deepEqual(await run(new TypeError('Load failed')), [
+    { category: 'connection', context: 'models' },
+  ]);
+});
+
+test('a different kind of failure starts its own streak before it is reported', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const issues = [];
+  const target = new EventTarget();
+  target.addEventListener('bloom-support-issue', (event) =>
+    issues.push(event.detail.category),
+  );
+  globalThis.window = target;
+  t.after(() => delete globalThis.window);
+  // Polls run 30 s apart while failing (0, 30, 60 … s).
+  const run = async (script) => {
+    issues.length = 0;
+    let index = 0;
+    const stop = startChartPolling({
+      load: async () => {
+        const step = script[index++];
+        if (step === 'V')
+          throw new ResponseValidationError('run-status', 'Incomplete');
+        if (step === 'C') throw new TypeError('Load failed');
+        return 'ok';
+      },
+      onValue: () => {},
+      onError: () => {},
+      intervalMs: 15000,
+      issueContext: 'models',
+    });
+    for (let i = 0; i < script.length; i++) {
+      if (i) t.mock.timers.tick(30000);
+      await settle();
+    }
+    stop();
+    return [...issues];
+  };
+  // A validator rejection with one timeout in it is never filed as a connection
+  // problem, and the rejection's own streak restarts after the timeout.
+  assert.deepEqual(await run(['V', 'V', 'V', 'C', 'V', 'V', 'V']), [
+    'validation',
+    'validation',
+  ]);
+  // After an outage, one bad response is not filed as validation.
+  assert.deepEqual(await run(['C', 'C', 'C', 'V']), ['connection']);
 });

@@ -45,7 +45,7 @@ class SelectionTests(unittest.TestCase):
             self.raw.update(advertised_models=[target], current_model=target, warm_models=[])
         return result
 
-    def verified(self, target, *args):
+    def verified(self, target, *args, **kwargs):
         self.raw.update(warm_models=[target], current_model=target, written_at=time.time())
         self.o.raw = copy.deepcopy(self.raw)
         self.o.live['provider'].update(online=True, model=target)
@@ -266,6 +266,20 @@ class SelectionTests(unittest.TestCase):
                     self.admit(self.payload(verify=True))
                 self.assertEqual(self.provider_calls(), [])
 
+    def test_battery_and_the_heat_line_do_not_hold_switching_a_running_provider(self):
+        # Darkbloom serves on battery; only macOS thermal state holds this pick (audit B9).
+        # Starting a stopped provider keeps both checks (see the stopped faults above).
+        self.o.on_ac_power.return_value = False
+        self.o.live['hardware']['cpuTemp'] = 96
+        self.assertTrue(self.row()['canSwitch'])
+        self.admit()
+        self.arm_switch()
+        self.o.switch('a', 'b', 'acct', self.o.live['device'])
+        self.assertEqual([c[-1] for c in self.provider_calls()], ['b'])
+        self.assertEqual(self.o.state['manualResult']['status'], 'completed')
+        self.o.live['hardware']['thermal'] = 'Critical'
+        self.assertFalse(self.row('a')['canSwitch'])
+
     def test_endpoint_auth_and_bind_are_not_silently_rewritten(self):
         self.stopped()
         for extra in (['--no-auth'], ['--bind', '0.0.0.0']):
@@ -433,6 +447,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_same_running_target_pauses_automation_without_restart(self):
         self.o.state['mode'] = 'demand'
+        self.o.state['demandPolicy'] = {**self.o.state['demandPolicy'], 'managerStrategy': 0}
         self.admit(self.payload(model='a'))
         self.assertEqual(self.o.state['mode'], 'observe')
         self.assertEqual(self.o.state['manualResult']['status'], 'unchanged')

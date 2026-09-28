@@ -1,4 +1,18 @@
-import type { SupportContext } from './support-issues';
+import type { SupportContext, ValidationSource } from './support-issues';
+
+/**
+ * The server answered, but a response validator rejected it: a version mismatch or a
+ * bug, not a connection problem. `validator` names the check (never raw data or text).
+ */
+export class ResponseValidationError extends Error {
+  validator: ValidationSource;
+  constructor(validator: ValidationSource, message: string) {
+    super(message);
+    this.name = 'ResponseValidationError';
+    this.validator = validator;
+  }
+}
+
 type PollOptions<T> = {
   load: (signal: AbortSignal) => Promise<T>;
   onValue: (value: T) => void;
@@ -24,7 +38,10 @@ export function startChartPolling<T>({
 }: PollOptions<T>): () => void {
   let stopped = false;
   let failures = 0;
+  // The reporting streak: failures of one kind (a connection, or one validator).
+  let streak = 0;
   let failedSince: number | null = null;
+  let failedKind = '';
   let timer: ReturnType<typeof setTimeout> | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
@@ -49,23 +66,43 @@ export function startChartPolling<T>({
       const value = await Promise.race([load(request.signal), timeout]);
       if (!stopped) {
         failures = 0;
+        streak = 0;
         failedSince = null;
         onValue(value);
       }
     } catch (error) {
       if (!stopped) {
         failures++;
-        if (failedSince === null) failedSince = Date.now();
+        const issue: {
+          category: 'validation' | 'connection';
+          context: SupportContext;
+          source?: ValidationSource;
+        } =
+          error instanceof ResponseValidationError
+            ? {
+                category: 'validation',
+                context: issueContext,
+                source: error.validator,
+              }
+            : { category: 'connection', context: issueContext };
+        // A different kind of failure starts its own streak, so one timeout during a
+        // validator rejection (or one bad response after an outage) is not reported
+        // as the other kind.
+        const kind = issue.category + ':' + (issue.source ?? '');
+        if (kind !== failedKind || failedSince === null) {
+          failedKind = kind;
+          failedSince = Date.now();
+          streak = 0;
+        }
+        streak++;
         if (
           repeat &&
-          failures >= 2 &&
+          streak >= 2 &&
           Date.now() - failedSince >= 60000 &&
           typeof window !== 'undefined'
         ) {
           window.dispatchEvent(
-            new CustomEvent('bloom-support-issue', {
-              detail: { category: 'connection', context: issueContext },
-            }),
+            new CustomEvent('bloom-support-issue', { detail: issue }),
           );
         }
         onError(

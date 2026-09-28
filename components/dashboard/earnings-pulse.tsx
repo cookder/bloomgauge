@@ -1,10 +1,13 @@
 'use client';
+import { pausedReason } from '@/lib/optimizer-manager';
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Activity, ArrowLeftRight, ChevronDown, Sparkles } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Choice, age, money, num, shortModel, type Range } from './shared';
 import { PulseTrend } from './pulse-trend';
 import { TrafficPulse } from './traffic-pulse';
+import { PulseHourlyBars } from './pulse-hourly-bars';
+import type { Monitor } from './widgets';
 import { useAppNavigation } from './app-navigation';
 import { PulseRunIndicator } from './pulse-run-indicator';
 import type { RunSession } from '@/lib/pulse-run-status';
@@ -13,6 +16,7 @@ import type { Forecast } from './forecast';
 import { modelColor } from '@/lib/model-earnings';
 import { usePageVisible } from '@/lib/use-page-visibility';
 import { earningsTone, earningsToneLabel } from '@/lib/daily-earnings';
+import { useEarningsTiers } from './daily-earnings';
 import { creditSortOptions, sortedPulseCredits } from '@/lib/credit-history';
 import {
   creditArrivals,
@@ -22,6 +26,7 @@ import {
   pulseComparison,
   pulseDial,
   pulseDemandView,
+  pulseReference,
   readPaceUnit,
   type EarningsPulseData,
   type PaceUnit,
@@ -38,6 +43,8 @@ export function EarningsPulse({
   earningsUpdatedAt,
   earningsStatus,
   session,
+  monitor,
+  at,
 }: {
   pulse?: EarningsPulseData;
   traffic?: TrafficPulseData;
@@ -48,6 +55,8 @@ export function EarningsPulse({
   earningsUpdatedAt?: number | null;
   earningsStatus?: string;
   session?: RunSession | null;
+  monitor?: Monitor;
+  at?: number;
 }) {
   const navigation = useAppNavigation();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -59,7 +68,7 @@ export function EarningsPulse({
   // Bloomkeeper's pace everywhere is the 5-minute confirmed window; 60 s is an optional instant view.
   const [windowSeconds, setWindowSeconds] = useState('300');
   const [comparisonMode, setComparisonMode] = useState('history');
-  const [referenceUsd, setReferenceUsd] = useState('0.15');
+  const [referenceUsd, setReferenceUsd] = useState('');
   const [paceUnit, setPaceUnit] = useState<PaceUnit>(() => {
     try {
       return readPaceUnit(localStorage.getItem(paceUnitKey));
@@ -98,8 +107,9 @@ export function EarningsPulse({
   const active = connected && pulse?.status === 'live';
   const rate = active ? window?.ratePerHour : null;
   const historical = pulse?.baseline?.ratePerHour;
-  const useHistory =
-    comparisonMode === 'history' && historical != null && historical > 0;
+  const basis = pulseReference(comparisonMode, historical, referenceUsd);
+  const reference = basis.value;
+  const useHistory = basis.source === 'history';
   const historyScope = pulse?.baseline?.scope;
   const seasonal =
     !!historyScope &&
@@ -112,13 +122,8 @@ export function EarningsPulse({
         : historyScope === 'hour'
           ? 'same time of day'
           : 'all model hours';
-  const custom = Number(referenceUsd);
-  const reference = useHistory
-    ? historical
-    : Number.isFinite(custom) && custom > 0
-      ? custom
-      : 0.15;
-  const comparison = pulseComparison(rate, reference);
+  const comparison =
+    reference == null ? null : pulseComparison(rate, reference);
   const dialKey = `${pulse?.streamId}:${pulse?.sessionId}:${reference}:${windowSeconds}`;
   const dialRange = useRef({ key: dialKey, scale: 4 });
   const dial = pulseDial(
@@ -127,11 +132,20 @@ export function EarningsPulse({
   );
   dialRange.current = { key: dialKey, scale: dial.scale };
   const color = dial.color;
+  // No rating without a reference; never a routing hint from a typed reference.
+  const rating =
+    comparison || rate == null
+      ? dial.label
+      : comparisonMode !== 'history'
+        ? 'Enter a reference'
+        : historical == null
+          ? 'Building a baseline'
+          : 'No paid baseline yet';
   const demand = connected
     ? pulseDemandView(
         pulse?.demand,
         dial.scale,
-        comparison?.ratio,
+        basis.routing ? comparison?.ratio : null,
         pulse?.at ?? 0,
       )
     : null;
@@ -139,9 +153,11 @@ export function EarningsPulse({
     connected &&
     forecast?.earnings.status === 'ready' &&
     Number.isFinite(forecast.earnings.projected);
+  const tiers = useEarningsTiers(viewActive && hourEstimateReady);
   const hourTone = earningsTone(
     hourEstimateReady ? forecast?.earnings.projected : null,
     forecast ? (forecast.hourEnd - forecast.hourStart) / 3600 : 1,
+    tiers,
   );
   const recent = sortedPulseCredits(pulse?.events ?? [], creditSort).slice(
     0,
@@ -154,7 +170,7 @@ export function EarningsPulse({
       : pulse?.status === 'offline'
         ? 'Session ended'
         : pulse?.status === 'paused'
-          ? 'Statistics paused · model not ready'
+          ? `Statistics paused · ${pausedReason(pulse.detail) ?? (pulse.reporting && !pulse.reporting.counting ? pausedReason(pulse.reporting.detail) : null) ?? 'model not ready'}`
           : pulse?.status === 'unmatched'
             ? 'Matching this Mac'
             : rate == null
@@ -189,7 +205,7 @@ export function EarningsPulse({
         connected={connected}
         reporting={pulse?.reporting}
       />
-      <div className="pulse-layout">
+      <div className="pulse-layout with-hourly">
         <div
           className="pulse-instrument"
           style={{ '--pulse-color': color } as CSSProperties}
@@ -205,7 +221,9 @@ export function EarningsPulse({
                 style={
                   {
                     color:
-                      credit.count > 1 ? '#82efb5' : modelColor(credit.model),
+                      credit.count > 1
+                        ? 'var(--c-82efb5)'
+                        : modelColor(credit.model),
                     '--delay': `${index * 0.35}s`,
                     '--lane': `${8 + (index % 3) * 22}%`,
                   } as CSSProperties
@@ -254,7 +272,7 @@ export function EarningsPulse({
               aria-label={
                 (rate == null
                   ? 'Earnings pace unavailable'
-                  : `Confirmed earnings pace ${pace(rate)} per hour; ${num((comparison?.ratio ?? 0) * 100)} percent of reference`) +
+                  : `Confirmed earnings pace ${pace(rate)} per hour; ${comparison ? `${num(comparison.ratio * 100)} percent of reference` : rating.toLowerCase()}`) +
                 (demand ? `. ${demand.label}` : '')
               }
             >
@@ -341,7 +359,7 @@ export function EarningsPulse({
               </span>
             </button>
             <p className="pulse-intensity" style={{ color }}>
-              {dial.label}
+              {rating}
             </p>
             {demand && (
               <p
@@ -456,6 +474,11 @@ export function EarningsPulse({
             color={color}
           />
         </div>
+        <PulseHourlyBars
+          monitor={monitor}
+          forecast={forecast}
+          at={at ?? pulse?.at ?? Date.now() / 1000}
+        />
       </div>
       <div
         className="pulse-feed-details"
@@ -526,11 +549,11 @@ export function EarningsPulse({
               ? `≈${money(forecast?.earnings.projected)}`
               : '—'}
           </strong>
-          {hourEstimateReady && (
+          {hourEstimateReady && tiers && (
             <small
               className="hour-estimate-rating earnings-tone"
               data-tone={hourTone}
-              title="Same colors as daily earnings, scaled to one hour: good ≈$0.10, great $0.13, outstanding ≈$0.17."
+              title={`Same colors as this Mac’s daily earnings, scaled to one hour: good ≈${money(tiers.green / 24)}, great ≈${money(tiers.purple / 24)}, outstanding ≈${money(tiers.gold / 24)}.`}
             >
               {earningsToneLabel[hourTone]} pace · daily scale
             </small>
@@ -604,13 +627,14 @@ export function EarningsPulse({
               { value: 'reference', label: 'Custom reference' },
             ]}
           />
-          {!useHistory && (
+          {comparisonMode === 'reference' && (
             <label className="pulse-reference-input">
               <Input
                 type="number"
                 min="0.01"
                 step="0.01"
                 value={referenceUsd}
+                placeholder="$/hour"
                 onChange={(event) => setReferenceUsd(event.target.value)}
                 aria-label="Reference dollars per hour"
               />
@@ -622,8 +646,12 @@ export function EarningsPulse({
           <Activity size={14} />
           <span>
             {useHistory
-              ? `Current-model history: ${money(reference)}/hour across ${num(pulse?.baseline?.hours, 1)} earlier verified warm hours for ${pulse?.models.map(shortModel).join(' + ') || 'these models'}. ${pulse?.baseline?.detail ?? 'Uses the past 30 days and excludes this session. Ready idle time is included; other models are excluded.'} ${seasonal ? `Total matched history remains ${num(pulse?.baseline?.totalHours, 1)} warm hours. ` : ''}`
-              : `Reference: ${money(reference)}/hour${comparisonMode === 'history' ? (historical == null ? ' until there are 30 minutes of earlier matched history' : '; the recorded historical average is zero or below') : ''}.`}{' '}
+              ? `Current-model history: ${money(reference)}/hour across ${num(pulse?.baseline?.hours, 1)} verified warm hours for ${pulse?.models.map(shortModel).join(' + ') || 'these models'}. ${pulse?.baseline?.detail ?? 'Uses the past 30 days and excludes this session. Ready idle time is included; other models are excluded.'} ${seasonal ? `Total matched history remains ${num(pulse?.baseline?.totalHours, 1)} warm hours. ` : ''}`
+              : comparisonMode === 'history'
+                ? `No rating yet. ${historical == null ? 'Building a baseline: it needs 30 minutes of settled warm time on these models, and this session counts after 10 minutes.' : 'The recorded average for these models is zero.'}`
+                : reference == null
+                  ? 'Enter a reference to rate the pace.'
+                  : `Reference: ${money(reference)}/hour.`}{' '}
             One-second display; Darkbloom confirms credits in batches with a
             roughly 20-second API cache. Updated{' '}
             {age(pulse?.updatedAt, pulse?.at ?? Date.now() / 1000)}. Meter uses

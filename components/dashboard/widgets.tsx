@@ -29,6 +29,7 @@ import {
   modelEarnings,
   UNATTRIBUTED,
 } from '@/lib/model-earnings';
+import { withHourProjection } from '@/lib/hourly-earnings';
 import {
   Cpu,
   Fan,
@@ -163,15 +164,15 @@ function Meter({
   );
 }
 const temperatureSeries = [
-  { key: 'cpuTempF', label: 'CPU °F', color: '#a995ff' },
-  { key: 'gpuTempF', label: 'GPU °F', color: '#f3c57e' },
+  { key: 'cpuTempF', label: 'CPU °F', color: 'var(--c-a995ff)' },
+  { key: 'gpuTempF', label: 'GPU °F', color: 'var(--c-f3c57e)' },
 ];
 const loadSeries = [
-  { key: 'cpuPercent', label: 'CPU', color: '#a995ff' },
-  { key: 'gpuPercent', label: 'GPU', color: '#87b9ff' },
+  { key: 'cpuPercent', label: 'CPU', color: 'var(--c-a995ff)' },
+  { key: 'gpuPercent', label: 'GPU', color: 'var(--c-87b9ff)' },
 ];
 const memorySeries = [
-  { key: 'memoryUsedGB', label: 'Memory', color: '#82efb5' },
+  { key: 'memoryUsedGB', label: 'Memory', color: 'var(--c-82efb5)' },
 ];
 function HardwareHistory({ paused }: { paused: boolean }) {
   const [range, setRange] = useState<Range>({ preset: '5m' }),
@@ -254,19 +255,19 @@ export function HardwareCard({
       <Meter
         label="CPU"
         value={h?.cpuPercent ?? null}
-        color="#a995ff"
+        color="var(--c-a995ff)"
         detail="Whole machine · all cores"
       />
       <Meter
         label="GPU"
         value={h?.gpuPercent ?? null}
-        color="#87b9ff"
+        color="var(--c-87b9ff)"
         detail="Apple GPU device utilization"
       />
       <Meter
         label="Unified memory"
         value={mem != null && ram ? (mem / ram) * 100 : null}
-        color="#f3c57e"
+        color="var(--c-f3c57e)"
         detail={`${num(mem, 1)} of ${num(ram)} GB · ${num(h?.compressedGB, 1)} GB compressed`}
       />
       <div className="temperature-tiles">
@@ -280,8 +281,8 @@ export function HardwareCard({
               key={t.label}
               style={{
                 color: band.color,
-                borderColor: band.color + '40',
-                background: band.color + '0a',
+                borderColor: `color-mix(in srgb, ${band.color} 25%, transparent)`,
+                background: `color-mix(in srgb, ${band.color} 4%, transparent)`,
               }}
             >
               <span>
@@ -313,10 +314,10 @@ export function HardwareCard({
         </span>
       </div>
       <div className="temperature-bands">
-        <span style={{ color: '#87b9ff' }}>Cool &lt;104°</span>
-        <span style={{ color: '#82efb5' }}>Normal 104–175°</span>
-        <span style={{ color: '#f3c57e' }}>Warm 176–193°</span>
-        <span style={{ color: '#ff8d88' }}>Hot ≥194°</span>
+        <span style={{ color: 'var(--c-87b9ff)' }}>Cool &lt;104°</span>
+        <span style={{ color: 'var(--c-82efb5)' }}>Normal 104–175°</span>
+        <span style={{ color: 'var(--c-f3c57e)' }}>Warm 176–193°</span>
+        <span style={{ color: 'var(--c-ff8d88)' }}>Hot ≥194°</span>
       </div>
       <p className="footnote">
         Display bands, not Apple safety limits. Cooler chips are usually fine.
@@ -452,7 +453,7 @@ export const EarningsPanel = memo(function EarningsPanel({
     return [...names].sort();
   }, [m, forecast?.modelProjection?.models, filtered, model]);
   const selectedName = filtered ? modelLabel(model) : 'All earnings';
-  const selectedColor = filtered ? modelColor(model) : '#82efb5';
+  const selectedColor = filtered ? modelColor(model) : 'var(--c-82efb5)';
   const hours = useMemo(
     () =>
       earningsMetrics(
@@ -525,8 +526,8 @@ export const EarningsPanel = memo(function EarningsPanel({
     : byModel
       ? projectionModels.length === 1
         ? modelColor(projectionModels[0])
-        : '#dab7ff'
-      : '#82efb5';
+        : 'var(--c-dab7ff)'
+      : 'var(--c-82efb5)';
   const projectionBaseline = useMemo(
     () =>
       byModel && modelProjection?.models.length
@@ -621,33 +622,11 @@ export const EarningsPanel = memo(function EarningsPanel({
       },
     };
   }
-  const chartHours = hours.map((h) => ({
-    ...h,
-    projected:
-      showForecast &&
-      earningsForecast?.earnings.status === 'ready' &&
-      h.at === forecast.hourStart
-        ? earningsForecast.earnings.additional
-        : null,
-  }));
-  if (
-    showForecast &&
-    earningsForecast?.earnings.status === 'ready' &&
-    !chartHours.some((h) => h.at === forecast.hourStart)
-  ) {
-    chartHours.push({
-      at: forecast.hourStart,
-      usd: earningsForecast.earnings.actual ?? 0,
-      jobs: 0,
-      categories: {},
-      seconds: 0,
-      rateComplete: false,
-      perMinute: 0,
-      perHour: 0,
-      perJob: null,
-      projected: earningsForecast.earnings.additional,
-    });
-  }
+  const chartHours = withHourProjection(
+    hours,
+    earningsForecast,
+    !!showForecast,
+  );
   const hourlyChart = chartHours.map((h) => ({
     ...h,
     byModel:
@@ -824,7 +803,7 @@ export const EarningsPanel = memo(function EarningsPanel({
               }}
             >
               <CartesianGrid
-                stroke="#27303c"
+                stroke="var(--c-27303c)"
                 vertical={false}
                 strokeDasharray="2 6"
               />
@@ -845,7 +824,7 @@ export const EarningsPanel = memo(function EarningsPanel({
                       })
                 }
                 minTickGap={70}
-                tick={{ fill: '#8997aa', fontSize: 12 }}
+                tick={{ fill: 'var(--c-8997aa)', fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -860,12 +839,12 @@ export const EarningsPanel = memo(function EarningsPanel({
                   />
                   <ReferenceLine
                     x={projectionStart.at}
-                    stroke="#b4a5c8"
+                    stroke="var(--c-b4a5c8)"
                     strokeDasharray="3 5"
                     label={{
                       value: 'Now',
                       position: 'insideTopLeft',
-                      fill: '#d8cce7',
+                      fill: 'var(--c-d8cce7)',
                       fontSize: 13,
                     }}
                   />
@@ -877,14 +856,14 @@ export const EarningsPanel = memo(function EarningsPanel({
                   65,
                   money(axisMaximum, axisPrecision).length * 7 + 10,
                 )}
-                tick={{ fill: '#8997aa', fontSize: 12 }}
+                tick={{ fill: 'var(--c-8997aa)', fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
               />
               <Tooltip
                 contentStyle={{
-                  background: '#171d27',
-                  border: '1px solid #354153',
+                  background: 'var(--c-171d27)',
+                  border: '1px solid var(--c-354153)',
                   borderRadius: 10,
                 }}
                 labelFormatter={(v) =>
@@ -986,7 +965,11 @@ export const EarningsPanel = memo(function EarningsPanel({
                   strokeLinecap="round"
                   connectNulls={false}
                   dot={false}
-                  activeDot={{ r: 6, stroke: '#10151c', strokeWidth: 2 }}
+                  activeDot={{
+                    r: 6,
+                    stroke: 'var(--c-10151c)',
+                    strokeWidth: 2,
+                  }}
                   isAnimationActive={false}
                 />
               )}
@@ -997,14 +980,14 @@ export const EarningsPanel = memo(function EarningsPanel({
                     y={projectionStart.predicted!}
                     r={4.5}
                     fill={projectionColor}
-                    stroke="#10151c"
+                    stroke="var(--c-10151c)"
                     strokeWidth={2}
                   />
                   <ReferenceDot
                     x={projectedEnd.at}
                     y={projectedEnd.predicted!}
                     r={6}
-                    fill="#171520"
+                    fill="var(--c-171520)"
                     stroke={projectionColor}
                     strokeWidth={2.5}
                   />
