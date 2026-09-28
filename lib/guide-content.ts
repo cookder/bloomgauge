@@ -203,7 +203,7 @@ export const guideProblems: GuideProblem[] = [
     fixes: [
       'Make sure Darkbloom is running and online: run darkbloom status in Terminal.',
       'Wait a few minutes, then choose Try turning on again.',
-      'If it keeps timing out, choose Manual, restart the current model, wait until it shows Warm and ready, then turn the optimizer on again.',
+      'If it keeps timing out, choose Off, restart the current model, wait until it shows Warm and ready, then choose Manager on again.',
     ],
   },
   {
