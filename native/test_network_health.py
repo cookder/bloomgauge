@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import urllib.error
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -18,6 +19,8 @@ import test_stall_recovery as ladder
 from history import History
 from network import Network
 from network_health import NetworkHealth, stall_wait
+
+CENTRAL = ZoneInfo('America/Chicago')
 
 T = 1_790_000_000
 FIXTURE = pathlib.Path(__file__).with_name('network_health_fixture.json')
@@ -278,11 +281,13 @@ class ReplayTests(unittest.TestCase):
 
     @staticmethod
     def at(window, clock):
-        """Local wall-clock 'HH:MM' on the window's last day -> epoch seconds."""
-        start = datetime.fromtimestamp(window['start'])
+        """Chicago wall-clock 'HH:MM' on the window's last day -> epoch seconds.
+
+        The fixtures were recorded in Central time; CI runs in UTC."""
+        start = datetime.fromtimestamp(window['start'], CENTRAL)
         hour, minute = map(int, clock.split(':'))
         day = start.replace(hour=hour, minute=minute, second=0)
-        end = datetime.fromtimestamp(window['start'] + window['rows'][-1][0])
+        end = datetime.fromtimestamp(window['start'] + window['rows'][-1][0], CENTRAL)
         if day < start:
             day = end.replace(hour=hour, minute=minute, second=0)
         return day.timestamp()
