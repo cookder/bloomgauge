@@ -1,8 +1,8 @@
 {
   "schema": "bloom-beta-result-v3",
   "testerAlias": "beta-REPLACE",
-  "candidateVersion": "1.36.59-beta40",
-  "kitRevision": "beta40-multi-model-statistics-2026-09-27",
+  "candidateVersion": "1.36.60-beta41",
+  "kitRevision": "beta41-optimizer-manager-2026-09-28",
   "artifactSha256": null,
   "distributionRoute": "not_run",
   "sessionStartedAtUtc": null,

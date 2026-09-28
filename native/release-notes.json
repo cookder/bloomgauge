@@ -1,19 +1,23 @@
 {
-  "id": "bloom-1.36.59-beta40",
-  "version": "1.36.59",
-  "title": "Statistics for large model sets",
+  "id": "bloom-1.36.60-beta41",
+  "version": "1.36.60",
+  "title": "The optimizer is now a manager",
   "highlights": [
     {
-      "title": "Statistics count with many models offered",
-      "detail": "If your Darkbloom provider offers several models, statistics used to pause until every one of them was loaded, which rarely happens because Darkbloom loads models as requests arrive. They now count for the models loaded right now and start a fresh measurement whenever one loads or unloads, so numbers from different sets never mix."
+      "title": "The optimizer is now a manager",
+      "detail": "It keeps one home model running instead of trying other models to see what pays: the one you pin, or the one that has paid best on this Mac over the last 30 days. On our test Mac the old approach earned about 13–16% less than just staying on Gemma, mostly from time with no model ready. If a switch fails or no model is ready for about 10 minutes, it brings the home model back instead of switching itself off. It moves only when at least 5 Macs like yours clearly earn more on another model for 2 hours, at most 3 times a day, and stops if those moves don't pay off."
     },
     {
-      "title": "Clearer multi-model notice",
-      "detail": "The notice names any models that aren't loaded and any your Mac offers that Darkbloom's catalog no longer lists (those get no work; darkbloom models remove clears them). Models Bloomkeeper can use now shows every model your Mac offers, including ones outside the catalog, dimmed."
+      "title": "Fewer false alarms",
+      "detail": "\"Run status unavailable\" no longer shows by mistake or sends problem reports on its own. Reputation shows again with Darkbloom 0.9.10, and while Darkbloom preloads at startup it shows as starting, not stopped."
     },
     {
-      "title": "Problem reports you can still send",
-      "detail": "If an automatic report is held back or fails, the report prompt stays so you can send it yourself, and a failed automatic send no longer uses up the daily limit."
+      "title": "Ratings from your own Mac",
+      "detail": "Pace and day ratings are judged against this Mac's own history, with no preset earnings goal, and demand is compared with what's usual for the time of day. Statistics keep counting when your Mac offers several models, even if Darkbloom's provider list leaves out a model that isn't in its catalog."
+    },
+    {
+      "title": "Hourly bars, light mode and My Macs",
+      "detail": "The Overview shows hourly $/hour bars beside the Pulse meter, with an estimate for the current hour. Choose System, Light or Dark under More → Appearance. My Macs lists every model, the pace of each, and whether the Manager is on. A one-time card in the Optimizer tab explains what changed."
     }
   ]
 }

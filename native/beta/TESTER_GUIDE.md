@@ -1,10 +1,18 @@
-# Beta40 tester guide: statistics for large model sets
+# Beta41 tester guide: the optimizer is now a manager
 
-**1.36.59 beta40/build13659 · candidate tester guide · Apple Silicon/macOS 14+**
+**1.36.60 beta41/build13660 · candidate tester guide · Apple Silicon/macOS 14+**
 
-This guide targets beta40 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
+This guide targets beta41 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
 
-## New in beta40
+## New in beta41
+
+- **Manager.** With the optimizer on, it should name a home model and keep it running. After a failed switch or about 10 minutes with no model ready, it should bring the home model back rather than switching itself off. Note any move it makes and the reason it gives.
+- **What's changed card.** After updating, the Optimizer tab should show a one-time card; closing it on the Mac should hide it on the phone too.
+- **No false alarm.** "Run status unavailable" should not appear while Bloomkeeper is running normally.
+- **Hourly bars and light mode.** The Overview should show hourly $/hour bars beside the Pulse; More → Appearance should switch between System, Light and Dark.
+- **My Macs.** It should list every model with its pace and show whether the Manager is on.
+
+## Carried forward from beta40
 
 - **Many models offered.** With three or more models offered in Darkbloom and only some loaded, the optimizer notice should say statistics are on and name the loaded models. When Darkbloom loads or unloads a model, statistics should pause briefly and then resume.
 - **Model list.** Models Bloomkeeper can use should list every model your Mac offers; one that Darkbloom's catalog no longer lists appears dimmed.
@@ -232,7 +240,7 @@ Before updating an older beta, let any model switch or warm-up finish. Beta5/6/7
 
 Use the [support page](https://bloomformac.com/support), the [Bloomkeeper Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN), or [email support](mailto:support@bloomkeeper.io). Opening a contact sends nothing automatically. Read the [privacy notice](https://bloomformac.com/privacy) for the organizer-confirmed release. Local diagnostic export, optional earnings and optional usage sharing remain separate choices.
 
-## Baseline guide carried forward for beta40 verification
+## Baseline guide carried forward for beta41 verification
 
 # Bloomkeeper beta checklist
 

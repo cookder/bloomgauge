@@ -41,8 +41,12 @@ class AppearanceBridgeSourceTests(unittest.TestCase):
         ):
             self.assertIn(check, handler)
 
+    THEME = Path(__file__).parent.parent / 'lib/theme.ts'
+
+    # The release check runs these tests on a copy of native/ alone.
+    @unittest.skipUnless(THEME.exists(), 'web sources are not in this copy')
     def test_page_reports_its_choice_to_the_window(self):
-        theme = (Path(__file__).parent.parent / 'lib/theme.ts').read_text()
+        theme = self.THEME.read_text()
         self.assertIn('messageHandlers?.bloomAppearance?.postMessage(preference)', theme)
 
 

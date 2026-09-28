@@ -1,7 +1,7 @@
-Bloomkeeper — 1.36.59 beta40 · Statistics for large model sets
+Bloomkeeper — 1.36.60 beta41 · The optimizer is now a manager
 
 CHANGES IN THIS UPDATE
-With several models offered in Darkbloom, statistics now count for the models loaded right now instead of waiting for all of them, and start fresh whenever one loads or unloads. The multi-model notice names models that aren't loaded or aren't in Darkbloom's catalog, and the model list shows every model your Mac offers. A held-back or failed automatic problem report can still be sent by hand. Previous beta39 change: automatic problem reports send the same problem at most once a day.
+The optimizer is now a manager: it keeps one home model running (the one you pin, or the best payer on this Mac over 30 days), brings it back after a failed switch or about 10 minutes with no model ready, and moves only when at least 5 similar Macs clearly earn more elsewhere for 2 hours, at most 3 times a day. "Run status unavailable" no longer shows by mistake, reputation shows with Darkbloom 0.9.10, ratings come from this Mac's own history, the Overview has hourly $/hour bars, there is a light mode under More → Appearance, and My Macs lists every model. Previous beta40 change: statistics count for the models loaded right now when your provider offers several.
 
 FEATURES RETAINED
 Arrange the Earnings dashboard with separate phone and desktop layouts saved in each browser. Compare experimental one-hour earnings baselines with clearer evidence, saved forecast windows and local accuracy tracking. Optimizer trial reviews now close unresolvable comparisons at their deadline, require a supported paid benchmark and explain the paid alternative; confirmation can pause through a brief data gap without counting unseen time.
