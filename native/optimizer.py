@@ -4290,6 +4290,38 @@ class Optimizer:
         except (OSError, subprocess.SubprocessError):
             return None
 
+    def service_loaded(self):
+        """True when launchd has the provider's launch agent loaded, False when it doesn't
+        ("Could not find service"), None when launchctl can't tell."""
+        try:
+            result = self.runner(
+                ['/bin/launchctl', 'print', 'gui/%d/io.darkbloom.provider' % os.getuid()],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode == 0:
+            return True
+        text = '%s %s' % (result.stdout or '', result.stderr or '')
+        return False if 'Could not find service' in text else None
+
+    def bootstrap_service(self):
+        """Load the provider's launch agent, as launchd does at login. True when it loaded."""
+        try:
+            result = self.runner(
+                ['/bin/launchctl', 'bootstrap', 'gui/%d' % os.getuid(), str(self.plist_path)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
+
     def log_memory_projection(self, target, budget):
         """For calibrating memory admission later: the projected free memory after the unload
         against the first reading of the new session (free + inactive, and what it holds)."""

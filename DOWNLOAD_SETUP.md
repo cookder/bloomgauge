@@ -1,6 +1,6 @@
-# BloomGauge beta43 download setup
+# BloomGauge beta44 download setup
 
-Current candidate: **1.36.62 beta43/build13662**. Publication requires the exact release acceptance and hosted verification receipt. Earlier releases remain immutable.
+Current candidate: **1.36.63 beta44/build13663**. Publication requires the exact release acceptance and hosted verification receipt. Earlier releases remain immutable.
 
 BloomGauge, including the optimizer, is free while we evaluate whether it improves earnings over Darkbloom alone. Optimizer access has no scheduled expiration. Updating never turns automation on or resumes an explicitly paused plan. Choose Optimizer on separately when ready. Existing settings, history, access records and privacy choices are preserved.
 

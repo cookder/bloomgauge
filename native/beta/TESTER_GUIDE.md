@@ -1,10 +1,15 @@
-# Beta43 tester guide: BloomGauge, self-updating
+# Beta44 tester guide: getting paid work flowing again
 
-**1.36.62 beta43/build13662 · candidate tester guide · Apple Silicon/macOS 14+**
+**1.36.63 beta44/build13663 · candidate tester guide · Apple Silicon/macOS 14+**
 
-This guide targets beta43 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
+This guide targets beta44 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
 
-## New in beta43
+## New in beta44
+
+- **No-work nudge.** If your Mac is online but earning only base rewards after a restart, BloomGauge now nudges it after 10 minutes (Optimizer → Overview shows "This session has had no work since it started…"), and brings Darkbloom back by itself if a restart left it off. Tell us if you see the nudge fire while your Mac is actually getting work.
+- **Silent update.** If you're on beta43 with automatic updates on, beta44 should arrive and install by itself while you're away from the Mac. Note when it installed and whether BloomGauge reopened as it was.
+
+## Carried forward from beta43
 
 - **New name.** After updating, the window, menu bar, About and notifications should say BloomGauge. History, settings, the phone link and the manager's state should carry over. The app file may keep its old name after a Sparkle update; that's expected.
 - **Automatic updates.** More → Help & feedback should show **Update BloomGauge automatically**, turned on unless you had turned update checks off before. When the next version comes out, BloomGauge should download it and install it on its own while you're away from the Mac (about 10 minutes without mouse or keyboard). It should reopen on the new version with the window as it was (closed stays closed), without taking focus, and the manager should keep its home model. It must not install during a model switch or warm-up, or while the manager is trying a bigger model. Help should say "An update is ready…" while one is waiting, and **Install Update Now** in the BloomGauge menu should install it right away. Beta43 itself installs the old way: approve it once.
@@ -260,7 +265,7 @@ Before updating an older beta, let any model switch or warm-up finish. Beta5/6/7
 
 Use the [support page](https://bloomgauge.io/support), the [BloomGauge Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN), or [email support](mailto:support@bloomgauge.io). Opening a contact sends nothing automatically. Read the [privacy notice](https://bloomgauge.io/privacy) for the organizer-confirmed release. Local diagnostic export, optional earnings and optional usage sharing remain separate choices.
 
-## Baseline guide carried forward for beta43 verification
+## Baseline guide carried forward for beta44 verification
 
 # BloomGauge beta checklist
 

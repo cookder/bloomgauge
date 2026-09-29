@@ -60,6 +60,72 @@ def check(now, attempts=(), switches=(), minutes=None, net=None, session=None, p
     )
 
 
+ESCAPE_WAIT = sr.ESCAPE_UNMOVED_SECONDS
+
+
+class SessionTriggerTests(unittest.TestCase):
+    """Sep 29 06:55-08:41: a new gemma session, warm and counting, got no job in 1.5 h while
+    gemma's network demand was normal; the last work was gpt-oss at 00:27. No trigger fired
+    (no steady work to compare against). One test request routed to the Mac brought work."""
+
+    def rows(self, start, minutes, model='gemma'):
+        old = flow('gpt', 30, 3, end=start - 6 * 3600)  # last night's work, hours ago
+        return old + silent(model, start=start, minutes=minutes)
+
+    def test_a_session_that_never_got_work_is_probed_then_restarted(self):
+        start = T0
+        net = network('gemma', start=T0 - 1800, end=T0 + 7200)
+        kw = dict(minutes=self.rows(start, 120), net=net, session=start)
+        self.assertIsNone(check(start + 599, **kw)['step'])
+        r = check(start + 600, **kw)
+        self.assertEqual((r['step'], r['trigger'], r['model']), ('probe', 'session', 'gemma'))
+        self.assertIn('no work since it started', r['reason'])
+        attempts = [{'at': start + 600, 'step': 'probe', 'model': 'gemma'}]
+        # The restart waits for 20 silent minutes, then gives the session a fresh start.
+        self.assertIsNone(check(start + 1199, attempts, **kw)['step'])
+        self.assertEqual(check(start + 1200, attempts, **kw)['step'], 'restart')
+
+    def test_no_demand_for_the_model_is_not_a_stall(self):
+        start = T0
+        net = network('other', start=T0 - 1800, end=T0 + 7200)
+        r = check(start + 1800, minutes=self.rows(start, 60), net=net, session=start)
+        self.assertEqual((r['step'], r['status']), (None, 'quiet'))
+
+    def test_the_chain_carries_over_the_sessions_its_restart_starts(self):
+        # Production: minutes reach back ~3.5 h, so there is no earlier work at all.
+        net = network('gemma', start=T0 - 1800, end=T0 + 9000)
+        first = silent('gemma', start=T0, minutes=25)
+        second_start = T0 + 1260  # the ladder's restart at T0+1200 started this session
+        rows = first[:21] + silent('gemma', start=second_start, minutes=90)
+        attempts = [
+            {'at': T0 + 600, 'step': 'probe', 'model': 'gemma'},
+            {'at': T0 + 1200, 'step': 'restart', 'model': 'gemma'},
+        ]
+        kw = dict(minutes=rows, net=net, session=second_start)
+        self.assertIsNone(check(second_start + 299, attempts, **kw)['step'])
+        r = check(second_start + 300, attempts, **kw)
+        self.assertEqual((r['step'], r['trigger']), ('escape', 'session'))
+        attempts.append({'at': second_start + 300, 'step': 'escape', 'model': 'gemma'})
+        r = check(second_start + 300 + ESCAPE_WAIT, attempts, **kw)
+        self.assertEqual(r['step'], 'hold')
+        attempts.append({'at': second_start + 300 + ESCAPE_WAIT, 'step': 'hold', 'model': 'gemma'})
+        self.assertIsNone(check(second_start + 3600, attempts, **kw)['step'])
+
+    def test_one_job_split_over_two_minutes_is_work(self):
+        rows = silent('gemma', start=T0, minutes=30)
+        rows[3] = dict(rows[3], jobs=0.4)
+        rows[4] = dict(rows[4], jobs=0.6)
+        net = network('gemma', start=T0 - 1800, end=T0 + 7200)
+        r = check(T0 + 1200, minutes=rows, net=net, session=T0)
+        self.assertIsNone(r['step'])
+
+    def test_the_ladders_own_restart_keeps_its_episode(self):
+        # Steady work stopped, the ladder restarted: the new session is that episode's.
+        attempts = [{'at': T0 + 300, 'step': 'probe'}, {'at': T0 + 480, 'step': 'restart'}]
+        r = check(T0 + 540 + 300, attempts, switches=[T0 + 485], session=T0 + 540)
+        self.assertEqual((r['step'], r['trigger']), ('escape', 'own'))
+
+
 class AssessTests(unittest.TestCase):
     def test_short_gaps_are_routine(self):
         self.assertIsNone(check(T0 + 299)['step'])

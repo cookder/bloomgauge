@@ -1,39 +1,15 @@
 {
-  "id": "bloom-1.36.62-beta43",
-  "version": "1.36.62",
-  "title": "Bloomkeeper is now BloomGauge, and it keeps itself up to date",
+  "id": "bloom-1.36.63-beta44",
+  "version": "1.36.63",
+  "title": "Fixes for Macs that stay online without getting paid work",
   "highlights": [
     {
-      "title": "Bloomkeeper is now BloomGauge",
-      "detail": "Same app, same data, same settings, with a new name. The website moves to bloomgauge.io, and old links keep working."
+      "title": "Gets paid work flowing again after a quiet restart",
+      "detail": "If Darkbloom sends a freshly started Mac no paid requests for 10 minutes while its model is in demand, BloomGauge sends it one small test request, which gets it picked up for work again. If that doesn't help, it restarts Darkbloom (at most 3 times a day)."
     },
     {
-      "title": "BloomGauge now updates itself",
-      "detail": "New versions download in the background and install while you're away from the Mac. They never install during a model switch, warm-up or trial. BloomGauge reopens the way it was and keeps its home model, and Darkbloom keeps serving throughout. To turn this off, clear Update BloomGauge automatically in More → Help & feedback. If you had turned automatic update checks off before, they stay off."
-    },
-    {
-      "title": "Fewer hours earning nothing",
-      "detail": "After Darkbloom unloads an idle model, BloomGauge reloads it right away. Before, it could wait 20+ minutes thinking a model was loading, or say there wasn't enough free memory. With cache cleanup allowed, it clears the macOS file cache and reloads every time. Turning the manager on also works on battery power now."
-    },
-    {
-      "title": "Ready for macOS 27 and App Attest",
-      "detail": "Macs that Darkbloom verifies through App Attest without its MDM now get everything the others do. BloomGauge brings the previous model back after a failed switch, runtime-gated models like Qwen3.8 can be used, and Macs like yours stall detection works. The Reputation card shows the Mac's trust tier."
-    },
-    {
-      "title": "Pair fallback",
-      "detail": "If you chose two models and Darkbloom can't fit both in memory right now, BloomGauge serves one of them instead of waiting, and says so. It goes back to the pair once there is enough free memory."
-    },
-    {
-      "title": "A simpler Pulse",
-      "detail": "One earnings graph with 1 h, 3 h, 6 h, 12 h, 24 h, 3 d and 7 d views shows what you earned in that time, base rewards included. A Today tile shows the end-of-day estimate."
-    },
-    {
-      "title": "Alerts and notification settings",
-      "detail": "Choose which alerts go to this Mac and to your phone in Optimizer → Overview → Notifications. New: regular Mac notifications, an alert when earnings stay high, and alerts when the manager considers or makes a switch. Quiet hours hold everything except problems. Phone notifications now show amounts (encrypted on the way); you can turn amounts off."
-    },
-    {
-      "title": "Clearer statuses and problem reports",
-      "detail": "Statistics wait until the Darkbloom network has cleared the Mac after a restart, and a switch the network didn't accept says why. Reading Darkbloom's settings no longer fails mid-rewrite, the model controls name launch settings Darkbloom dropped, and problem reports say whether the Manager or the older optimizer was on."
+      "title": "Brings Darkbloom back if a restart leaves it switched off",
+      "detail": "When a Darkbloom restart fails halfway and leaves its background service unloaded, BloomGauge loads it again after 90 seconds. A darkbloom stop you ran yourself is left alone."
     }
   ]
 }

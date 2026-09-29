@@ -1,8 +1,8 @@
 {
   "schema": "bloom-beta-result-v3",
   "testerAlias": "beta-REPLACE",
-  "candidateVersion": "1.36.62-beta43",
-  "kitRevision": "beta43-bloomgauge-2026-09-29",
+  "candidateVersion": "1.36.63-beta44",
+  "kitRevision": "beta44-hotfix-2026-09-29",
   "artifactSha256": null,
   "distributionRoute": "not_run",
   "sessionStartedAtUtc": null,

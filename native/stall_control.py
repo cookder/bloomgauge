@@ -14,6 +14,7 @@ Without a key, the nudge is a one-token request to the local engine instead.
 """
 
 import copy
+import uuid
 import json
 import socket
 import subprocess
@@ -79,7 +80,9 @@ def self_route(model, key, timeout=90, opener=None):
     body = json.dumps(
         {
             'model': model,
-            'messages': [{'role': 'user', 'content': 'hi'}],
+            # A unique start keeps the prompt cold, so Darkbloom records a fresh speed sample
+            # (a prefix-cache hit is not measured: EngineV2Bridge+Accounting isColdPrefillSample).
+            'messages': [{'role': 'user', 'content': uuid.uuid4().hex[:12] + ' hi'}],
             'max_tokens': 5,
             'stream': False,
         }

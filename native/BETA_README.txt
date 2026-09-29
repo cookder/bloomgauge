@@ -1,7 +1,7 @@
-BloomGauge — 1.36.62 beta43 · Bloomkeeper is now BloomGauge, and it keeps itself up to date
+BloomGauge — 1.36.63 beta44 · Fixes for Macs that stay online without getting paid work
 
 CHANGES IN THIS UPDATE
-Bloomkeeper is now BloomGauge (same app, data and settings; site bloomgauge.io). BloomGauge now updates itself in the background and installs while you're away, never during a model switch, warm-up or trial (turn off in More → Help & feedback; this update installs the old way once). Fixes that left Macs earning nothing: reload right after an idle unload, cache cleanup on every restore, manager On on battery, and Macs verified through App Attest without MDM (macOS 27). Adds pair fallback, a simpler Pulse with 1 h to 7 d views, alerts and notification settings (Mac notifications, earnings running high, manager switches, quiet hours; phone notifications show amounts), network-clearance status and clearer problem reports. Previous beta42 change: the manager kept working on more Macs, with Macs like yours and network news.
+If a freshly started Mac gets no paid requests for 10 minutes while its model is in demand, BloomGauge sends one small test request and, if needed, restarts Darkbloom (at most 3 times a day). If a Darkbloom restart leaves its background service unloaded, BloomGauge loads it again after 90 seconds. Previous beta43 change: Bloomkeeper became BloomGauge, updates install by themselves, and uptime fixes.
 
 FEATURES RETAINED
 Arrange the Earnings dashboard with separate phone and desktop layouts saved in each browser. Compare experimental one-hour earnings baselines with clearer evidence, saved forecast windows and local accuracy tracking. Optimizer trial reviews now close unresolvable comparisons at their deadline, require a supported paid benchmark and explain the paid alternative; confirmation can pause through a brief data gap without counting unseen time.

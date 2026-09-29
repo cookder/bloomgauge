@@ -270,6 +270,7 @@ class FakeDarkbloom:
         unload_cache=False,
         purge=False,
         unload_residual_gb=0,
+        refused_sessions=0,
     ):
         self.mac = mac
         # macOS keeps an idle-unloaded model's weight files in active file cache, outside the
@@ -279,6 +280,11 @@ class FakeDarkbloom:
         # MLX memory Darkbloom still reports after an idle unload (Sep 29: 5e-06 GB).
         self.unload_residual_gb = unload_residual_gb
         self.residual = False
+        # The next N sessions stay online but unauthorized (hardware, 'continuity', path none):
+        # base rewards, no paid work (Sep 29 06:55-08:28, after a coordinator restart).
+        self.refused_sessions = refused_sessions
+        self.unloaded = False  # launchd doesn't have the (enabled) agent loaded
+        self.bootstraps = []  # times of `launchctl bootstrap` calls
         self.battery = False  # pmset reports battery power (the Mac was unplugged)
         self.file_cache_gb = 0
         # The exact passwordless `sudo -n /usr/sbin/purge` rule BloomGauge's setup installs.
@@ -375,6 +381,18 @@ class FakeDarkbloom:
         argv = [str(a) for a in argv]
         with self.lock:
             self.commands.append((self.mac.clock.time(), argv))
+        if argv[:2] == ['/bin/launchctl', 'print'] and argv[2].endswith('/' + LABEL):
+            if self.unloaded:
+                return subprocess.CompletedProcess(argv, 113, stdout='', stderr='Bad request.\nCould not find service "%s" in domain for user gui: 501\n' % LABEL)
+            return subprocess.CompletedProcess(argv, 0, stdout='state = running\n', stderr='')
+        if argv[:2] == ['/bin/launchctl', 'bootstrap']:
+            with self.lock:
+                self.bootstraps.append(self.mac.clock.time())
+            if not self.unloaded or self.disabled:
+                return subprocess.CompletedProcess(argv, 5, stdout='', stderr='Bootstrap failed: 5: Input/output error\n')
+            self.unloaded = False
+            self.spawn()
+            return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
         if argv[0] == '/bin/launchctl':
             text = '\t"%s" => %s\n' % (LABEL, 'true' if self.disabled else 'false')
             return subprocess.CompletedProcess(argv, 0, stdout='disabled services = {\n%s}\n' % text)
@@ -541,6 +559,15 @@ class FakeDarkbloom:
         self.disabled = False
         self.spawn()
 
+    def failed_restart(self):
+        """`darkbloom restart` whose relaunch fails (Sep 29 08:19: "launchctl bootstrap failed:
+        5: Input/output error"): drained and gone, the agent enabled but not loaded."""
+        if self.proc:
+            self.proc.lifecycle = {'outcome': 'draining', 'remaining': 0}
+            self.mac.sleep(self.drain_seconds)
+            self.end_process('restart')
+        self.unloaded = True
+
     def crash(self):
         self.end_process('crashed')
 
@@ -612,6 +639,8 @@ class FakeDarkbloom:
 
     def register(self, proc, now):
         proc.registered_at = now
+        proc.refused = self.refused_sessions > 0
+        self.refused_sessions = max(0, self.refused_sessions - 1)
         proc.untrusted_until = now + self.untrusted_delay
         proc.trusted_at = now + max(self.trust_delay, self.untrusted_delay)
 
@@ -675,6 +704,7 @@ class FakeDarkbloom:
             and self.traffic_seconds
             and proc.trusted_at is not None
             and now >= proc.trusted_at
+            and not getattr(proc, 'refused', False)
             and proc.warm
             and not self.busy(proc)
             and now - max(proc.warm.values()) >= self.traffic_seconds
@@ -729,7 +759,14 @@ class FakeDarkbloom:
                 'gpu_memory_cache_gb': 0,
             },
         }
-        if proc.trusted_at is not None and now >= proc.trusted_at and self.attest_only:
+        if proc.trusted_at is not None and now >= proc.trusted_at and getattr(proc, 'refused', False):
+            state['trust'] = {
+                'trust_level': 'hardware', 'status': 'online', 'reason': 'continuity',
+                'received_at': proc.trusted_at,
+                'authorization': {'path': 'none', 'reason': 'app_attest_qualification_required',
+                                  'protocol': 1, 'app_attest_available': True, 'mdm_removal_ready': False},
+            }
+        elif proc.trusted_at is not None and now >= proc.trusted_at and self.attest_only:
             state['trust'] = {
                 'trust_level': 'self_signed', 'status': 'online', 'reason': 'Provider authorization updated',
                 'received_at': proc.trusted_at,

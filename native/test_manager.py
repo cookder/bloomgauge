@@ -755,8 +755,9 @@ class ControllerTests(Harness):
         legacy['currentModel'] = 'a'
         self.o.demand_auto.evaluate = Mock(return_value=legacy)
         earned = {
-            'a': {'minutes': minutes(0.108, 72, self.now)},
-            'b': {'minutes': minutes(0.02, 72, self.now)},
+            # 96 h: 72 h ending late in the evening leave only 2 full-day stints (a flake).
+            'a': {'minutes': minutes(0.108, 96, self.now)},
+            'b': {'minutes': minutes(0.02, 96, self.now)},
         }
         self.o.demand_auto.evidence = Mock(return_value=(earned, {}))
         self.o.state['manager'] = {}

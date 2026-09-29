@@ -147,6 +147,7 @@ IDLE_DEFAULT_MINUTES = 60  # Darkbloom's idle-unload default (IdleCommand.swift)
 EXCURSION_MAX_MINUTES = 24 * 60  # runaway cap; excursions end on evidence (excursions.end_check)
 STOPPED_WINDOW_SECONDS = 20 * 60  # BloomGauge restarts a provider its own command left stopped
 STOPPED_GRACE_SECONDS = 90
+UNLOADED_RETRY_SECONDS = 5 * 60
 # MLX memory that means a model is really being loaded, in GB (a load allocates several).
 LOADING_ACTIVE_GB = 0.5
 BUSY = {'draining', 'switching', 'loading', 'starting', 'restarting', 'verifying', 'preloading'}
@@ -1705,6 +1706,7 @@ class ManagerControl:
         ready, load_failed = loaded(raw, now)
         if ready and not load_failed:
             self.dark_since = self.dark_text = self.offline_since = None
+            self.unloaded_since = self.bootstrap_at = None
             self.settle(now, m, raw, current)
             return self.pair_return(now, settings, live, raw, current, m)
         from optimizer import drained_idle
@@ -1724,6 +1726,7 @@ class ManagerControl:
         if not live.get('provider', {}).get('online'):
             return self.stopped(now, settings, live, raw, current, m)
         self.offline_since = None
+        self.unloaded_since = self.bootstrap_at = None
         excursion = bool(current) and (m.get('excursion') or {}).get('target') == current
         if resting and excursion:
             # An idle-unloaded excursion target earns nothing there: go home, don't reload it.
@@ -1844,6 +1847,8 @@ class ManagerControl:
         stopped moments ago; a stop by the user (or before this app run) is always respected."""
         command = self.last_command or {}
         self.dark_since = None
+        if self.unloaded(now, live):
+            return True
         if not finite(command.get('at')) or not 0 <= now - command['at'] <= STOPPED_WINDOW_SECONDS:
             self.dark_text = None
             return False
@@ -1871,6 +1876,50 @@ class ManagerControl:
             self.say('%s, and its launch agent is disabled. Start Darkbloom on the Mac.' % what)
             return True
         return self.dispatch(now, target, 'stopped', settings, live, raw, current, what)
+
+    def unloaded(self, now, live):
+        """Darkbloom's launch agent is enabled but launchd doesn't have it loaded: a relaunch
+        failed (Sep 29 08:19: `darkbloom restart` drained, then "launchctl bootstrap failed: 5:
+        Input/output error"; nothing ran until it was bootstrapped by hand). `darkbloom stop`
+        disables the agent, so this is never a user's stop. Load it again as login would, at
+        most once every UNLOADED_RETRY_SECONDS."""
+        o = self.o
+        if not o.plist_path.exists() or o.service_disabled() is not False or o.service_loaded() is not False:
+            self.unloaded_since = None
+            return False
+        if getattr(self, 'unloaded_since', None) is None:
+            self.unloaded_since = now
+        if now - self.unloaded_since < STOPPED_GRACE_SECONDS:
+            self.say(
+                'Darkbloom is not running and its launch agent is not loaded. BloomGauge loads it '
+                'at %s unless it comes back.' % clock(self.unloaded_since + STOPPED_GRACE_SECONDS)
+            )
+            return True
+        last = getattr(self, 'bootstrap_at', None)
+        if finite(last) and 0 <= now - last < UNLOADED_RETRY_SECONDS:
+            self.say(
+                'Darkbloom is not running and loading its launch agent did not work. BloomGauge '
+                'tries again at %s; check Darkbloom on the Mac.' % clock(last + UNLOADED_RETRY_SECONDS)
+            )
+            return True
+        first = last is None
+        self.bootstrap_at = now
+        loaded = o.bootstrap_service()
+        if first or loaded:
+            o.store.event(
+                (live or {}).get('account') or '',
+                (live or {}).get('device') or '',
+                now,
+                'manager-notice',
+                None,
+                'Darkbloom was not running because its launch agent was not loaded (a relaunch failed). '
+                + ('BloomGauge loaded it again.' if loaded else 'Loading it again did not work.'),
+            )
+        self.say(
+            'Darkbloom was not running because its launch agent was not loaded. '
+            + ('BloomGauge loaded it again; it is starting.' if loaded else 'Loading it did not work; BloomGauge tries again later.')
+        )
+        return True
 
     def settle(self, now, m, raw, current):
         o = self.o

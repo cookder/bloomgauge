@@ -1718,7 +1718,8 @@ class ControlEndpointTests(tm.Harness):
         legacy['currentModel'] = 'b'
         self.o.demand_auto.evaluate = Mock(return_value=legacy)
         self.o.demand_auto.evidence = Mock(
-            return_value=({'a': {'minutes': tm.minutes(0.108, 72, self.now)}, 'b': {'minutes': tm.minutes(0.02, 72, self.now)}}, {})
+            # 96 h: 72 h ending late in the evening leave only 2 full-day stints (a flake).
+            return_value=({'a': {'minutes': tm.minutes(0.108, 96, self.now)}, 'b': {'minutes': tm.minutes(0.02, 96, self.now)}}, {})
         )
         self.o.raw.update(advertised_models=['b'])
         d = Optimizer.demand_decision(self.o, self.now)

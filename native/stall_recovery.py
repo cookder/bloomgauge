@@ -72,6 +72,15 @@ PEER_SILENCE_SECONDS = 10 * 60  # two 5-minute windows: first step
 PEER_RESTART_SILENCE_SECONDS = 20 * 60  # four windows
 PEER_FRESH_SECONDS = 15 * 60  # newest window (they close every ~5 min, up to ~6 min late)
 PEER_NOTE = "Macs like yours are getting work; this one isn't."
+# Session trigger: a session that has been warm and counting this long without a single job,
+# while its model has network demand, is not being routed to (Sep 29 06:55-08:41: 0 jobs in
+# 1.5 h with normal gemma demand; one test request routed to the Mac brought work within a
+# minute; Darkbloom routes deadline requests only to Macs measured in the last 2 minutes,
+# coordinator first_content_forecast.go, and a new session starts unmeasured). The ladder
+# then runs as usual: test request, restart after SESSION_RESTART_SILENCE_SECONDS, escape.
+SESSION_SILENCE_SECONDS = 10 * 60
+SESSION_RESTART_SILENCE_SECONDS = 20 * 60
+SESSION_NOTE = 'This session has had no work since it started while demand for its model held.'
 # A test request routed to this Mac reaches it up to its 90 s reply timeout after the step.
 PROBE_LAG_SECONDS = 120
 
@@ -182,15 +191,49 @@ def assess(
         'trigger': None,
         'peers': None,
     }
-    if not worked:
+    # A session that never got a job has no steady work to compare against: the session
+    # trigger judges it by its model's demand instead. An episode of the own or peer trigger
+    # (recent work, then this ladder's restart or escape) keeps its trigger.
+    ended = max(m['at'] for m in worked) + 60 if worked else None
+    recent_work = ended is not None and now - ended <= EPISODE_LIMIT_SECONDS
+    fresh = finite(session_start) and (
+        not recent_work
+        or (
+            ended <= session_start
+            and not any(
+                a['at'] >= ended and a.get('step') in ('restart', 'escape') for a in attempts
+            )
+        )
+    )
+    own = sorted(
+        (m for m in minutes if fresh and m['at'] >= session_start and m['at'] + 60 <= now),
+        key=lambda m: m['at'],
+    )
+    if own:
+        # Jobs are spread over the minutes a sample spans (0.4 + 0.6 is one job): count the
+        # session's jobs, less the test requests' own.
+        tests = sum(1 for a in attempts if a.get('step') == 'probe' and a['at'] >= session_start)
+        jobs = sum(m['jobs'] for m in own if finite(m.get('jobs')) and m['jobs'] > 0)
+        if jobs - tests >= 0.999:
+            own = []
+    if not worked and not own:
         result.update(status='quiet', reason='No recent steady work to compare against.')
         return result
-    last = max(m['at'] for m in worked) + 60
-    model = next(m['model'] for m in worked if m['at'] + 60 == last)
+    if own:
+        # One episode across the sessions this ladder's restarts and escapes start: it began
+        # with the first of its steps (or this session), so its steps and hold carry over.
+        since = ended if recent_work else now - EPISODE_LIMIT_SECONDS
+        last = min([session_start] + [a['at'] for a in attempts if a['at'] >= since])
+        model = own[-1]['model']
+    else:
+        last = max(m['at'] for m in worked) + 60
+        model = next(m['model'] for m in worked if m['at'] + 60 == last)
     # Silence is observed warm time since the last job, not wall time: a Mac that
     # slept, or a BloomGauge that was closed, saw nothing and must not count it.
     silence = sum(
-        max(0, m.get('seconds', 0)) for m in minutes if m['at'] >= last and m['at'] + 60 <= now
+        max(0, m.get('seconds', 0))
+        for m in minutes
+        if m['at'] >= last and m['at'] + 60 <= now and (not own or m['model'] == model)
     )
     before = [
         m
@@ -213,17 +256,21 @@ def assess(
     )
     if peer:
         result['peers'] = {k: v for k, v in peer.items() if k != 'since'}
-    steady = active >= MIN_ACTIVE_MINUTES and rate >= MIN_JOBS_PER_MINUTE
+    steady = bool(not own and active >= MIN_ACTIVE_MINUTES and rate >= MIN_JOBS_PER_MINUTE)
     # Macs like this one are getting work: this Mac's silence isn't the network's quiet time.
     by_peers = bool(peer and peer['busy'] and peer['seconds'] >= PEER_SILENCE_SECONDS)
-    if not steady and not by_peers:
+    wanted = demand(network.get(model, []), now - 600, now)
+    by_session = bool(own and wanted and wanted['load'] > 0)
+    if not steady and not by_peers and not by_session:
         result.update(
             status='quiet',
             reason='Work before this quiet period was not steady enough to call it a stall.',
         )
         return result
-    result['trigger'] = 'own' if steady else 'peers'
-    required = SILENCE_SECONDS if steady else PEER_SILENCE_SECONDS
+    result['trigger'] = 'own' if steady else 'peers' if by_peers else 'session'
+    required = (
+        SILENCE_SECONDS if steady else PEER_SILENCE_SECONDS if by_peers else SESSION_SILENCE_SECONDS
+    )
     result['requiredSeconds'] = required
     if silence < required:
         return result
@@ -238,8 +285,8 @@ def assess(
     # readings (a capacity outage, a model absent from the list) are unknown and
     # never count as a demand collapse.
     held = (
-        None
-        if not (base and recent and base['load'] > 0)
+        None  # the session trigger already requires demand; a dip is no reason to escape
+        if own or not (base and recent and base['load'] > 0)
         else recent['load'] >= DEMAND_HELD * base['load']
         and recent['pressure'] >= DEMAND_HELD * base['pressure']
     )
@@ -301,6 +348,8 @@ def assess(
             'probe',
             peer_sentence(peer, silence) + ' Sending a test request to nudge routing.'
             if by_peers
+            else SESSION_NOTE + ' Sending a test request to nudge routing.'
+            if not steady
             else 'Work stopped abruptly while network demand held. Sending a test request to nudge routing.',
         )
     elif 'restart' not in taken and 'escape' not in taken and restart_allowed:
@@ -335,7 +384,13 @@ def assess(
                 + '. BloomGauge has stopped trying; check Darkbloom for a routing problem.'
             ),
         )
-    restart_silence = RESTART_SILENCE_SECONDS if steady else PEER_RESTART_SILENCE_SECONDS
+    restart_silence = (
+        RESTART_SILENCE_SECONDS
+        if steady
+        else PEER_RESTART_SILENCE_SECONDS
+        if by_peers
+        else SESSION_RESTART_SILENCE_SECONDS
+    )
     if step == 'restart' and silence < restart_silence:
         result.update(
             reason='Waiting for %d minutes of silence before restarting.' % (restart_silence // 60)

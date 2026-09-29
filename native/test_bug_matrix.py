@@ -1139,5 +1139,35 @@ class OnBatteryTests(Regression):
         self.assertEqual(mac.errors, [])
 
 
+
+
+class UnloadedAgentTests(Regression):
+    """Sep 29 08:19: `darkbloom restart` drained the provider, then its relaunch failed
+    ("launchctl bootstrap failed: 5: Input/output error"). The launch agent stayed enabled but
+    unloaded, nothing ran, and BloomGauge respected it as a user's stop."""
+
+    def test_an_unloaded_enabled_agent_is_loaded_again(self):
+        mac = self.mac()
+        mac.ui_on()
+        mac.run(900)
+        self.assertTrue(mac.holding())
+        mac.darkbloom.failed_restart()
+        mac.run(900)
+        self.assertEqual(len(mac.darkbloom.bootstraps), 1)
+        self.assertTrue(mac.holding(), mac.app.detail)
+        self.assertEqual(mac.errors, [])
+
+    def test_a_stopped_provider_is_left_alone(self):
+        mac = self.mac()
+        mac.ui_on()
+        mac.run(900)
+        mac.darkbloom.run([str(mac.darkbloom.bin), 'stop'])
+        mac.darkbloom.disabled = True
+        mac.darkbloom.unloaded = True
+        mac.run(1800)
+        self.assertEqual(mac.darkbloom.bootstraps, [])
+        self.assertFalse(mac.darkbloom.running())
+
+
 if __name__ == '__main__':
     unittest.main()
