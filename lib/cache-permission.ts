@@ -25,8 +25,8 @@ export function cachePermissionMessage(
       'Permission change cancelled. Your model selection is unchanged.',
     failed:
       'Could not change the permission. Existing administrator rules were left for review. Check permission or open Help & feedback.',
-    busy: 'Another permission dialog is open in Bloomkeeper. Finish or cancel that dialog first.',
+    busy: 'Another permission dialog is open in BloomGauge. Finish or cancel that dialog first.',
     unavailable:
-      'Permission setup is unavailable here. Open the installed Bloomkeeper app on your Mac.',
+      'Permission setup is unavailable here. Open the installed BloomGauge app on your Mac.',
   }[status];
 }

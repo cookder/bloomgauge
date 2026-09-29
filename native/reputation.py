@@ -100,7 +100,8 @@ def normalize(provider):
         result['totalJobs'] = None
     result['trustLevel'] = (
         provider.get('trust_level')
-        if provider.get('trust_level') in ('hardware', 'software', 'untrusted', 'unknown')
+        # self_signed: Darkbloom's tier for Macs verified through App Attest without MDM.
+        if provider.get('trust_level') in ('hardware', 'self_signed', 'software', 'untrusted', 'unknown')
         else None
     )
     result['providerStatus'] = (

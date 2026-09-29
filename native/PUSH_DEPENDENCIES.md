@@ -1,10 +1,10 @@
 # Web Push runtime dependencies
 
-Bloomkeeper packages the pinned Python dependencies in `push_vendor/` for the beta's bundled Python 3.12 runtime on Apple Silicon. Metadata and license files remain in that folder. The original native/push_vendor directory is the legacy personal build dependency; portable builds use .build/portable-runtime/push_vendor. `push-requirements.txt` is the exact version manifest. No dependencies are downloaded by the running app.
+BloomGauge packages the pinned Python dependencies in `push_vendor/` for the beta's bundled Python 3.12 runtime on Apple Silicon. Metadata and license files remain in that folder. The original native/push_vendor directory is the legacy personal build dependency; portable builds use .build/portable-runtime/push_vendor. `push-requirements.txt` is the exact version manifest. No dependencies are downloaded by the running app.
 
 The Web Push implementation uses pywebpush, py-vapid, http-ece and cryptography for standard AES128GCM payload encryption and VAPID signatures. Upstream source: https://github.com/web-push-libs/pywebpush and https://github.com/web-push-libs/vapid. pywebpush 2.1.2 is the newest release accepting this Python runtime; later releases require Python 3.10. Dependency versions were resolved September 13, 2026.
 
-The portable runtime bundles OpenSSL and certifi trust roots. Certificate verification remains enabled. Bloomkeeper supplies its own restricted, certificate-verifying stdlib HTTPS transport to pywebpush rather than using urllib3. An isolated sender process has a 15-second total deadline, including DNS; socket timeout is eight seconds. This changes transport restrictions, not cryptography.
+The portable runtime bundles OpenSSL and certifi trust roots. Certificate verification remains enabled. BloomGauge supplies its own restricted, certificate-verifying stdlib HTTPS transport to pywebpush rather than using urllib3. An isolated sender process has a 15-second total deadline, including DNS; socket timeout is eight seconds. This changes transport restrictions, not cryptography.
 
 Legacy personal Python 3.9 rebuild only (not beta): use `python3 -m pip install --no-compile --only-binary=cryptography,cffi,aiohttp --target native/push_vendor -r native/push-requirements.txt`. The packaging script copies the folder and signs native extension modules. Recreate a clean vendor directory when updating dependencies, then run `python3 -m unittest test_web_push` from `native/` and verify the installed app.
 

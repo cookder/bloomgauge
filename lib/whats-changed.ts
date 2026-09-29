@@ -35,7 +35,7 @@ export const smallerChanges: string[] = [
 
 export const feedbackTitle = 'Have an idea or a problem?';
 export const feedbackText =
-  'Tell us what you’d like Bloomkeeper to do, or what isn’t working. Help & feedback has a report form, the Bloomkeeper Slack channel and email.';
+  'Tell us what you’d like BloomGauge to do, or what isn’t working. Help & feedback has a report form, the BloomGauge Slack channel and email.';
 export const feedbackAction = 'Suggest a feature or send feedback';
 export const slackUrl = 'https://darkbloom.slack.com/archives/C0C4HC8HZLN';
 

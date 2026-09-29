@@ -96,7 +96,7 @@ class SessionCookieTests(unittest.TestCase):
             self.request(
                 self.local, '/api/update/native', {}, {'Content-Type': 'application/json'}
             )[1],
-            {'status': 'session', 'error': 'Open Bloomkeeper on this Mac to change settings.'},
+            {'status': 'session', 'error': 'Open BloomGauge on this Mac to change settings.'},
         )
 
 

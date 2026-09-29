@@ -33,7 +33,6 @@ export const themedFiles = [
   'components/dashboard/network-contributions.tsx',
   'components/dashboard/operating-history.tsx',
   'components/dashboard/optimizer-tab.tsx',
-  'components/dashboard/pulse-earnings-bars.tsx',
   'components/dashboard/rate-trend.tsx',
   'components/dashboard/shared.tsx',
   'components/dashboard/traffic-pulse.tsx',

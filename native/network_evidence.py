@@ -26,6 +26,7 @@ trial excursion may use (excursions.py adds the memory, demand and once-a-week g
 import logging, math, sqlite3, statistics, threading, time
 from collections import defaultdict, deque
 from history import epoch
+from serving_trust import stats_authorized
 
 log = logging.getLogger('bloom.network_evidence')
 
@@ -150,8 +151,8 @@ def split_cell(cell):
 def compact(providers):
     """id -> (live, current model, advertised set, requests, completion tokens, cell, trust).
 
-    trust: True for Darkbloom's 'hardware' trust level, False for any other, None when the
-    field is missing."""
+    trust: True when the Mac may serve (hardware trust, or App Attest without MDM:
+    serving_trust.stats_authorized), False otherwise, None when the field is missing."""
     snap = {}
     for p in providers:
         if not isinstance(p, dict) or not isinstance(p.get('id'), str):
@@ -166,7 +167,7 @@ def compact(providers):
             number(p.get('requests_served')),
             number(p.get('tokens_generated')),
             cell_of(p.get('chip_family'), p.get('chip_tier'), p.get('memory_gb')),
-            None if p.get('trust_level') is None else p.get('trust_level') == 'hardware',
+            stats_authorized(p),
         )
     return snap
 

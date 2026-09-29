@@ -3,10 +3,10 @@ import { pausedReason } from '@/lib/optimizer-manager';
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Activity, ArrowLeftRight, ChevronDown, Sparkles } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Choice, age, money, num, shortModel, type Range } from './shared';
-import { PulseTrend } from './pulse-trend';
+import { Choice, age, money, num, shortModel } from './shared';
 import { TrafficPulse } from './traffic-pulse';
 import { PulseHourlyBars } from './pulse-hourly-bars';
+import { PulseDayOutlook } from './pulse-day-outlook';
 import type { Monitor } from './widgets';
 import { useAppNavigation } from './app-navigation';
 import { PulseRunIndicator } from './pulse-run-indicator';
@@ -40,6 +40,7 @@ export function EarningsPulse({
   paused,
   active: viewActive = true,
   connected,
+  outlookConnected = connected,
   forecast,
   earningsUpdatedAt,
   earningsStatus,
@@ -52,6 +53,8 @@ export function EarningsPulse({
   paused: boolean;
   active?: boolean;
   connected: boolean;
+  /** Your earning days' own rule, so today's estimate reads the same in both places. */
+  outlookConnected?: boolean;
   forecast?: Forecast;
   earningsUpdatedAt?: number | null;
   earningsStatus?: string;
@@ -64,9 +67,8 @@ export function EarningsPulse({
   const [creditsOpen, setCreditsOpen] = useState(false);
   const [creditSort, setCreditSort] = useState('newest');
   const [creditLimit, setCreditLimit] = useState('5');
-  const [trendRange, setTrendRange] = useState<Range>({ preset: '1h' });
   const detailsId = useId();
-  // Bloomkeeper's pace everywhere is the 5-minute confirmed window; 60 s is an optional instant view.
+  // BloomGauge's pace everywhere is the 5-minute confirmed window; 60 s is an optional instant view.
   const [windowSeconds, setWindowSeconds] = useState('300');
   const [comparisonMode, setComparisonMode] = useState('history');
   const [referenceUsd, setReferenceUsd] = useState('');
@@ -487,23 +489,21 @@ export function EarningsPulse({
             </div>
           </div>
         </div>
-        <div className="pulse-credits">
-          <PulseTrend
-            pulse={pulse}
-            paused={paused}
-            active={viewActive && visible}
-            connected={connected}
-            windowSeconds={windowSeconds}
-            range={trendRange}
-            onRangeChange={setTrendRange}
-            reference={reference}
-            color={color}
-          />
-        </div>
         <PulseHourlyBars
           monitor={monitor}
           forecast={forecast}
           at={at ?? pulse?.at ?? Date.now() / 1000}
+          paused={paused}
+          active={viewActive && visible}
+          connected={connected}
+          today={
+            <PulseDayOutlook
+              active={viewActive && visible}
+              paused={paused}
+              connected={outlookConnected}
+              projection={forecast?.modelProjection}
+            />
+          }
         />
       </div>
       <div
@@ -683,10 +683,11 @@ export function EarningsPulse({
             {age(pulse?.updatedAt, pulse?.at ?? Date.now() / 1000)}. Meter uses
             credit timestamps within verified warm intervals. Cold time,
             warm-ups and base rewards are excluded from pace; confirmed earnings
-            remain recorded. Earnings bars show confirmed model credits per
-            elapsed hour, with a one-hour view by default. Pace line and Pace
-            bars + range show saved rolling meter readings; Detail retains
-            individual readings. Missing coverage stays visible in every view.
+            remain recorded. The hourly bars show confirmed dollars per clock
+            hour, all models and base rewards, over 6 hours to 7 days, with the
+            total for that span (the first bar is the whole clock hour); Charts
+            has every range. Today’s end-of-day estimate is Your earning days’
+            for all models.
             {forecast && (
               <span className="pulse-mobile-copy">
                 {' '}

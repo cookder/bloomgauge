@@ -148,7 +148,7 @@ class OnDemandElevenModelTests(unittest.TestCase):
         self.step(0, refresh=True)
         report = self.step(3, work=True)['provider']['multiModelReporting']
         self.assertEqual(report['offeredNotDownloaded'], [])  # the model list isn't read yet
-        # `darkbloom models remove` for the four; Bloomkeeper's next model-list read.
+        # `darkbloom models remove` for the four; BloomGauge's next model-list read.
         with self.c.optimizer.lock:
             self.c.optimizer.local = [{'id': m} for m in CATALOG]
             self.c.optimizer.discovery_at = T + 5

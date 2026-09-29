@@ -63,8 +63,8 @@ def new_secret():
 def serve_slot(config, host, target, listener=None):
     """Never overwrite another service or accept a public Funnel configuration.
 
-    'stale' is Bloomkeeper's own slot pointing at this listener with an older or missing
-    secret (phone access set up before 1.36.54); Bloomkeeper may re-point it."""
+    'stale' is BloomGauge's own slot pointing at this listener with an older or missing
+    secret (phone access set up before 1.36.54); BloomGauge may re-point it."""
     authority = f'{host}:{HTTPS_PORT}'
     tcp = (config.get('TCP') or {}).get(str(HTTPS_PORT))
     web = {k: v for k, v in (config.get('Web') or {}).items() if k.endswith(f':{HTTPS_PORT}')}

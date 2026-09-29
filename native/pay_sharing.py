@@ -1,11 +1,11 @@
-"""Optional, off by default: share this Mac's per-model pay curves so Bloomkeeper's
+"""Optional, off by default: share this Mac's per-model pay curves so BloomGauge's
 starting estimates (shared-priors.json) improve for everyone.
 
 A summary holds, per model with 2+ steady warm hours in the last 30 days, the
 fitted curve (level, exponent, typical spread), warm hours and period count,
-plus chip family, memory band and Bloomkeeper version. No account or device IDs,
+plus chip family, memory band and BloomGauge version. No account or device IDs,
 balances, times or individual payments. A random ID and secret, separate from
-every other Bloomkeeper ID, let this Mac replace its summary or delete it.
+every other BloomGauge ID, let this Mac replace its summary or delete it.
 
 At most one send a week, and once right after opting in. Turning it off deletes
 the website's copy first; nothing is queued in the background.
@@ -34,8 +34,8 @@ VERSION = re.compile(r'\d{1,3}\.\d{1,3}\.\d{1,4}')
 
 class SharingError(Exception):
     MESSAGES = {
-        'phone': (403, 'Change pay summary sharing in Bloomkeeper on your Mac.'),
-        'unavailable': (503, 'Sharing isn’t available in this copy of Bloomkeeper.'),
+        'phone': (403, 'Change pay summary sharing in BloomGauge on your Mac.'),
+        'unavailable': (503, 'Sharing isn’t available in this copy of BloomGauge.'),
         'unconfirmed': (
             503,
             'bloomformac.com didn’t confirm the change. Nothing changed; try again in a moment.',

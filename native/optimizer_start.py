@@ -258,7 +258,7 @@ class OnStart:
         for _ in range(10):
             if o.stop.wait(2):
                 raise ValueError(
-                    'Bloomkeeper closed while checking memory. This On request will not be replayed.'
+                    'BloomGauge closed while checking memory. This On request will not be replayed.'
                 )
             _, live = self.current()
             hardware_at = (live.get('hardware') or {}).get('at')

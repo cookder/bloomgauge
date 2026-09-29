@@ -120,7 +120,7 @@ class UsageHTTPTests(unittest.TestCase):
         self.assertFalse(data['enabled'])
         self.assertFalse(data['consentSaved'])
         self.assertTrue(data['deletionPending'])
-        self.assertIn('Keep Bloomkeeper open and retry before quitting', data['lastError'])
+        self.assertIn('Keep BloomGauge open and retry before quitting', data['lastError'])
 
     def test_consent_and_deletion_are_mac_only_with_action_and_origin_guards(self):
         body = json.dumps({'action': 'consent', 'enabled': True}).encode()

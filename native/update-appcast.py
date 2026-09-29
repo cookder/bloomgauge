@@ -13,7 +13,7 @@ ET.register_namespace('sparkle', SPARKLE)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dmg', type=Path, required=True)
-    parser.add_argument('--app', type=Path, default=SOURCE / '.build/beta/Bloomkeeper Beta.app')
+    parser.add_argument('--app', type=Path, default=SOURCE / '.build/beta/BloomGauge Beta.app')
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True, help='New evidence directory')
     parser.add_argument(
@@ -45,7 +45,7 @@ def main():
     version = info['CFBundleShortVersionString']
     build = info['CFBundleVersion']
     assert re.fullmatch(
-        'Bloomkeeper-' + re.escape(version) + r'-beta[0-9]+-Apple-Silicon\.dmg', dmg.name
+        'BloomGauge-' + re.escape(version) + r'-beta[0-9]+-Apple-Silicon\.dmg', dmg.name
     )
     subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(dmg)], check=True)
@@ -81,12 +81,12 @@ def main():
     url = 'https://bloomformac.com/downloads/' + dmg.name
     rss = ET.Element('rss', {'version': '2.0'})
     channel = ET.SubElement(rss, 'channel')
-    ET.SubElement(channel, 'title').text = 'Bloomkeeper beta updates'
+    ET.SubElement(channel, 'title').text = 'BloomGauge beta updates'
     ET.SubElement(channel, 'link').text = config['feedURL']
-    ET.SubElement(channel, 'description').text = 'Updates for Bloomkeeper Beta on Apple Silicon.'
+    ET.SubElement(channel, 'description').text = 'Updates for BloomGauge Beta on Apple Silicon.'
     ET.SubElement(channel, 'language').text = 'en'
     item = ET.SubElement(channel, 'item')
-    ET.SubElement(item, 'title').text = 'Bloomkeeper ' + version
+    ET.SubElement(item, 'title').text = 'BloomGauge ' + version
     ET.SubElement(item, 'pubDate').text = datetime.datetime.now(datetime.timezone.utc).strftime(
         '%a, %d %b %Y %H:%M:%S GMT'
     )

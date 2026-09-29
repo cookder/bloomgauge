@@ -1,4 +1,4 @@
-"""Enter Bloomkeeper with a controlled import path and bundled CA trust roots."""
+"""Enter BloomGauge with a controlled import path and bundled CA trust roots."""
 
 import os
 from pathlib import Path

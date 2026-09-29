@@ -490,9 +490,9 @@ export function OptimizerControl({
     !sending &&
     !uncertain;
   const managerCopy = {
-    off: 'Bloomkeeper won’t change, restore or restart models. Choose one below.',
-    pin: `Bloomkeeper keeps ${manager?.home ? names[manager.home.model] || shortModel(manager.home.model) : 'your pick'} running and restores it if it fails. It never switches away from your pick.`,
-    manager: `Bloomkeeper keeps the best model for this Mac running and recovers by itself after a failed switch${excursions === false ? '. It does not move for network evidence.' : excursions ? ', moving to a better model only when network evidence is strong.' : '.'}`,
+    off: 'BloomGauge won’t change, restore or restart models. Choose one below.',
+    pin: `BloomGauge keeps ${manager?.home ? names[manager.home.model] || shortModel(manager.home.model) : 'your pick'} running and restores it if it fails. It never switches away from your pick.`,
+    manager: `BloomGauge keeps the best model for this Mac running and recovers by itself after a failed switch${excursions === false ? '. It does not move for network evidence.' : excursions ? ', moving to a better model only when network evidence is strong.' : '.'}`,
   }[managerMode];
   async function checkAgain() {
     if (pending.current) return;
@@ -556,7 +556,7 @@ export function OptimizerControl({
             {managed
               ? 'Keep this Mac on its best model.'
               : knownStrategy
-                ? 'Let Bloomkeeper choose. Or take control.'
+                ? 'Let BloomGauge choose. Or take control.'
                 : 'Checking how this Mac picks models.'}
           </h2>
         </div>
@@ -654,7 +654,7 @@ export function OptimizerControl({
             <SlidersHorizontal size={20} />
             <span>
               <strong>Optimizer on</strong>
-              <small>Bloomkeeper follows earning opportunities</small>
+              <small>BloomGauge follows earning opportunities</small>
             </span>
           </button>
         </div>
@@ -666,19 +666,19 @@ export function OptimizerControl({
         <div
           className="notice provider-confirm"
           role="group"
-          aria-label="Let Bloomkeeper choose"
+          aria-label="Let BloomGauge choose"
         >
-          <strong>Let Bloomkeeper choose the home model again?</strong>
+          <strong>Let BloomGauge choose the home model again?</strong>
           <p>
             Your pick
             {manager?.home ? `, ${shortModel(manager.home.model)},` : ''} is
-            released: Bloomkeeper holds the model that has paid best here and
+            released: BloomGauge holds the model that has paid best here and
             switches back to it on its next check. Automatic control stays on,
             and the current model keeps serving meanwhile.
           </p>
           <div className="provider-actions">
             <Button disabled={sending} onClick={releasePin}>
-              Let Bloomkeeper choose
+              Let BloomGauge choose
             </Button>
             <Button
               variant="outline"
@@ -758,7 +758,7 @@ export function OptimizerControl({
             </strong>
             <p>
               {uncertain
-                ? 'The reply is unconfirmed. Bloomkeeper is checking its receipt; retrying the same choice will not repeat an accepted command.'
+                ? 'The reply is unconfirmed. BloomGauge is checking its receipt; retrying the same choice will not repeat an accepted command.'
                 : actionError ||
                   (!connectionError && loadError) ||
                   (stale

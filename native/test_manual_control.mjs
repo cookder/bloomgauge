@@ -150,7 +150,7 @@ test('old backend stays readable but cannot receive a target-aware start', () =>
   delete s.models[0].canStart;
   delete s.models[0].canSwitch;
   assert.ok(validManualControl(s));
-  assert.match(manualBlocker(s, 'qwen', 100), /updated Bloomkeeper/);
+  assert.match(manualBlocker(s, 'qwen', 100), /updated BloomGauge/);
 });
 test('stale, future, unknown and busy status block commands', () => {
   assert.equal(manualControlFresh(snapshot(), 115), false);
@@ -216,7 +216,7 @@ test('phone setup refusal uses an actionable model-specific reason', () => {
   const s = snapshot();
   s.remote = true;
   s.models[0].canStart = false;
-  s.models[0].startReason = 'Open Bloomkeeper on the Mac once to set up pre-warming.';
+  s.models[0].startReason = 'Open BloomGauge on the Mac once to set up pre-warming.';
   assert.equal(manualBlocker(s, 'qwen', 100), s.models[0].startReason);
 });
 

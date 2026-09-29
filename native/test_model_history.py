@@ -346,7 +346,7 @@ class PassiveLifecycleTests(unittest.TestCase):
                 'written_at': AT,
                 'advertised_models': ['a'],
                 'warm_models': ['a'],
-                'trust': {'status': 'online'},
+                'trust': {'status': 'online', 'trust_level': 'hardware'},
                 'inference_active': False,
                 'stats': {'requests_served': 1, 'tokens_generated': 1},
             }

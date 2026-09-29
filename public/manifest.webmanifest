@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Bloomkeeper",
-  "short_name": "Bloomkeeper",
+  "name": "BloomGauge",
+  "short_name": "BloomGauge",
   "description": "Your Mac and Darkbloom, in view.",
   "start_url": "/",
   "scope": "/",

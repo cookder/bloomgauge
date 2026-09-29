@@ -49,6 +49,63 @@ if mode=="bridge" {
     assertTrue(!isBloomUpdateFrame(base,localURL:base,isMainFrame:false,belongsToDashboard:true),"reject subframe")
     assertTrue(!isBloomUpdateFrame(base,localURL:base,isMainFrame:true,belongsToDashboard:false),"reject other webview")
     assertTrue(!isBloomUpdateFrame(base,localURL:nil,isMainFrame:true,belongsToDashboard:true),"reject uninitialized native origin")
+} else if mode=="quiet-policy" {
+    let P=BloomQuietInstallPolicy.self
+    assertTrue(P.due(waiting:600,sinceLaunch:3600,userIdle:600,appActive:true),"away ten minutes: install")
+    assertTrue(!P.due(waiting:600,sinceLaunch:3600,userIdle:30,appActive:false),"in use elsewhere, first day: wait")
+    assertTrue(!P.due(waiting:600,sinceLaunch:3600,userIdle:30,appActive:true),"in use in front: wait")
+    assertTrue(P.due(waiting:86_400,sinceLaunch:3600,userIdle:30,appActive:false),"after a day, background is enough")
+    assertTrue(!P.due(waiting:86_400*3,sinceLaunch:3600,userIdle:30,appActive:true),"never under the person's cursor")
+    assertTrue(!P.due(waiting:60,sinceLaunch:3600,userIdle:9999,appActive:false),"let the download settle")
+    assertTrue(!P.due(waiting:9999,sinceLaunch:120,userIdle:9999,appActive:false),"not right after launch")
+    assertTrue(!P.due(waiting:.nan,sinceLaunch:3600,userIdle:9999,appActive:false),"non-finite fails closed")
+    assertTrue(!P.due(waiting:9999,sinceLaunch:3600,userIdle:.infinity,appActive:false),"non-finite idle fails closed")
+    assertTrue(P.automatic(waiting:600) && !P.automatic(waiting:86_400),"soft holds for the first day only")
+    assertTrue(P.automatic(waiting:.nan),"unknown wait keeps the soft holds")
+} else if mode=="relaunch-window" {
+    let now:TimeInterval=10_000
+    assertTrue(bloomRelaunchWindow(bloomQuietRelaunchRecord(windowVisible:true,appActive:true,now:now),now:now+30) == .front,"front stays front")
+    assertTrue(bloomRelaunchWindow(bloomQuietRelaunchRecord(windowVisible:true,appActive:false,now:now),now:now+30) == .back,"background stays behind")
+    assertTrue(bloomRelaunchWindow(bloomQuietRelaunchRecord(windowVisible:false,appActive:true,now:now),now:now+30) == .hidden,"closed window stays closed")
+    assertTrue(bloomRelaunchWindow(bloomQuietRelaunchRecord(windowVisible:false,appActive:false,now:now),now:now+901) == nil,"stale record: ordinary launch")
+    assertTrue(bloomRelaunchWindow(bloomQuietRelaunchRecord(windowVisible:false,appActive:false,now:now),now:now-5) == nil,"future record: ordinary launch")
+    assertTrue(bloomRelaunchWindow(bloomQuitRelaunchRecord(now:now),now:now+20) == .quit,"quit record right after the relaunch")
+    assertTrue(bloomRelaunchWindow(bloomQuitRelaunchRecord(now:now),now:now+85) == .quit,"install and relaunch may take a while")
+    assertTrue(bloomRelaunchWindow(bloomQuitRelaunchRecord(now:now),now:now+91) == nil,"a quit record never closes a later, manual launch")
+    let back=bloomQuietRelaunchRecord(windowVisible:true,appActive:false,now:now,frontApp:"com.apple.finder")
+    assertTrue(bloomRelaunchFrontApp(back) == "com.apple.finder","remember the app in front")
+    assertTrue(bloomRelaunchFrontApp(bloomQuietRelaunchRecord(windowVisible:true,appActive:true,now:now,frontApp:"com.apple.finder")) == nil,"no hand-back when BloomGauge was in front")
+    assertTrue(bloomRelaunchFrontApp(["frontApp":String(repeating:"a",count:300)]) == nil && bloomRelaunchFrontApp(nil) == nil,"malformed front app ignored")
+    for bad:Any? in [nil,"hidden",["at":now],["window":"hidden"],["at":"x","window":"hidden"],["at":now,"window":"sideways"]] {
+        assertTrue(bloomRelaunchWindow(bad,now:now) == nil,"malformed record: ordinary launch")
+    }
+} else if mode=="probe" {
+    for (status,body,expect) in [(200,["ready":true,"lease":leaseID] as [String:Any],true),(409,["ready":false,"reason":"excursion"],false),(200,["ready":true,"lease":"bad"],false),(200,["ready":false,"lease":leaseID],false),(0,[:],false)] {
+        let sender=Sender();var called=false;var probe:BloomQuietProbe?=nil
+        bloomProbeQuietInstall(send:sender.send,automatic:true){called=true;probe=$0}
+        assertTrue(sender.requests[0]["action"] as? String == "prepare" && sender.requests[0]["automatic"] as? Bool == true,"automatic probe")
+        sender.reply(0,status,status==0 ? nil : body)
+        assertTrue(called && (probe != nil)==expect,"probe result")
+        assertTrue(sender.requests.count==1,"a granted reservation is kept for the install, never released by the probe")
+        if let probe=probe {
+            assertTrue(probe.lease==leaseID && probe.requestId==sender.requests[0]["requestId"] as? String,"probe hands over its request and lease")
+            bloomReleaseQuietProbe(probe,send:sender.send)
+            assertTrue(sender.requests[1]["action"] as? String == "release" && sender.requests[1]["lease"] as? String == leaseID,"explicit release when the install does not go ahead")
+        }
+    }
+    let sender=Sender();bloomProbeQuietInstall(send:sender.send,automatic:false){_ in}
+    assertTrue(sender.requests[0]["automatic"]==nil,"after a day the probe drops soft holds")
+} else if mode=="automatic-admission" {
+    let sender=Sender();let gate=BloomUpdateAdmission(send:sender.send,clock:{100})
+    gate.begin(automatic:true,ready:{},failed:{_ in})
+    assertTrue(sender.requests[0]["automatic"] as? Bool == true && Set(sender.requests[0].keys)==Set(["action","requestId","automatic"]),"automatic prepare")
+    let manual=Sender();BloomUpdateAdmission(send:manual.send,clock:{100}).begin(ready:{},failed:{_ in})
+    assertTrue(Set(manual.requests[0].keys)==Set(["action","requestId"]),"a person's install has no automatic flag")
+    let reuse=Sender();BloomUpdateAdmission(send:reuse.send,clock:{100}).begin(automatic:true,requestId:fixtureID,ready:{},failed:{_ in})
+    assertTrue(reuse.requests[0]["requestId"] as? String == fixtureID,"termination reuses the probe's request, so the same reservation comes back")
+    let bad=Sender();BloomUpdateAdmission(send:bad.send,clock:{100}).begin(requestId:"not-a-uuid",ready:{},failed:{_ in})
+    let fresh=bad.requests[0]["requestId"] as? String ?? ""
+    assertTrue(fresh != "not-a-uuid" && UUID(uuidString:fresh) != nil,"a malformed reused id is replaced")
 } else {
     var now:TimeInterval=100
     let sender=Sender();let gate=BloomUpdateAdmission(send:sender.send,clock:{now})
@@ -108,6 +165,18 @@ print("passed "+mode)
         subprocess.run(
             [str(self.binary), name], check=True, capture_output=True, text=True, timeout=5
         )
+
+    def test_quiet_install_waits_for_a_quiet_moment(self):
+        self.run_case('quiet-policy')
+
+    def test_relaunch_restores_window_without_taking_focus(self):
+        self.run_case('relaunch-window')
+
+    def test_quiet_probe_never_keeps_a_reservation(self):
+        self.run_case('probe')
+
+    def test_automatic_admission_sends_soft_hold_flag(self):
+        self.run_case('automatic-admission')
 
     def test_bridge_accepts_only_explicit_strict_actions(self):
         self.run_case('bridge')

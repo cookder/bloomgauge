@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
-// About Bloomkeeper: everything is free, with no activation, trial or purchase flow.
+// About BloomGauge: everything is free, with no activation, trial or purchase flow.
 export async function freeAccessBrowserCases(page, url, out, engine, width) {
   let planCalls = 0;
   await page.unroute('**/api/setup');
@@ -18,10 +18,10 @@ export async function freeAccessBrowserCases(page, url, out, engine, width) {
       .click();
     await page
       .locator('.navigation-hub')
-      .getByRole('button', { name: /^About Bloomkeeper / })
+      .getByRole('button', { name: /^About BloomGauge / })
       .click();
     const panel = page.locator('section.bloom-plan');
-    await panel.getByRole('heading', { name: /^Bloomkeeper is free\./ }).waitFor();
+    await panel.getByRole('heading', { name: /^BloomGauge is free\./ }).waitFor();
     assert.equal(await panel.locator('textarea,input').count(), 0);
     assert.equal(
       await panel
@@ -31,7 +31,7 @@ export async function freeAccessBrowserCases(page, url, out, engine, width) {
     );
     assert.equal(
       await panel
-        .getByText(/30 days remaining|one-time purchase|subscription|Bloomkeeper Pro/)
+        .getByText(/30 days remaining|one-time purchase|subscription|BloomGauge Pro/)
         .count(),
       0,
     );

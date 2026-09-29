@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Bell, TrendingUp } from 'lucide-react';
+import { Bell, Smartphone, TrendingUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { startChartPolling } from '@/lib/chart-polling';
 import { usePageVisible } from '@/lib/use-page-visibility';
@@ -103,7 +103,10 @@ async function bounded<T>(operation: Promise<T>): Promise<T> {
   }
 }
 
-export function ModelSwitchNotifications() {
+/** This device's phone push subscription: enable, test, delivery status. Shown inside
+ * the Notifications card, or alone as the old model-switch card (`legacy`) when the
+ * Mac runs a BloomGauge without notification settings. */
+export function PhoneNotifications({ legacy = false }: { legacy?: boolean }) {
   const active = useScreenActive();
   const visible = usePageVisible();
   const [data, setData] = useState<PushState | null>(null);
@@ -298,13 +301,21 @@ export function ModelSwitchNotifications() {
   return (
     <div className="demand-notifications">
       <div>
-        <strong>
-          <Bell size={15} /> Model-switch notifications
-        </strong>
+        {legacy ? (
+          <strong>
+            <Bell size={15} /> Model-switch notifications
+          </strong>
+        ) : (
+          <strong>
+            <Smartphone size={15} /> This phone or browser
+          </strong>
+        )}
         <p className="small muted">
-          {enabled
-            ? 'Registered on this device. Get the new model and why it changed, after warm-up succeeds. Demand-spike alerts are off.'
-            : 'On iPhone, open your private dashboard in Safari, add it to the Home Screen, then open it there to enable alerts.'}
+          {!enabled
+            ? 'On iPhone, open your private dashboard in Safari, add it to the Home Screen, then open it there to enable alerts.'
+            : legacy
+              ? 'Registered on this device. Get the new model and why it changed, after warm-up succeeds. Demand-spike alerts are off.'
+              : 'Registered on this device. It gets the alerts turned on for Phone above.'}
         </p>
         {!supported && (
           <p className="small muted">
@@ -332,7 +343,7 @@ export function ModelSwitchNotifications() {
               ? device?.lastTestError
                 ? `Test failed: ${device.lastTestError}`
                 : 'Test accepted by the push service. Check this device’s notifications.'
-              : 'Test queued. Keep Bloomkeeper running on the Mac while it sends.'}
+              : 'Test queued. Keep BloomGauge running on the Mac while it sends.'}
           </p>
         )}
         {enabled && coolingDown && (
@@ -550,8 +561,8 @@ export function DemandAlertsPanel() {
         </details>
       )}
       <p className="small muted">
-        Demand spikes stay in this view. Phone alerts now cover completed model
-        switches; manage them in Models → Test.
+        To get demand spikes on your Mac or phone too, turn them on in Optimizer
+        → Overview → Notifications.
       </p>
     </section>
   );

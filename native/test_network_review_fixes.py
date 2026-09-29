@@ -145,7 +145,7 @@ class WatchdogFlow(tnh.Flow):
             self.assertTrue(
                 control.watch(self.now, settings, live, raw, None, settings['manager'])
             )
-        self.assertIn('Bloomkeeper restores a.', self.o.detail)
+        self.assertIn('BloomGauge restores a.', self.o.detail)
         # While 'a' serves, 'b' is announced first as before.
         self.assertEqual(control.home(settings, live, 'a', self.now)['notice']['model'], 'b')
 
@@ -240,7 +240,7 @@ class NoticeFlow(tnh.Flow):
         self.decide(1200)
         self.assertEqual(self.o.state['manager']['homeNotice']['until'], notice['until'])
         self.assertNotIn('homeNoticeLast', self.o.state['manager'])
-        said = [e for e in self.events('manager') if 'Bloomkeeper will switch to b' in e]
+        said = [e for e in self.events('manager') if 'BloomGauge will switch to b' in e]
         self.assertEqual(len(said), 1)
         # Keep current and unpinning forget a dropped notice too.
         self.o.state['manager']['homeNoticeLast'] = {'model': 'b', 'from': 'a', 'endedAt': self.now}

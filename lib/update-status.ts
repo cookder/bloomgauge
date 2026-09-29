@@ -3,6 +3,8 @@ export type UpdateStatus = {
   available: boolean;
   installedVersion: string;
   automaticChecks: boolean;
+  /** Check, download and install automatically (the one switch in Help). */
+  automaticUpdates: boolean;
   canCheck: boolean;
   checking: boolean;
   lastCheck: number | null;
@@ -12,7 +14,9 @@ export type UpdateStatus = {
     | 'update-available'
     | 'up-to-date'
     | 'error'
-    | 'blocked';
+    | 'blocked'
+    | 'ready-to-install'
+    | 'installing';
   error: string | null;
 };
 
@@ -21,9 +25,13 @@ export function validUpdateStatus(value: unknown): value is UpdateStatus {
   const v = value as Record<string, unknown>;
   return (
     (v.requestId === null || typeof v.requestId === 'string') &&
-    ['available', 'automaticChecks', 'canCheck', 'checking'].every(
-      (key) => typeof v[key] === 'boolean',
-    ) &&
+    [
+      'available',
+      'automaticChecks',
+      'automaticUpdates',
+      'canCheck',
+      'checking',
+    ].every((key) => typeof v[key] === 'boolean') &&
     typeof v.installedVersion === 'string' &&
     v.installedVersion.length > 0 &&
     v.installedVersion.length <= 64 &&
@@ -40,6 +48,8 @@ export function validUpdateStatus(value: unknown): value is UpdateStatus {
       'up-to-date',
       'error',
       'blocked',
+      'ready-to-install',
+      'installing',
     ].includes(v.status) &&
     (v.error === null ||
       (typeof v.error === 'string' && v.error.length <= 1000))

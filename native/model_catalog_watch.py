@@ -19,7 +19,7 @@ Detects:
   than the other models' warm total moved (a network-wide drop is an outage, not
   model news).
 
-Thresholds come from Bloomkeeper's own capacity history (opt_network, every 30 s,
+Thresholds come from BloomGauge's own capacity history (opt_network, every 30 s,
 Sep 6-28 2026, ~20 recorded days) and the public /v1/stats research poll (every
 10 min, Sep 26 21:41 - Sep 28 08:34); see each constant. On that data the rules
 fire for the three real arrivals (nvidia-nemotron-3.5-lightning Sep 11, qwen3.8-
@@ -640,7 +640,7 @@ class ModelCatalogWatch:
             )
             try:
                 sent = self.notify(
-                    f'catalog-new-{model}-{int(at)}', 'Bloomkeeper · new model pays well', body
+                    f'catalog-new-{model}-{int(at)}', 'BloomGauge · new model pays well', body
                 )
             except Exception:
                 log.exception('Model watch notice failed')

@@ -61,7 +61,7 @@ export function CacheRecoveryPermission({
         authorization.status === 'ready'
           ? 'Password-free cleanup is verified. Start your selected model when you’re ready.'
           : authorization.status === 'required'
-            ? 'Bloomkeeper’s permission is not enabled. Model controls are unchanged.'
+            ? 'BloomGauge’s permission is not enabled. Model controls are unchanged.'
             : authorization.detail,
       );
     }
@@ -84,7 +84,7 @@ export function CacheRecoveryPermission({
     ).webkit?.messageHandlers?.bloomAccount;
     if (!bridge) {
       setMessage(
-        'Open the installed Bloomkeeper app on your Mac to change cache cleanup permission.',
+        'Open the installed BloomGauge app on your Mac to change cache cleanup permission.',
       );
       return;
     }
@@ -102,7 +102,7 @@ export function CacheRecoveryPermission({
       setBusy(false);
       notify.current(false);
       setMessage(
-        'Could not open the permission dialog. Reopen Bloomkeeper and try again.',
+        'Could not open the permission dialog. Reopen BloomGauge and try again.',
       );
     }
   }
@@ -126,7 +126,7 @@ export function CacheRecoveryPermission({
       <p className="footnote">
         One-time administrator approval allows the cache cleanup command to run
         without another password prompt. Cleanup is used only when eligible;
-        Bloomkeeper rechecks available memory before loading.
+        BloomGauge rechecks available memory before loading.
       </p>
       <div className="provider-actions">
         {!remote && native && (
@@ -148,7 +148,7 @@ export function CacheRecoveryPermission({
       </div>
       {(remote || !native) && (
         <p className="footnote">
-          Open the installed Bloomkeeper app on your Mac to enable or remove this
+          Open the installed BloomGauge app on your Mac to enable or remove this
           permission.
         </p>
       )}

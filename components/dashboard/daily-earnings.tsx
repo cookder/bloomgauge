@@ -28,6 +28,16 @@ const labels = {
 // This Mac's day scale (all earnings, last 30 days) for the hour-end estimates,
 // shared by every caller and refreshed at most every 10 minutes.
 let tierCache: { at: number; tiers: EarningsTiers | null } | null = null;
+/** The latest all-models 30-day reading (today's outlook), shared with the Pulse's tile so
+ * the two don't both poll /api/earnings-daily when both are on screen. */
+export let sharedOutlook: {
+  at: number;
+  timezone: string;
+  value: DailyEarnings;
+} | null = null;
+export function shareOutlook(timezone: string, value: DailyEarnings) {
+  sharedOutlook = { at: Date.now(), timezone, value };
+}
 let tierRequest: Promise<void> | null = null;
 function refreshTiers() {
   if (tierCache && Date.now() - tierCache.at < 600000) return Promise.resolve();
@@ -144,7 +154,10 @@ export function DailyEarningsPanel({
               : '',
         };
       },
-      onValue: (value) => setSaved({ key, ...value, error: '' }),
+      onValue: (value) => {
+        if (value.outlook && !model) shareOutlook(timezone, value.outlook);
+        setSaved({ key, ...value, error: '' });
+      },
       onError: (e) =>
         setSaved((old) => ({
           key,

@@ -90,7 +90,7 @@ class ManualSelection:
             return result
         result.update(
             canAttempt=True,
-            detail='Bloomkeeper will clear reclaimable file cache once, recheck memory, then start only if enough is available.',
+            detail='BloomGauge will clear reclaimable file cache once, recheck memory, then start only if enough is available.',
         )
         return result
 
@@ -815,7 +815,7 @@ class ManualSelection:
         for _ in range(10):
             if o.stop.wait(2):
                 raise ValueError(
-                    'Bloomkeeper closed while waiting for memory. The selected start will not be replayed.'
+                    'BloomGauge closed while waiting for memory. The selected start will not be replayed.'
                 )
             current = o.provider_control.inspect()
             if not self.same_stopped_context(current, expected, account, device, request):

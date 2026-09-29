@@ -1,10 +1,10 @@
 # Architecture
 
-Bloomkeeper is a native macOS app that shows a local web dashboard (see the [README](../README.md) for what it does). It has three parts: a small Swift shell, a Python backend (the "collector") running on a Python runtime bundled in the app, and a React web UI. Everything runs on the user's Mac. The phone view is the same web UI, reached through the user's own Tailscale network.
+BloomGauge is a native macOS app that shows a local web dashboard (see the [README](../README.md) for what it does). It has three parts: a small Swift shell, a Python backend (the "collector") running on a Python runtime bundled in the app, and a React web UI. Everything runs on the user's Mac. The phone view is the same web UI, reached through the user's own Tailscale network.
 
 ```
-+---------------------------- Bloomkeeper.app ----------------------------+
-| Swift shell: App.swift, Updates.swift, CachePermission.swift                |
++---------------------------- BloomGauge.app ----------------------------+
+| Swift shell: App.swift, Updates.swift, CachePermission.swift, relay         |
 |   window (WKWebView) --- HTTP + bloom_session cookie ---+                   |
 |   starts and stops the collector, menus, Sparkle        |                   |
 |                                                         v                   |
@@ -22,7 +22,7 @@ Bloomkeeper is a native macOS app that shows a local web dashboard (see the [REA
 ## Swift shell (`native/`)
 
 - **`App.swift`** is the app. It opens the window (a `WKWebView`), starts the collector with the bundled `python3`, reads the dashboard URL the collector prints on stdout, and loads it. It restarts the collector if it exits (at most 3 times in 5 minutes) and stops it with SIGTERM on Quit. It also owns the menus, the menu-bar item (closing the window keeps monitoring running) and the optional "Connect Darkbloom" window, which loads the official console and passes allowlisted reputation fields to the collector (`reputation-bridge.js`). The page reaches Swift through WebKit message handlers (`bloomAccount`, `bloomDiagnostics`, `bloomUpdates`), and Swift replies with DOM events. The web view loads only the local dashboard; allowlisted links open in the default browser and all other navigation is blocked.
-- **`Updates.swift`** wraps Sparkle 2, enabled only in beta-channel builds. Sparkle handles consent, and every install needs the user's approval. Before Sparkle quits the app to install, `BloomUpdateAdmission` takes a short lease from the collector (`/api/update/native`, `update_guard.py`) so an update never interrupts a model switch or warm-up.
+- **`Updates.swift`** wraps Sparkle 2, enabled only in beta-channel builds. Updates are automatic by default (Info.plist `SUEnableAutomaticChecks`/`SUAutomaticallyUpdate`; the one off switch sets both saved preferences). Sparkle downloads in the background and hands over an install-now block (`willInstallUpdateOnQuit`); `App.swift` checks once a minute and uses it only at a quiet moment (`BloomQuietInstallPolicy`: user idle 10 min, or after a day whenever the app isn't frontmost; never in the first 10 min after launch). It first takes the collector's reservation (the probe's lease carries through to termination, so no model work can start in between), then relaunches with the window as it was and hands focus back to the app that was in front (`BloomQuietRelaunch` default). A failed quiet attempt is postponed without an alert; a person's Quit after that stays an ordinary quit, and the relaunched app closes again. Before Sparkle quits the app to install, `BloomUpdateAdmission` takes a short lease from the collector (`/api/update/native`, `update_guard.py`) so an update never interrupts a model switch or warm-up; automatic installs also wait for excursions, trials and recoveries for their first day.
 - **`CachePermission.swift`** manages the optional cache-recovery permission. It runs an embedded script through the macOS administrator prompt that adds one sudoers rule, `/private/etc/sudoers.d/bloom-dashboard-cache`, allowing only `/usr/sbin/purge` with no arguments and no password; removal deletes only that rule. `cache_recovery.py` then runs `sudo -n /usr/sbin/purge` when file cache blocks a model load. `enable-cache-recovery.sh` and `remove-cache-recovery.sh` are identical copies of the scripts for manual use; keep them in sync.
 - Helpers compiled by `build-app.sh`: `telemetry.m` (read-only sensor helper; one JSON line of CPU, GPU, memory and temperature readings a second) and `qr.swift` (QR code for the phone address).
 
@@ -34,7 +34,7 @@ Standard library only, plus the pinned Web Push packages in `push-requirements.t
 
 - **`collector.py`** is the entry point. It starts the background loops (a one-second sample of the provider's `daemon-state.json`, the telemetry helper and Darkbloom Monitor's activity file; earnings every 20 s; network, demand and notification loops) and two `ThreadingHTTPServer`s on loopback, 8765 for the Mac and 8766 for the phone. `Handler.do_GET`/`do_POST` route `/api/*` by path; other paths serve the built UI under a strict Content-Security-Policy. `/api/snapshot` is the main one-second payload.
 - **`history.py`** owns `history.sqlite3` (WAL mode): one-second samples, confirmed credits, the public network series, and a key/value `cache` table for settings and small state. `optimizer_store.py` and the journals add their own tables to the same file; `retention.py` trims per-second samples and passive journals after 90 days.
-- **`optimizer.py`** is the controller; together with `provider_control.py` it is the only code that runs `darkbloom` commands. It reads Darkbloom's LaunchAgent plist, runs `~/.darkbloom/bin/darkbloom start --model …` in a worker thread, verifies the new session and pre-warms it through Darkbloom's local engine (`prewarm.py`). `observe` is the default mode; "Optimizer on" sets `demand`, and `week`, `optimize` and `combo` are scheduled tests. Every switch rechecks fresh readings, this Mac's identity in the provider roster, fresh earnings and demand data, memory, idle, AC power and temperature. If Bloomkeeper quits mid-switch, the next launch pauses automation.
+- **`optimizer.py`** is the controller; together with `provider_control.py` it is the only code that runs `darkbloom` commands. It reads Darkbloom's LaunchAgent plist, runs `~/.darkbloom/bin/darkbloom start --model …` in a worker thread, verifies the new session and pre-warms it through Darkbloom's local engine (`prewarm.py`). `observe` is the default mode; "Optimizer on" sets `demand`, and `week`, `optimize` and `combo` are scheduled tests. Every switch rechecks fresh readings, this Mac's identity in the provider roster, fresh earnings and demand data, memory, idle, AC power and temperature. If BloomGauge quits mid-switch, the next launch pauses automation.
 - **`demand_optimizer.py`** decides what demand mode should do but never runs a provider command. It estimates each model's pay from this Mac's own paid, warm minutes under similar network demand, and proposes confident switches and short trial runs of other models within the user's policy (minimum run, confirmation, improvement margin, daily switch limit, protect level, learning time). See [OPTIMIZER_REDESIGN.md](OPTIMIZER_REDESIGN.md).
 - **`stall_recovery.py`** (pure logic) and **`stall_control.py`** (runs it, demand mode only) react when steady work suddenly stops, or when Macs like this one (same chip, memory and model in the public `/v1/stats` counters, `network_evidence.py`) are clearly getting work while this warm Mac gets none: a small test request, then a restart on the same model, then a move to another model, then stop and tell the user. Each step is saved as an event, so it isn't repeated after a restart. The test request goes through Darkbloom's API, routed back to this Mac, only if the user stored an API key in the login Keychain; otherwise it goes to the local engine.
 - **`live_earnings.py`** turns the account-earnings API into confirmed credits and computes the live "Pulse" pace for the current session. A pace estimate is never shown as paid money.
@@ -45,6 +45,7 @@ Other notable modules:
 - Network and demand: `network.py` (polls Darkbloom's public endpoints), `network_health.py` (spots Darkbloom-wide outages in those same readings: the Overview banner, and the stall ladder and automatic problem reports wait while one lasts), `model_demand.py`, `network_weekly.py`, `traffic_pulse.py`, `demand_alerts.py`, `demand_curves.py` (shadow estimator, seeded from `shared-priors.json`).
 - Model control: `optimizer_store.py` (evidence tables), `optimizer_control.py` (On/Off), `manual_selection.py` (manual start and switch), `model_readiness.py`, `update_guard.py`.
 - Phone and fleet: `remote.py` (phone access), `machines.py` (My Macs: read-only summaries from up to ten of the user's Macs, fetched over the tailnet and told apart by a random per-install id), `web_push.py` (phone notifications).
+- Alerts: `notify_settings.py` (which alert kinds go to the Mac and the phone, the earnings threshold, quiet hours) and `alerts.py` (detectors for earnings running high, the manager considering a switch and demand spikes; fan-out to phone push and the Mac queue that `NotificationRelay.swift` polls and posts with `UNUserNotificationCenter`).
 - Support and optional sharing: `diagnostics.py` (full report, saved to a file only), `support_reports.py` (problem reports), `usage_reporting.py` and `usage_integration.py` (usage sharing), `user_contact.py`, `pay_sharing.py`.
 - Plumbing: `runtime-entry.py` (entry point in the bundle), `setup.py` (first launch), `bloom_log.py`, `feature_discovery.py`, `release_notes.py`, `community_insights.py` (shows an optional local digest file).
 
@@ -61,7 +62,7 @@ With no `BLOOM_SESSION_TOKEN` (running `collector.py` from source, unit tests), 
 
 ### Phone access
 
-Phone access is off until the user turns it on from the Mac, and it needs Tailscale on the Mac and the phone. `remote.py` points Tailscale Serve (HTTPS port 8443) at `127.0.0.1:8766/<secret>`, so the phone opens `https://<mac>.<tailnet>.ts.net:8443`, reachable only inside the user's tailnet. Bloomkeeper never enables Funnel and won't take port 8443 from another service. Serve adds a `Tailscale-User-Login` header, and the phone listener answers only when it matches the Tailscale account that owns this Mac's node (rechecked every 5 seconds). Because any local program could connect to 8766 and set that header itself, the listener also requires the random path prefix that Serve adds to every request (kept in `remote-access.json`, 0600) and returns 404 without it; Bloomkeeper re-points an older Serve entry to the prefix on its own. The phone gets the same UI, including model and optimizer controls, notifications and problem reports. Setup, phone access, My Macs, and sharing and contact choices are Mac-only; the phone can only turn automatic problem reports off.
+Phone access is off until the user turns it on from the Mac, and it needs Tailscale on the Mac and the phone. `remote.py` points Tailscale Serve (HTTPS port 8443) at `127.0.0.1:8766/<secret>`, so the phone opens `https://<mac>.<tailnet>.ts.net:8443`, reachable only inside the user's tailnet. BloomGauge never enables Funnel and won't take port 8443 from another service. Serve adds a `Tailscale-User-Login` header, and the phone listener answers only when it matches the Tailscale account that owns this Mac's node (rechecked every 5 seconds). Because any local program could connect to 8766 and set that header itself, the listener also requires the random path prefix that Serve adds to every request (kept in `remote-access.json`, 0600) and returns 404 without it; BloomGauge re-points an older Serve entry to the prefix on its own. The phone gets the same UI, including model and optimizer controls, notifications and problem reports. Setup, phone access, My Macs, and sharing and contact choices are Mac-only; the phone can only turn automatic problem reports off.
 
 ## Web UI (repo root)
 
@@ -94,7 +95,7 @@ To build a local app bundle (ad-hoc signed, no updater):
 python3 native/prepare-runtime.py   # pinned, checksummed CPython + packages -> .build/portable-runtime
 python3 native/prepare-sparkle.py   # pinned, checksummed Sparkle -> .build/sparkle
 pnpm run build:local
-./native/build-app.sh               # -> .build/Bloomkeeper.app
+./native/build-app.sh               # -> .build/BloomGauge.app
 ```
 
 `build-app.sh` copies exactly the files listed in `native/bundle-resources.txt` into `Contents/Resources`, so list every new bundled module there; `test_bundle_resources.py` fails if a bundled module imports a local module that isn't listed. `release-manifest.py` sets the version, writes `Info.plist` and a file manifest, and stops the build if the bundle contains private files or personal data.
@@ -103,18 +104,18 @@ Releases are built on the maintainer's Mac, which keeps the signing identity, no
 
 ## Where data lives, and what leaves the Mac
 
-Bloomkeeper's folder is `~/Library/Application Support/Bloom Dashboard/` (`Bloomkeeper Beta/` for beta builds), created private (0700):
+BloomGauge's folder is `~/Library/Application Support/Bloom Dashboard/` (`BloomGauge Beta/` for beta builds), created private (0700):
 
 - `history.sqlite3` (plus `-wal`, `-shm`): history, optimizer evidence, settings and most consent choices.
 - `logs/bloom.log`: rotating backend log, designed to hold fixed messages and error types, not earnings, tokens or account IDs.
 - `remote-access.json` (phone access), `web-push.json` (notification keys, phone subscriptions), and `usage/`, which appears only once usage sharing is turned on.
 
-Bloomkeeper reads Darkbloom's files (`~/.darkbloom/auth_token`, `daemon-state.json`, `local.json`, the provider's LaunchAgent plist, Darkbloom Monitor's activity history) but never writes them; provider changes go through the `darkbloom` CLI. Outside its folder, Bloomkeeper keeps ordinary app preferences (window position, Sparkle settings), the Connect Darkbloom window's WebKit data (the console sign-in), and two optional extras: the sudoers rule above and a Keychain item (`bloom-darkbloom-api-key`) the user adds for the stall test request. The dashboard window uses a non-persistent WebKit store, so its cookie and page storage are gone after Quit.
+BloomGauge reads Darkbloom's files (`~/.darkbloom/auth_token`, `daemon-state.json`, `local.json`, the provider's LaunchAgent plist, Darkbloom Monitor's activity history) but never writes them; provider changes go through the `darkbloom` CLI. Outside its folder, BloomGauge keeps ordinary app preferences (window position, Sparkle settings), the Connect Darkbloom window's WebKit data (the console sign-in), and two optional extras: the sudoers rule above and a Keychain item (`bloom-darkbloom-api-key`) the user adds for the stall test request. The dashboard window uses a non-persistent WebKit store, so its cookie and page storage are gone after Quit.
 
 By default, network traffic goes only to:
 
 - `api.darkbloom.dev`: the account's earnings, using the provider's existing login token, and public network, capacity, pricing, model catalog and provider roster data.
-- `bloomformac.com`, in beta builds only: Sparkle's update check (and any update the user approves), if the user allows automatic checks or chooses Check for Updates. No system profile is sent.
+- `bloomformac.com`, in beta builds only: Sparkle's update check and update download, automatically about every six hours unless the user turned automatic updates off, or when they choose Check for Updates. No system profile is sent.
 
 Everything else starts with a user action. These four go to fixed `bloomformac.com/api/*` endpoints, with no redirects or proxies:
 

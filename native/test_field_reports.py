@@ -90,7 +90,7 @@ class Restart(manager_fixture.Harness):
     """Manager on, home model a serving and ready (test_manager.Harness)."""
 
     def restart(self, saved):
-        """Quit and reopen Bloomkeeper (an app update) with `saved` as the stored settings."""
+        """Quit and reopen BloomGauge (an app update) with `saved` as the stored settings."""
         self.h.cache('optimizer-settings', saved)
         old = self.o
         self.o = Optimizer(self.h, self.net, self.tmp.name, threading.Event(), old.runner)

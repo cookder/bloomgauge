@@ -96,7 +96,7 @@ export function FeatureDiscovery({
       const value: unknown = await response.json();
       if (!response.ok || !valid(value))
         throw Error(
-          'Could not save this choice. Try again before closing Bloomkeeper.',
+          'Could not save this choice. Try again before closing BloomGauge.',
         );
       setData(value);
       if (action === 'open') {

@@ -257,7 +257,7 @@ class ProviderSessions:
                     self.current = json.loads(row[0]) if row else None
                     if self.current:
                         self.current['_readyLast'] = (
-                            None  # Never bridge time while Bloomkeeper was closed or another scope was active.
+                            None  # Never bridge time while BloomGauge was closed or another scope was active.
                         )
                     self.h.cache(account_key, scope)
             current = self.current

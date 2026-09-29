@@ -1240,7 +1240,7 @@ function PredictiveLabPanel({ paused }: { paused: boolean }) {
       </p>
       <h3>One model or a pair?</h3>
       <p className="footnote">
-        Bloomkeeper supports trials of two resident models. Automatic demand
+        BloomGauge supports trials of two resident models. Automatic demand
         selection still ranks solo models. These are measured outcomes for each
         exact serving set; solo rates are never added to predict pair income.
       </p>

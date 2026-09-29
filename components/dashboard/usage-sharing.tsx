@@ -238,7 +238,7 @@ export function UsageInvitation({ active }: { active: boolean }) {
       if (share) window.dispatchEvent(new Event(changedEvent));
     } catch {
       setError(
-        'Could not confirm your choice. Try again, or manage sharing in More → About Bloomkeeper.',
+        'Could not confirm your choice. Try again, or manage sharing in More → About BloomGauge.',
       );
     } finally {
       busy.current = false;
@@ -253,7 +253,7 @@ export function UsageInvitation({ active }: { active: boolean }) {
     >
       <div>
         <p className="eyebrow">Optional · asked once</p>
-        <h2 id="usage-invitation-title">Help shape Bloomkeeper.</h2>
+        <h2 id="usage-invitation-title">Help shape BloomGauge.</h2>
         <p>
           Share basic setup and feature-use reports so we can see what works and
           where to improve. Your choice won’t affect any features.
@@ -270,7 +270,7 @@ export function UsageInvitation({ active }: { active: boolean }) {
           <p>
             No names, email, earnings, account credentials, prompts, raw logs or
             private phone links. Reports are kept for 30 days. Sharing can be
-            turned off and reports deleted in More → About Bloomkeeper.
+            turned off and reports deleted in More → About BloomGauge.
           </p>
           <a
             className="text-link"
@@ -412,7 +412,7 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
       <div className="usage-sharing-heading">
         <ShieldCheck size={21} aria-hidden="true" />
         <h2>
-          Help improve Bloomkeeper <span>Optional</span>
+          Help improve BloomGauge <span>Optional</span>
         </h2>
         {status && (
           <span className="usage-sharing-state">
@@ -425,8 +425,8 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
         )}
       </div>
       <p>
-        Share limited setup and feature-use reports with Bloomkeeper’s developer.
-        Sharing starts off. Every Bloomkeeper feature works the same either way.
+        Share limited setup and feature-use reports with BloomGauge’s developer.
+        Sharing starts off. Every BloomGauge feature works the same either way.
       </p>
       <details className="usage-sharing-details">
         <summary>What is shared</summary>
@@ -434,7 +434,7 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
           App version, macOS major version, chip family, memory range, a coarse
           setup error category, and daily yes/no flags for setup completed,
           dashboard opened, phone used and optimizer used. Older versions may
-          include historical access flags. Background updates show that Bloomkeeper is
+          include historical access flags. Background updates show that BloomGauge is
           running; opening the dashboard is counted separately.
         </p>
         <p>
@@ -444,7 +444,7 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
           URLs.
         </p>
         <p>
-          Reports are kept for 30 days. While sharing is on, Bloomkeeper updates them
+          Reports are kept for 30 days. While sharing is on, BloomGauge updates them
           at most every six hours, with an extra update for consent or relevant
           setup and access changes. Turn sharing off to stop reports and request
           deletion.
@@ -474,7 +474,7 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
       )}
       {status?.localOnly ? (
         <p className="footnote">
-          Change usage sharing and request deletion in Bloomkeeper on your Mac.
+          Change usage sharing and request deletion in BloomGauge on your Mac.
         </p>
       ) : (
         status && (
@@ -482,8 +482,8 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
             {!status.consentSaved ? (
               <div className="usage-sharing-pending" role="alert">
                 <strong>
-                  Sharing is stopped for this session, but Bloomkeeper could not save
-                  that choice. Keep Bloomkeeper open and retry before quitting.
+                  Sharing is stopped for this session, but BloomGauge could not save
+                  that choice. Keep BloomGauge open and retry before quitting.
                 </strong>
                 <p>Retry saves your choice before finishing deletion.</p>
                 <button
@@ -499,9 +499,9 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
               <div className="usage-sharing-pending" role="status">
                 <strong>Sharing is off. Deletion is pending.</strong>
                 <p>
-                  No new reports will be sent. Bloomkeeper keeps only the credentials
+                  No new reports will be sent. BloomGauge keeps only the credentials
                   needed to finish deletion and will retry when this Mac is
-                  online. Keep Bloomkeeper running, or retry below.
+                  online. Keep BloomGauge running, or retry below.
                 </p>
                 <button
                   type="button"
@@ -535,7 +535,7 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
                 {!status.enabled && (
                   <span>
                     {setup
-                      ? 'Continue below to keep sharing off. Change it later in More → About Bloomkeeper.'
+                      ? 'Continue below to keep sharing off. Change it later in More → About BloomGauge.'
                       : 'Sharing stays off unless you choose to turn it on.'}
                   </span>
                 )}
@@ -543,7 +543,7 @@ export function UsageSharing({ setup = false }: { setup?: boolean }) {
             )}
             {status.enabled && status.lastError && (
               <p className="footnote" role="status">
-                The last report could not be confirmed. Bloomkeeper will retry; your
+                The last report could not be confirmed. BloomGauge will retry; your
                 features are unaffected.
               </p>
             )}

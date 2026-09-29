@@ -11,7 +11,7 @@ GEMMA, QWEN, PAIR = 'gemma', 'EigenLabs/Qwen3.8-27B-4bit-mtp', ['Qwen3.5-9B', 'g
 FLEET = {
     '1': {'models': [GEMMA], 'ratePerHour': 0.15},
     '2': {'models': [GEMMA], 'ratePerHour': 0.10, 'chip': 'M2 Max', 'memoryGB': 96},
-    # An older Bloomkeeper: no model count, per-model pace or strategy.
+    # An older BloomGauge: no model count, per-model pace or strategy.
     '3': {'models': [QWEN], 'ratePerHour': 0.30, 'chip': 'M3 Ultra', 'memoryGB': 256, 'old': True},
     # A pair's pace follows the credits each model earned, not an even split.
     '4': {

@@ -1,4 +1,4 @@
-// Shared by the in-app Guide and bloomkeeper.io/guide. Plain data only, so the
+// Shared by the in-app Guide and bloomgauge.io/guide. Plain data only, so the
 // website can copy this file unchanged. Keep labels matching the app's UI text.
 
 export type GuideStep = { title?: string; text: string };
@@ -20,37 +20,37 @@ export const guideSections: GuideSection[] = [
   {
     id: 'start',
     title: 'Get started',
-    summary: 'Install Bloomkeeper and connect it to Darkbloom on this Mac.',
+    summary: 'Install BloomGauge and connect it to Darkbloom on this Mac.',
     steps: [
       {
         title: 'Check requirements',
-        text: 'You need an Apple Silicon Mac on macOS 14 or later, with the Darkbloom provider installed and signed in. Bloomkeeper works alongside Darkbloom; it does not replace it.',
+        text: 'You need an Apple Silicon Mac on macOS 14 or later, with the Darkbloom provider installed and signed in. BloomGauge works alongside Darkbloom; it does not replace it.',
       },
       {
         title: 'Install',
-        text: 'Download Bloomkeeper from bloomkeeper.io, drag it into Applications and open it.',
+        text: 'Download BloomGauge from bloomgauge.io, drag it into Applications and open it.',
       },
       {
         title: 'Finish setup',
-        text: 'Setup has three short steps: Your Mac, Make it yours, Ready to observe. Bloomkeeper starts in observe mode, so it changes nothing until you choose to.',
+        text: 'Setup has three short steps: Your Mac, Make it yours, Ready to observe. BloomGauge starts in observe mode, so it changes nothing until you choose to.',
       },
       {
         title: 'Keep it running',
-        text: 'Closing the window keeps Bloomkeeper collecting. Reopen it from the leaf in the menu bar. Quit Bloomkeeper stops Bloomkeeper only; Darkbloom keeps serving.',
+        text: 'Closing the window keeps BloomGauge collecting. Reopen it from the leaf in the menu bar. Quit BloomGauge stops BloomGauge only; Darkbloom keeps serving.',
       },
     ],
   },
   {
     id: 'manual',
     title: 'Choose models yourself',
-    summary: 'Manual mode: you pick the model, Bloomkeeper handles the switch.',
+    summary: 'Manual mode: you pick the model, BloomGauge handles the switch.',
     steps: [
       {
         text: 'Open Optimizer and choose Off on the card at the top (Manual in the older demand-following mode).',
       },
       { text: 'Pick a model under Model to run, then choose Start or Switch.' },
       {
-        text: 'Bloomkeeper restarts Darkbloom with that model and checks it is warm and serving before calling it ready. With cache cleanup permission (see Troubleshooting), it also clears the macOS file cache first so large models fit.',
+        text: 'BloomGauge restarts Darkbloom with that model and checks it is warm and serving before calling it ready. With cache cleanup permission (see Troubleshooting), it also clears the macOS file cache first so large models fit.',
       },
     ],
     note: 'Off stops automatic switching. Manual (pin) keeps the model you pick running and restores it if it fails.',
@@ -62,11 +62,11 @@ export const guideSections: GuideSection[] = [
     steps: [
       {
         title: 'Holds your best model',
-        text: 'Bloomkeeper keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days. Until this Mac has 3 days of its own, it starts from what pays best on Macs with the same chip and memory; before switching away from the model you serve, it tells you and offers Keep current. It runs no blind trials of other models.',
+        text: 'BloomGauge keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days. Until this Mac has 3 days of its own, it starts from what pays best on Macs with the same chip and memory; before switching away from the model you serve, it tells you and offers Keep current. It runs no blind trials of other models.',
       },
       {
         title: 'Recovers by itself',
-        text: 'If a switch fails or no model is ready for about ten minutes, Bloomkeeper restores the home model instead of turning itself off. A model that fails to load as an automatic move is skipped for 24 hours, then 48 and 96 hours if it fails again. If two restores fail, it tells you and keeps retrying, at least every two hours.',
+        text: 'If a switch fails or no model is ready for about ten minutes, BloomGauge restores the home model instead of turning itself off. A model that fails to load as an automatic move is skipped for 24 hours, then 48 and 96 hours if it fails again. If two restores fail, it tells you and keeps retrying, at least every two hours.',
       },
       {
         title: 'Moves only on strong evidence',
@@ -77,32 +77,32 @@ export const guideSections: GuideSection[] = [
         text: 'Macs set to the older mode follow demand instead: they spend Learning time measuring other models, can switch for demand spikes, fall back to a model with steady demand such as gpt-oss, and pause automation after a failed load.',
       },
     ],
-    note: 'The first time you choose Manager on, Bloomkeeper shows this summary. Open it again any time with What it does on the optimizer card.',
+    note: 'The first time you choose Manager on, BloomGauge shows this summary. Open it again any time with What it does on the optimizer card.',
   },
   {
     id: 'optimizer',
-    title: 'Let Bloomkeeper choose',
-    summary: 'Manager on: Bloomkeeper holds the best model for this Mac and recovers by itself.',
+    title: 'Let BloomGauge choose',
+    summary: 'Manager on: BloomGauge holds the best model for this Mac and recovers by itself.',
     steps: [
       {
         title: 'Pick the models',
-        text: 'Under Models Bloomkeeper can use, tap models to include or leave out. Dimmed models are not available on this Mac; hover one to see why. Keep at least one (two for the older demand-following mode).',
+        text: 'Under Models BloomGauge can use, tap models to include or leave out. Dimmed models are not available on this Mac; hover one to see why. Keep at least one (two for the older demand-following mode).',
       },
       {
         title: 'Protect good earnings',
-        text: 'Older demand-following mode only. Protect earnings above is the pace Bloomkeeper guards (default $0.20/hour). While the current model pays at least that, Bloomkeeper won’t interrupt it to learn. A clearly better model can still take over.',
+        text: 'Older demand-following mode only. Protect earnings above is the pace BloomGauge guards (default $0.20/hour). While the current model pays at least that, BloomGauge won’t interrupt it to learn. A clearly better model can still take over.',
       },
       {
         title: 'Three numbers, three jobs',
-        text: 'Older demand-following mode only. Protect earnings above (default $0.20/hour) is the only one that holds a model in place: above it, Bloomkeeper won’t interrupt to learn. The earnings goal (default $0.12/hour) is for the Target report only and never changes what runs. The switch gain under Fine-tune (Balanced: 20% better and at least $0.02 more over the next hour, after a confirmation wait) is how much better another model must look before Bloomkeeper moves to it.',
+        text: 'Older demand-following mode only. Protect earnings above (default $0.20/hour) is the only one that holds a model in place: above it, BloomGauge won’t interrupt to learn. The earnings goal (default $0.12/hour) is for the Target report only and never changes what runs. The switch gain under Fine-tune (Balanced: 20% better and at least $0.02 more over the next hour, after a confirmation wait) is how much better another model must look before BloomGauge moves to it.',
       },
       {
         title: 'Give it time to learn',
-        text: 'Older demand-following mode only. Learning time is how long a day Bloomkeeper may spend measuring other models while pace is below your protect level (default 1 hour), so it knows where to go when the current model fades. It only measures models with real demand.',
+        text: 'Older demand-following mode only. Learning time is how long a day BloomGauge may spend measuring other models while pace is below your protect level (default 1 hour), so it knows where to go when the current model fades. It only measures models with real demand.',
       },
       {
         title: 'Pick a style',
-        text: 'Older demand-following mode only. How actively Bloomkeeper switches runs from Very passive to Very aggressive and sets trial length, waits and daily limits together.',
+        text: 'Older demand-following mode only. How actively BloomGauge switches runs from Very passive to Very aggressive and sets trial length, waits and daily limits together.',
       },
       {
         title: 'Save',
@@ -110,10 +110,10 @@ export const guideSections: GuideSection[] = [
       },
       {
         title: 'Turn it on',
-        text: 'Choose Manager on. The first time, Bloomkeeper shows what the manager does; choose Turn the manager on. It first confirms this Mac appears in Darkbloom’s provider list, which can take a few minutes. In the older demand-following mode the button is Optimizer on, with an optional 3-day Learning boost.',
+        text: 'Choose Manager on. The first time, BloomGauge shows what the manager does; choose Turn the manager on. It first confirms this Mac appears in Darkbloom’s provider list, which can take a few minutes. In the older demand-following mode the button is Optimizer on, with an optional 3-day Learning boost.',
       },
     ],
-    note: 'Every switch still has to pass memory, temperature, power and daily-limit checks. Fine-tune limits holds each value if you want to type your own, plus the earnings target used by Earnings → Target. What Bloomkeeper knows about each model shows what it has measured so far.',
+    note: 'Every switch still has to pass memory, temperature, power and daily-limit checks. Fine-tune limits holds each value if you want to type your own, plus the earnings target used by Earnings → Target. What BloomGauge knows about each model shows what it has measured so far.',
   },
   {
     id: 'gathering',
@@ -124,13 +124,13 @@ export const guideSections: GuideSection[] = [
         text: 'With the optimizer on, choose 24 hours, 3 days or 7 days under Learning boost.',
       },
       {
-        text: 'Bloomkeeper learns for at least 3 hours a day and doesn’t wait for low earnings to start a learning run.',
+        text: 'BloomGauge learns for at least 3 hours a day and doesn’t wait for low earnings to start a learning run.',
       },
       {
         text: 'It ends by itself. Choose Stop to end it early. Your saved limits are unchanged afterwards.',
       },
     ],
-    note: 'Use it when a Mac is new to Bloomkeeper. With Darkbloom 0.9.9 or later, a switch lets accepted requests finish first; older versions can interrupt them. A model earning above your protect level is never pulled away to learn.',
+    note: 'Use it when a Mac is new to BloomGauge. With Darkbloom 0.9.9 or later, a switch lets accepted requests finish first; older versions can interrupt them. A model earning above your protect level is never pulled away to learn.',
   },
   {
     id: 'earnings',
@@ -188,10 +188,10 @@ export const guideProblems: GuideProblem[] = [
     id: 'login',
     symptom: 'No Darkbloom login found, or Login expired',
     cause:
-      'Bloomkeeper reads earnings with the login Darkbloom saves on this Mac, and it is missing or expired.',
+      'BloomGauge reads earnings with the login Darkbloom saves on this Mac, and it is missing or expired.',
     fixes: [
       'Sign in to Darkbloom on this Mac (the Darkbloom app, or darkbloom login in Terminal).',
-      'Wait about a minute; Bloomkeeper retries on its own.',
+      'Wait about a minute; BloomGauge retries on its own.',
     ],
   },
   {
@@ -199,7 +199,7 @@ export const guideProblems: GuideProblem[] = [
     symptom:
       'Getting ready: waiting for a fresh match between this Mac and the provider roster',
     cause:
-      'Before switching models, Bloomkeeper confirms this Mac appears in Darkbloom’s public provider list. Right after a restart, or while Darkbloom reconnects, the Mac can be missing for a few minutes.',
+      'Before switching models, BloomGauge confirms this Mac appears in Darkbloom’s public provider list. Right after a restart, or while Darkbloom reconnects, the Mac can be missing for a few minutes.',
     fixes: [
       'Make sure Darkbloom is running and online: run darkbloom status in Terminal.',
       'Wait a few minutes, then choose Try turning on again.',
@@ -210,7 +210,7 @@ export const guideProblems: GuideProblem[] = [
     id: 'battery',
     symptom: 'Model switching waits while the Mac is on battery power',
     cause:
-      'On battery, Bloomkeeper holds off optional moves (excursions and automatic tests), because loading a model is heavy work. Returning to the home model, restores and switching a running model still happen.',
+      'On battery, BloomGauge holds off optional moves (excursions and automatic tests), because loading a model is heavy work. Returning to the home model, restores and switching a running model still happen.',
     fixes: ['Plug in the Mac. Waiting moves continue on their own.'],
   },
   {
@@ -219,8 +219,8 @@ export const guideProblems: GuideProblem[] = [
     cause:
       'macOS keeps the last model’s files in its file cache, and Darkbloom counts that memory as in use.',
     fixes: [
-      'Give Bloomkeeper permission to clear the file cache: in Manual, pick the large model; when Cache cleanup before loading appears, choose Enable cache cleanup and approve with your Mac password. It allows only the purge command, with no options.',
-      'With permission, Bloomkeeper clears the cache before every switch, and the optimizer counts that memory when it checks whether a larger model fits.',
+      'Give BloomGauge permission to clear the file cache: in Manual, pick the large model; when Cache cleanup before loading appears, choose Enable cache cleanup and approve with your Mac password. It allows only the purge command, with no options.',
+      'With permission, BloomGauge clears the cache before every switch, and the optimizer counts that memory when it checks whether a larger model fits.',
       'Close memory-heavy apps if it still says more memory is needed.',
     ],
   },
@@ -228,7 +228,7 @@ export const guideProblems: GuideProblem[] = [
     id: 'hot',
     symptom: 'Switching waits because the Mac is hot',
     cause:
-      'Bloomkeeper pauses switches while temperatures are high to avoid throttling.',
+      'BloomGauge pauses switches while temperatures are high to avoid throttling.',
     fixes: [
       'Leave it be; it resumes when the Mac cools. Make sure vents are not blocked.',
     ],
@@ -237,7 +237,7 @@ export const guideProblems: GuideProblem[] = [
     id: 'stale',
     symptom: 'Numbers say stale or reconnecting after sleep',
     cause:
-      'Nothing is collected while the Mac sleeps. Bloomkeeper labels older readings instead of showing them as new.',
+      'Nothing is collected while the Mac sleeps. BloomGauge labels older readings instead of showing them as new.',
     fixes: [
       'Wait a minute after waking for fresh readings.',
       'To avoid gaps, keep the Mac awake while it serves.',
@@ -259,7 +259,7 @@ export const guideProblems: GuideProblem[] = [
     symptom: 'Something else',
     cause: 'Anything not listed here.',
     fixes: [
-      'Send a report from More → Help & feedback, or email support@bloomkeeper.io.',
+      'Send a report from More → Help & feedback, or email support@bloomgauge.io.',
     ],
   },
 ];

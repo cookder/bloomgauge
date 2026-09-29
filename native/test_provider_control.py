@@ -194,7 +194,7 @@ class ProviderTests(unittest.TestCase):
     def test_configuration_review_is_specific_and_never_rewrites_the_file(self):
         p = self.o.home / '.config/darkbloom/provider.toml'
         p.parent.mkdir(parents=True, exist_ok=True)
-        # memory_reserve_gb is read into Bloomkeeper's load budgets; an unknown memory
+        # memory_reserve_gb is read into BloomGauge's load budgets; an unknown memory
         # setting only stops automatic moves, and the card says so.
         for text, blocked in (
             ('[provider]\nmemory_reserve_gb = 4', False),

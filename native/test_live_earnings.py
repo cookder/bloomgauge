@@ -350,7 +350,7 @@ class LiveCollectorTests(unittest.TestCase):
         self.assertEqual(len(self.c.snapshot['monitor']['hours']), 1)
         self.assertAlmostEqual(self.c.snapshot['monitor']['hours'][0]['usd'], 0.0001)
         self.assertEqual(self.c.snapshot['monitor']['hours'][0]['jobs'], 1)
-        self.assertEqual(self.c.snapshot['monitor']['source'], 'Bloomkeeper confirmed API ledger')
+        self.assertEqual(self.c.snapshot['monitor']['source'], 'BloomGauge confirmed API ledger')
         self.assertNotIn('_account', self.c.snapshot['monitor'])
 
     def test_without_monitor_uses_exact_account_ledger_and_preserves_signed_credits(self):
@@ -361,7 +361,7 @@ class LiveCollectorTests(unittest.TestCase):
         m = self.c.snapshot['monitor']
         self.assertAlmostEqual(sum(h['usd'] for h in m['hours']), 0.00015)
         self.assertEqual(sum(h['jobs'] for h in m['hours']), 2)
-        self.assertEqual(m['source'], 'Bloomkeeper confirmed API ledger')
+        self.assertEqual(m['source'], 'BloomGauge confirmed API ledger')
         self.assertEqual(m['liveCredits']['added'], 0)
         self.c.collect(T + 141)
         self.assertAlmostEqual(sum(h['usd'] for h in self.c.snapshot['monitor']['hours']), 0.00015)

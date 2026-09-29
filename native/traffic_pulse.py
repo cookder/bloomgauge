@@ -1,7 +1,7 @@
 """Observed local traffic, scoped to one account, provider and warm model session.
 
 The daemon's cumulative counters are not past traffic observations. Only deltas
-between fresh, matching warm endpoints are recorded. Reopening Bloomkeeper establishes
+between fresh, matching warm endpoints are recorded. Reopening BloomGauge establishes
 a new baseline and leaves the closed period as a gap.
 """
 

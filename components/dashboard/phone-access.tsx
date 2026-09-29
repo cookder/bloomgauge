@@ -93,7 +93,7 @@ export function PhoneAccess({ alwaysOpen = false }: { alwaysOpen?: boolean }) {
         });
         if (!response.ok)
           throw Error(
-            'Connection settings are unavailable. Check that Bloomkeeper is open on your Mac.',
+            'Connection settings are unavailable. Check that BloomGauge is open on your Mac.',
           );
         const value: unknown = await response.json();
         if (!validAccess(value))
@@ -389,12 +389,12 @@ export function PhoneAccess({ alwaysOpen = false }: { alwaysOpen?: boolean }) {
             </>
           ) : (
             <p className="panel-note">
-              Connection settings are managed in Bloomkeeper on your Mac.
+              Connection settings are managed in BloomGauge on your Mac.
             </p>
           )}
           <p className="panel-note">
-            Keep this Mac awake, connected to the internet, and running Bloomkeeper
-            Dashboard. Its window can be closed; Bloomkeeper stays in the menu bar.
+            Keep this Mac awake, connected to the internet, and running BloomGauge
+            Dashboard. Its window can be closed; BloomGauge stays in the menu bar.
             Your readings and saved history stay on this Mac.
           </p>
           <p className="panel-note">

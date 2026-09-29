@@ -2,7 +2,7 @@
 
 shared-priors.json ships with the app. It is built by native/build_priors.py
 (development tool) from Andrew's own history and, later, from pay summaries
-that other Bloomkeeper users chose to share. Each model's curve is
+that other BloomGauge users chose to share. Each model's curve is
 level * (pressure + 0.01) ** exponent in $/warm-hour, like demand_curves.
 Anything malformed is ignored, so a bad file only means no starting curves.
 

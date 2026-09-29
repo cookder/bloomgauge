@@ -59,7 +59,7 @@ test('legacy switch rules are shown only for the legacy strategy', () => {
     panel,
     /managed\s+\? 'A failed switch never turns automation off[^']*'\s+: 'A failed load pauses automation;/,
   );
-  assert.match(panel, /\{managed \? \(\s+<p>\s+<strong>Bloomkeeper retry waits:<\/strong> a model that fails/);
+  assert.match(panel, /\{managed \? \(\s+<p>\s+<strong>BloomGauge retry waits:<\/strong> a model that fails/);
   const live = read('../components/dashboard/optimizer-live.tsx');
   assert.match(live, /managed \? 'Model comparisons' : 'Next candidates'/);
   const tab = read('../components/dashboard/optimizer-tab.tsx');

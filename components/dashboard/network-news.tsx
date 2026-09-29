@@ -31,7 +31,7 @@ async function load(signal: AbortSignal): Promise<News> {
   if (!response.ok) throw new Error('Waiting for the dashboard connection.');
   const value: unknown = await response.json();
   if (!validNetworkNews(value))
-    throw new Error('Network news could not be read. Update Bloomkeeper.');
+    throw new Error('Network news could not be read. Update BloomGauge.');
   return value;
 }
 
@@ -145,7 +145,7 @@ export function NetworkNews({
         )
       )}
       <p className="footnote">
-        From the public network data Bloomkeeper already reads. A new model
+        From the public network data BloomGauge already reads. A new model
         counts once 3 or more Macs serve it for 10 minutes; a model leaves after
         10 minutes off Darkbloom’s list; a swing is warm Macs halving or
         doubling for 15 minutes against the 3 hours before. $/h is an estimate
@@ -157,7 +157,7 @@ export function NetworkNews({
             <strong>Phone notice for new models · </strong>
             {pushText(push, now)}
             {push.enabled &&
-              ' Uses the phone notifications set up under Switch notifications.'}
+              ' Uses the phone notifications set up under Notifications.'}
           </p>
           <div className="optimizer-quick-actions">
             <Button

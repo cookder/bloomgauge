@@ -147,16 +147,13 @@ def updater_bundle(app):
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     config = json.loads((NATIVE / 'update-public.json').read_text())
     assert info['SUFeedURL'] == config['feedURL'] and info['SUPublicEDKey'] == config['publicEDKey']
-    assert 'SUEnableAutomaticChecks' not in info, 'Standard permission prompt must remain enabled'
-    for key in (
-        'SUAllowsAutomaticUpdates',
-        'SUAutomaticallyUpdate',
-        'SUEnableSystemProfiling',
-        'SUEnableJavaScript',
-    ):
+    # Automatic by default; a user's saved off switch lives in user defaults.
+    for key in ('SUEnableAutomaticChecks', 'SUAllowsAutomaticUpdates', 'SUAutomaticallyUpdate'):
+        assert info[key] is True, key + ' must be enabled (automatic updates by default)'
+    for key in ('SUEnableSystemProfiling', 'SUEnableJavaScript'):
         assert info[key] is False, key + ' must be disabled'
     assert info['SUVerifyUpdateBeforeExtraction'] is True
-    assert info['SUScheduledCheckInterval'] == 21600, 'Opt-in beta update checks must use six hours'
+    assert info['SUScheduledCheckInterval'] == 21600, 'Beta update checks must use six hours'
     framework = app / 'Contents/Frameworks/Sparkle.framework'
     assert not (framework / 'XPCServices').exists(), 'Unused sandbox services must not be shipped'
     provenance = json.loads((app / 'Contents/Resources/sparkle-provenance.json').read_text())
@@ -722,7 +719,7 @@ def finish(checks, app, dmg):
 def release_image():
     """The current beta's disk image name, from release-notes.json (as package-beta.sh)."""
     notes = json.loads((NATIVE / 'release-notes.json').read_text())
-    return f"Bloomkeeper-{notes['version']}-{notes['id'].rsplit('-', 1)[1]}-Apple-Silicon.dmg"
+    return f"BloomGauge-{notes['version']}-{notes['id'].rsplit('-', 1)[1]}-Apple-Silicon.dmg"
 
 
 if __name__ == '__main__':
@@ -738,7 +735,7 @@ if __name__ == '__main__':
         '--playwright', required=True, help='Path to installed Playwright index.mjs'
     )
     parser.add_argument('--chromium', help='Optional installed Chromium/Chrome executable')
-    parser.add_argument('--app', type=Path, default=SOURCE / '.build/beta/Bloomkeeper Beta.app')
+    parser.add_argument('--app', type=Path, default=SOURCE / '.build/beta/BloomGauge Beta.app')
     parser.add_argument(
         '--dmg',
         type=Path,

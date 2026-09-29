@@ -299,7 +299,7 @@ class MultiModelCollectorTests(unittest.TestCase):
     def test_three_model_pulse_without_monitor_aggregates_only_this_macs_selected_inference(self):
         result = self.run_ready()
         self.assertFalse((self.root / 'Library/Application Support/Darkbloom Monitor').exists())
-        self.assertEqual(result['monitor']['source'], 'Bloomkeeper confirmed API ledger')
+        self.assertEqual(result['monitor']['source'], 'BloomGauge confirmed API ledger')
         self.assertEqual(result['pulse']['status'], 'live')
         self.assertEqual(result['pulse']['sessionMicroUsd'], 600)
         # The API ledger starts at its earliest returned credit (T+10).

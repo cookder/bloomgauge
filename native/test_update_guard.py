@@ -114,6 +114,92 @@ class GuardTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 self.guard.action(data)
 
+    def automatic(self):
+        return self.guard.action(
+            {'action': 'prepare', 'requestId': self.request_id, 'automatic': True}
+        )
+
+    SOFT_HOLDS = (
+        ('excursion', lambda o: o.state.update(manager={'excursion': {'target': 'big'}})),
+        ('recovery', lambda o: o.state.update(manager={'recovery': {'attempts': 0}})),
+        ('resume', lambda o: o.state.update(manager={'resume': {'id': 'r'}})),
+        (
+            'trial',
+            lambda o: setattr(
+                o, 'last_demand_decision', {'trial': {'current': True, 'status': 'running'}}
+            ),
+        ),
+        (
+            'settling-trial',
+            lambda o: setattr(
+                o, 'last_demand_decision', {'trial': {'current': True, 'status': 'settling'}}
+            ),
+        ),
+    )
+
+    def test_automatic_install_waits_for_trials_and_recovery_a_person_does_not(self):
+        for name, apply in self.SOFT_HOLDS:
+            with self.subTest(hold=name):
+                self.setUp()
+                apply(self.o)
+                before = copy.deepcopy(self.o.state)
+                with self.assertRaises(UpdateBlocked) as blocked:
+                    self.automatic()
+                self.assertFalse(self.guard.active())
+                self.assertEqual(self.o.state, before)
+                self.assertIn(blocked.exception.reason, ('excursion', 'manager-recovery', 'trial'))
+                # Install and Relaunch chosen by a person is not held by these.
+                self.assertTrue(self.prepare()['ready'])
+
+    def test_automatic_install_ignores_finished_trials_and_idle_manager(self):
+        self.o.state['manager'] = {'home': {'model': 'gemma'}, 'excursion': {'target': None}}
+        self.o.last_demand_decision = {'trial': {'current': False, 'status': 'settling'}}
+        # A finished run (not current) and an interrupted one hold nothing.
+        lease = self.automatic()['lease']
+        self.assertTrue(self.guard.action({'action': 'commit', 'lease': lease})['ready'])
+
+    def test_automatic_commit_rechecks_soft_holds(self):
+        lease = self.automatic()['lease']
+        self.o.state['manager'] = {'excursion': {'target': 'big'}}
+        with self.assertRaises(UpdateBlocked):
+            self.guard.action({'action': 'commit', 'lease': lease})
+        # A person's lease is not held back by an excursion.
+        self.guard.action({'action': 'release', 'lease': lease})
+        self.request_id = str(uuid.uuid4())
+        lease = self.prepare()['lease']
+        self.assertTrue(self.guard.action({'action': 'commit', 'lease': lease})['ready'])
+
+    def test_quiet_probe_reservation_carries_through_to_termination(self):
+        # Updates.swift keeps the probe's lease and reuses its requestId for the
+        # termination admission: prepare is idempotent, so the same lease comes back
+        # and no model work can start in between.
+        probe = self.automatic()
+        self.now += 1
+        with self.assertRaises(ValueError):
+            self.guard.require_available()
+        again = self.automatic()
+        self.assertEqual(again['lease'], probe['lease'])
+        self.assertTrue(self.guard.action({'action': 'commit', 'lease': probe['lease']})['ready'])
+
+    def test_automatic_flag_is_strict(self):
+        lease = None
+        for data in (
+            {'action': 'prepare', 'requestId': self.request_id, 'automatic': False},
+            {'action': 'prepare', 'requestId': self.request_id, 'automatic': 1},
+            {'action': 'prepare', 'requestId': self.request_id, 'automatic': 'true'},
+            {'action': 'commit', 'lease': str(uuid.uuid4()), 'automatic': True},
+            {'action': 'release', 'lease': str(uuid.uuid4()), 'automatic': True},
+        ):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                self.guard.action(data)
+        self.assertFalse(self.guard.active())
+        # A retried prepare cannot switch between automatic and manual.
+        lease = self.automatic()['lease']
+        with self.assertRaises(ValueError):
+            self.prepare()
+        self.guard.action({'action': 'release', 'lease': lease})
+        self.assertFalse(self.guard.automatic)
+
     def test_reservation_and_worker_admission_share_one_lock(self):
         entered, finished = threading.Event(), threading.Event()
         outcome = []

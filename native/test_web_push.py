@@ -86,7 +86,7 @@ class PushTests(unittest.TestCase):
         )
         self.flush()
         payload = self.sent[0][1]
-        self.assertEqual(payload['title'], 'Bloomkeeper · model switched')
+        self.assertEqual(payload['title'], 'BloomGauge · model switched')
         self.assertIn('Gemma → Qwen', payload['body'])
         self.assertIn('not yet proven', payload['body'])
         self.assertEqual(keys, (self.push.state['privateKey'], self.push.state['publicKey']))
@@ -222,7 +222,7 @@ class PushTests(unittest.TestCase):
         self.flush()
         self.assertEqual(len(self.sent), 1)
         self.assertEqual(self.sent[0][0], self.subscription)
-        self.assertEqual(self.sent[0][1]['title'], 'Bloomkeeper · notification test')
+        self.assertEqual(self.sent[0][1]['title'], 'BloomGauge · notification test')
         self.assertNotIn(CONTACT, json.dumps(self.sent[0][1]))
         record = next(s for s in self.push.status('account')['subscriptions'] if s['id'] == key)
         self.assertEqual(record['lastTestResultAt'], self.time)
@@ -439,7 +439,7 @@ class PushTests(unittest.TestCase):
             captured.update(kwargs)
             return PushResponse(201, {})
 
-        payload = {'title': 'Bloomkeeper', 'body': 'Gemma demand increased'}
+        payload = {'title': 'BloomGauge', 'body': 'Gemma demand increased'}
         with patch.object(PushTransport, 'post', transport):
             result = send_webpush(
                 self.subscription, payload, self.push.state['privateKey'], CONTACT
@@ -484,7 +484,7 @@ class PushTests(unittest.TestCase):
             self.assertEqual(
                 bounded_sender(
                     self.subscription,
-                    {'title': 'Bloomkeeper'},
+                    {'title': 'BloomGauge'},
                     self.push.state['privateKey'],
                     CONTACT,
                 ).status_code,
@@ -500,7 +500,7 @@ class PushTests(unittest.TestCase):
             with self.assertRaises(DeliveryError):
                 bounded_sender(
                     self.subscription,
-                    {'title': 'Bloomkeeper'},
+                    {'title': 'BloomGauge'},
                     self.push.state['privateKey'],
                     CONTACT,
                 )
@@ -536,7 +536,7 @@ class PushTests(unittest.TestCase):
             ):
                 with self.assertRaises(DeliveryError) as failure:
                     bounded_sender(
-                        self.subscription, {'title': 'Bloomkeeper'}, 'private-fixture', CONTACT
+                        self.subscription, {'title': 'BloomGauge'}, 'private-fixture', CONTACT
                     )
                     self.assertEqual(failure.exception.response.service_reason, expected)
 

@@ -125,6 +125,7 @@ class SupportTests(unittest.TestCase):
                 'providerOnline',
                 'providerVersion',
                 'optimizerMode',
+                'optimizerStrategy',
                 'optimizerStatus',
                 'failureCode',
                 'recoveryCode',
@@ -247,6 +248,49 @@ class SupportTests(unittest.TestCase):
         self.assertEqual(timeout, 15)
         self.assertNotEqual(headers['Authorization'], 'Bearer ' + preview['reviewToken'])
         self.assertEqual(self.capture.call_count, 1)
+
+    def test_strategy_is_reported_and_an_older_site_gets_the_report_without_it(self):
+        self.source['optimizer']['strategy'] = 'manager'
+        preview = self.preview()
+        self.assertEqual(preview['report']['diagnostics']['optimizerStrategy'], 'manager')
+        replies = [(400, None), (200, None)]
+
+        def older_site(url, body, headers, timeout):
+            self.calls.append((url, body, headers, timeout))
+            status, _ = replies.pop(0)
+            report = json.loads(body)
+            return status, ({'status': 'sent', 'reportId': report['id']} if status == 200 else None)
+
+        self.reporter.transport = older_site
+        self.assertEqual(self.reporter.send(self.consent(preview))['status'], 'sent')
+        full, legacy = (json.loads(call[1]) for call in self.calls)
+        self.assertEqual(full, preview['report'])
+        self.assertNotIn('optimizerStrategy', legacy['diagnostics'])
+        full['diagnostics'].pop('optimizerStrategy')
+        self.assertEqual(legacy, full)
+        self.assertEqual(self.calls[0][2], self.calls[1][2])
+        # A retry would resend what the site may have stored, not the refused body.
+        entry = self.reporter.previews[preview['report']['id']]
+        self.assertEqual(json.loads(entry['body']), legacy)
+        self.assertIsNone(entry['legacyBody'])
+
+    def test_other_refusals_are_not_resent(self):
+        preview = self.preview()
+
+        def limited(url, body, headers, timeout):
+            self.calls.append((url, body, headers, timeout))
+            return 429, None
+
+        self.reporter.transport = limited
+        with self.assertRaises(reports.SupportError):
+            self.reporter.send(self.consent(preview))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_unknown_strategy_is_reported_as_unknown(self):
+        for value in (None, 'clever', 3):
+            with self.subTest(value=value):
+                self.source['optimizer']['strategy'] = value
+                self.assertEqual(self.preview()['report']['diagnostics']['optimizerStrategy'], 'unknown')
 
     def test_each_new_report_has_independent_identifier_and_secrets(self):
         first, second = self.preview(), self.preview()

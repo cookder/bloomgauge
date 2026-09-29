@@ -317,9 +317,11 @@ export const ReputationPanel = memo(function ReputationPanel({
               · {age(r.updatedAt, now)}
             </span>
             <small>
-              {r.trustLevel
-                ? `${r.trustLevel.charAt(0).toUpperCase() + r.trustLevel.slice(1)} trust`
-                : 'Trust tier unavailable'}
+              {r.trustLevel === 'self_signed'
+                ? 'Self-signed trust'
+                : r.trustLevel
+                  ? `${r.trustLevel.charAt(0).toUpperCase() + r.trustLevel.slice(1)} trust`
+                  : 'Trust tier unavailable'}
               {r.providerStatus
                 ? ` · ${r.providerStatus.replaceAll('_', ' ')}`
                 : ''}
@@ -476,8 +478,8 @@ export const ReputationPanel = memo(function ReputationPanel({
           </>
         ) : (
           <span className="small muted">
-            Manage the connection in Bloomkeeper on your Mac. Connected
-            readings also appear here on your phone.
+            Manage the connection in BloomGauge on your Mac. Connected readings
+            also appear here on your phone.
           </span>
         )}
         <a

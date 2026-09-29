@@ -82,8 +82,8 @@ export function PaySharing() {
       setMessage(
         enabled
           ? next.models
-            ? `On. Shared curves for ${next.models} model${next.models === 1 ? '' : 's'}; Bloomkeeper refreshes them once a week.`
-            : 'On. This Mac doesn’t have enough steady pay to summarize yet; Bloomkeeper will share once it does, at most weekly.'
+            ? `On. Shared curves for ${next.models} model${next.models === 1 ? '' : 's'}; BloomGauge refreshes them once a week.`
+            : 'On. This Mac doesn’t have enough steady pay to summarize yet; BloomGauge will share once it does, at most weekly.'
           : 'Off. Your summaries were deleted from bloomformac.com.',
       );
     } catch (e) {
@@ -113,7 +113,7 @@ export function PaySharing() {
         )}
       </div>
       <p>
-        Bloomkeeper starts every Mac with estimates of what each model pays, so the
+        BloomGauge starts every Mac with estimates of what each model pays, so the
         optimizer can make good choices before it has measured them itself.
         Share a weekly summary from this Mac to make those estimates better for
         everyone. Off unless you turn it on.
@@ -124,13 +124,13 @@ export function PaySharing() {
           For each model with at least 2 hours of steady paid work in the last
           30 days: how its pay rose with network demand (two curve numbers), the
           typical spread, and the hours and half-hours measured. Plus chip
-          family, memory range and Bloomkeeper version, and a random ID used only to
+          family, memory range and BloomGauge version, and a random ID used only to
           replace or delete this summary.
         </p>
         <p>
           No Darkbloom account or device IDs, balances, individual payments,
           times or anything that names you. Summaries are combined into the
-          starting estimates shipped with future Bloomkeeper versions. Turning this
+          starting estimates shipped with future BloomGauge versions. Turning this
           off deletes this Mac’s summary from bloomformac.com.
         </p>
       </details>
@@ -144,7 +144,7 @@ export function PaySharing() {
       </a>
       {!status && !error && <p role="status">Checking…</p>}
       {status && !status.canChange && (
-        <p className="footnote">Change this in Bloomkeeper on your Mac.</p>
+        <p className="footnote">Change this in BloomGauge on your Mac.</p>
       )}
       {status?.canChange && (
         <div className="usage-sharing-actions">

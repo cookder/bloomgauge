@@ -106,15 +106,15 @@ export function ContactOptIn() {
         )}
       </div>
       <p>
-        Leave an email or Slack handle if you’d like Andrew, Bloomkeeper’s developer,
-        to reach you about updates, fixes or the beta. Bloomkeeper works the same
+        Leave an email or Slack handle if you’d like Andrew, BloomGauge’s developer,
+        to reach you about updates, fixes or the beta. BloomGauge works the same
         either way.
       </p>
       <details className="usage-sharing-details">
         <summary>What is shared</summary>
         <p>
           Only what you type here, whether it looks like an email or a Slack
-          handle, your Bloomkeeper version and a random ID so this Mac can change or
+          handle, your BloomGauge version and a random ID so this Mac can change or
           delete it later. It is not linked to usage sharing, problem reports,
           earnings or your Darkbloom account.
         </p>
@@ -131,7 +131,7 @@ export function ContactOptIn() {
           target="_blank"
           rel="noopener noreferrer"
         >
-          Bloomkeeper channel on the Darkbloom Slack ↗
+          BloomGauge channel on the Darkbloom Slack ↗
         </a>{' '}
         for updates and questions.
       </p>
@@ -147,7 +147,7 @@ export function ContactOptIn() {
       {status && !status.canChange && (
         <p className="footnote">
           {status.contact ? `Shared: ${status.contact}. ` : ''}Change this in
-          Bloomkeeper on your Mac.
+          BloomGauge on your Mac.
         </p>
       )}
       {status?.canChange && status.contact && !editing && (
@@ -225,7 +225,7 @@ export function ContactOptIn() {
               onChange={(event) => setConsent(event.target.checked)}
             />
             <span>
-              Send this to Bloomkeeper’s developer so he can contact me. I can remove
+              Send this to BloomGauge’s developer so he can contact me. I can remove
               it at any time.
             </span>
           </label>

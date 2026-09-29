@@ -739,7 +739,7 @@ class ControllerTests(unittest.TestCase):
         self.o.command.assert_not_called()
 
     def test_observation_breaks_on_reset_gap_and_multiple_models(self):
-        self.raw.update(warm_models=['a'], trust={'status': 'online'})
+        self.raw.update(warm_models=['a'], trust={'status': 'online', 'trust_level': 'hardware'})
         self.o.warmup = {
             'session': session_key(self.raw),
             'model': 'a',

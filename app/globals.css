@@ -2181,11 +2181,6 @@ button.pulse-rate:focus-visible {
 :is(.pulse-instrument, .pulse-instrument-details) > .small {
   margin: 0;
 }
-.pulse-credits {
-  border-left: 1px solid var(--c-293646);
-  padding-left: 32px;
-  min-width: 0;
-}
 .pulse-session-total {
   position: relative;
   display: flex;
@@ -2405,11 +2400,6 @@ button.pulse-rate:focus-visible {
   .pulse-layout {
     grid-template-columns: 1fr;
     gap: 24px;
-  }
-  .pulse-credits {
-    border-left: 0;
-    border-top: 1px solid var(--c-293646);
-    padding: 22px 0 0;
   }
   .pulse-session-total {
     padding-bottom: 18px;
@@ -3868,11 +3858,6 @@ button.pulse-rate:focus-visible {
   .pulse-comparison {
     font-size: 14px;
     margin: 2px 0;
-  }
-  .pulse-credits {
-    padding: 8px 0 8px 12px;
-    border-top: 0;
-    border-left: 1px solid var(--c-293d35);
   }
   .pulse-trend {
     margin-bottom: 8px;
@@ -5373,9 +5358,6 @@ button.pulse-rate:focus-visible {
   .desktop-earnings-workspace .pulse-session-total > .small {
     font-size: 10px;
     line-height: 1.4;
-  }
-  .desktop-earnings-workspace .pulse-credits {
-    padding-left: 14px;
   }
   .desktop-earnings-workspace .pulse-trend {
     margin-bottom: 0;
@@ -8498,7 +8480,7 @@ button.pulse-rate:focus-visible {
   }
 }
 
-/* About Bloomkeeper page. */
+/* About BloomGauge page. */
 .bloom-plan button:focus-visible {
   outline: 2px solid var(--c-b5a0fa);
   outline-offset: 4px;
@@ -9335,41 +9317,6 @@ button.pulse-rate:focus-visible {
     margin-top: 10px;
     padding-top: 10px;
   }
-  .earnings-pulse-panel .pulse-credits {
-    border-left: 0;
-    border-top: 1px solid var(--c-293d35);
-    padding: 14px 0 0;
-  }
-  .earnings-pulse-panel .pulse-credits .pulse-trend {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(100px, auto);
-    column-gap: 10px;
-  }
-  .earnings-pulse-panel .pulse-credits .pulse-trend-title {
-    align-items: center;
-    font-size: 12px;
-  }
-  .earnings-pulse-panel .pulse-credits .pulse-trend-range {
-    margin: 0 0 7px;
-  }
-  .earnings-pulse-panel .pulse-credits .pulse-trend > strong {
-    display: none;
-  }
-  .earnings-pulse-panel
-    .pulse-credits
-    .pulse-trend
-    > :not(.pulse-trend-title):not(.pulse-trend-range) {
-    grid-column: 1/-1;
-  }
-  .earnings-pulse-panel .pulse-credits .pulse-trend-graph {
-    height: 180px;
-  }
-  .earnings-pulse-panel .pulse-credits .pulse-trend-midtime {
-    display: block;
-  }
-  .earnings-pulse-panel .pulse-credits .pulse-trend-times {
-    font-size: 11px;
-  }
 }
 
 .manual-model-choice {
@@ -9789,31 +9736,6 @@ button.pulse-rate:focus-visible {
     font-size: 18px;
   }
 }
-
-/* Compact, credited model earnings on the Pulse surface. */
-.pulse-earnings-graph {
-  min-width: 0;
-}
-.pulse-graph-picker {
-  margin-bottom: 10px;
-}
-.pulse-graph-picker .choice {
-  width: 100%;
-  min-width: 0;
-}
-.pulse-earnings-bars .contribution-chart {
-  margin-top: 3px;
-}
-.pulse-earnings-bars .contribution-note {
-  margin-top: 0;
-  font-size: 11px;
-}
-.pulse-earnings-bars .pulse-model-legend i {
-  width: 9px;
-  height: 9px;
-  flex: none;
-  border-radius: 1px;
-}
 .pulse-bars-empty {
   min-height: 150px;
   display: grid;
@@ -9831,10 +9753,6 @@ button.pulse-rate:focus-visible {
 }
 .pulse-bars-inspection > span {
   color: var(--muted-foreground);
-}
-.pulse-earnings-bars .pulse-trend-note {
-  margin-top: 7px;
-  line-height: 1.5;
 }
 /* Personal preview: arrange earnings cards without changing their data. */
 .desktop-earnings-workspace.earnings-workspace-layout {
@@ -10893,7 +10811,7 @@ button.pulse-rate:focus-visible {
   font-size: 13px;
 }
 
-/* What Bloomkeeper knows about each model. */
+/* What BloomGauge knows about each model. */
 .model-evidence {
   display: grid;
   gap: 10px;
@@ -10959,7 +10877,7 @@ button.pulse-rate:focus-visible {
   color: var(--c-dfe8ee);
 }
 
-/* Stall recovery: shown while work has stopped, or for a day after Bloomkeeper acted. */
+/* Stall recovery: shown while work has stopped, or for a day after BloomGauge acted. */
 .stall-recovery {
   margin: 0 0 16px;
   padding: 14px 18px;
@@ -11938,6 +11856,17 @@ fieldset.manual-picker-rows {
   min-height: 28px;
   font-size: 12px;
 }
+/* Seven ranges (1h … 7d): one row from ~340 px; tighter below, and never wider
+   than the card (wraps as a last resort). */
+.pulse-hourly-ranges {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+@media (max-width: 360px) {
+  .pulse-hourly-ranges button {
+    padding: 3px 7px;
+  }
+}
 .pulse-hourly-total {
   display: block;
   margin-top: 4px;
@@ -11971,19 +11900,96 @@ fieldset.manual-picker-rows {
   background: color-mix(in srgb, var(--primary) 20%, transparent);
   border: 1px dashed var(--primary);
 }
+/* The total and today's end-of-day estimate share a row above the bars. */
+.pulse-hourly-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 4px;
+}
+.pulse-hourly-head .pulse-hourly-total {
+  margin-top: 0;
+}
+/* Today's end-of-day estimate: the "Your earning days" outlook's colors, compact. */
+.pulse-day-outlook {
+  display: grid;
+  justify-items: start;
+  gap: 1px;
+  padding: 7px 11px;
+  border: 1px solid var(--c-33434a);
+  border-radius: 10px;
+  background: var(--c-131d23);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+button.pulse-day-outlook {
+  cursor: pointer;
+}
+button.pulse-day-outlook:hover,
+button.pulse-day-outlook:focus-visible {
+  border-color: var(--primary);
+}
+.pulse-day-outlook-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.pulse-day-outlook strong {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.pulse-day-outlook small {
+  font-size: 11px;
+}
+.pulse-day-outlook[data-tone='green'] {
+  border-color: var(--c-386c53);
+  background: linear-gradient(130deg, var(--c-172b22), var(--c-131d23) 75%);
+}
+.pulse-day-outlook[data-tone='purple'] {
+  border-color: var(--c-715396);
+  background: linear-gradient(130deg, var(--c-231c35), var(--c-131d23) 75%);
+}
+.pulse-day-outlook[data-tone='gold'] {
+  border-color: var(--c-92763a);
+  background: linear-gradient(130deg, var(--c-30271a), var(--c-131d23) 75%);
+}
+/* The card a Pulse link opened, for a moment. */
+[data-dashboard-widget].widget-flash {
+  animation: widget-flash 1.6s ease-out;
+}
+@keyframes widget-flash {
+  0%,
+  35% {
+    box-shadow: 0 0 0 2px var(--primary);
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-dashboard-widget].widget-flash {
+    animation: none;
+  }
+}
+/* A narrower Pulse card: the gauge, then the hourly bars below it at full width. */
+@container pulse-card (max-width: 519px) {
+  .earnings-pulse-panel .pulse-layout.with-hourly {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 /* From a ~1200 px window the Pulse card (half width) is ~520 px inside: the
-   gauge keeps a narrow column, the Pulse graph ~55% and the bars ~45% of the
-   remaining width. */
+   gauge keeps a narrow column and the hourly bars take the rest. */
 @container pulse-card (min-width: 520px) {
   .earnings-pulse-panel .pulse-layout.with-hourly {
-    grid-template-columns:
-      minmax(135px, 0.55fr) minmax(0, 1.2fr)
-      minmax(0, 0.95fr);
+    grid-template-columns: minmax(135px, 0.55fr) minmax(0, 2.15fr);
     align-items: start;
     column-gap: 14px;
-  }
-  .earnings-pulse-panel .pulse-layout.with-hourly > .pulse-credits {
-    padding-left: 14px;
   }
   .earnings-pulse-panel .pulse-layout.with-hourly > .pulse-hourly {
     grid-column: auto;
@@ -11991,13 +11997,8 @@ fieldset.manual-picker-rows {
     border-left: 1px solid var(--border);
     padding: 0 0 0 14px;
   }
-  /* The Pulse graph's title and range picker stack in its narrower column. */
-  .earnings-pulse-panel .pulse-layout.with-hourly .pulse-trend {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .earnings-pulse-panel .pulse-layout.with-hourly .pulse-trend-title,
-  .earnings-pulse-panel .pulse-layout.with-hourly .pulse-trend-range {
-    grid-column: 1;
+  .earnings-pulse-panel .pulse-layout.with-hourly .pulse-hourly-chart {
+    height: 190px;
   }
 }
 @container pulse-card (min-width: 520px) and (max-width: 760px) {

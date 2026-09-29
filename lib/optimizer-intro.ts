@@ -6,15 +6,15 @@ export const introBoostSeconds = 259200;
 export const introPoints: { title: string; text: string }[] = [
   {
     title: 'Runs your best earner',
-    text: 'Most of the time Bloomkeeper keeps whichever model is earning the most on this Mac right now.',
+    text: 'Most of the time BloomGauge keeps whichever model is earning the most on this Mac right now.',
   },
   {
     title: 'Catches demand spikes',
-    text: 'When a big model gets a rush of paid requests, Bloomkeeper can switch to it while the rush lasts. Large Qwen models can pay more than $0.30 an hour during a spike.',
+    text: 'When a big model gets a rush of paid requests, BloomGauge can switch to it while the rush lasts. Large Qwen models can pay more than $0.30 an hour during a spike.',
   },
   {
     title: 'Keeps a fallback',
-    text: 'When the main earners (such as Gemma or Nemotron) go quiet, Bloomkeeper moves to a model that almost always has some demand, such as gpt-oss, instead of sitting idle.',
+    text: 'When the main earners (such as Gemma or Nemotron) go quiet, BloomGauge moves to a model that almost always has some demand, such as gpt-oss, instead of sitting idle.',
   },
 ];
 
@@ -22,11 +22,11 @@ export const introPoints: { title: string; text: string }[] = [
 export const managerIntroPoints: { title: string; text: string }[] = [
   {
     title: 'Holds your best model',
-    text: 'Bloomkeeper keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days, judged day by day so one lucky day can’t decide it. Until this Mac has 3 days of its own, it starts from what pays best on Macs with the same chip and memory, and tells you before switching. It does not run blind trials of other models.',
+    text: 'BloomGauge keeps a home model running: your pick if you pinned one, otherwise the model that has paid best on this Mac over the last 30 days, judged day by day so one lucky day can’t decide it. Until this Mac has 3 days of its own, it starts from what pays best on Macs with the same chip and memory, and tells you before switching. It does not run blind trials of other models.',
   },
   {
     title: 'Recovers by itself',
-    text: 'If a switch fails or no model has been ready for about ten minutes, Bloomkeeper restores the home model instead of turning itself off. If two restores in a row fail, it tells you and keeps retrying, at least every two hours.',
+    text: 'If a switch fails or no model has been ready for about ten minutes, BloomGauge restores the home model instead of turning itself off. If two restores in a row fail, it tells you and keeps retrying, at least every two hours.',
   },
   {
     title: 'Moves only on strong evidence',
@@ -44,7 +44,7 @@ export function learningText(
       : learningMinutesPerDay < 60
         ? `up to ${learningMinutesPerDay} minutes a day`
         : `up to ${Number((learningMinutesPerDay / 60).toFixed(2))} hour${learningMinutesPerDay === 60 ? '' : 's'} a day`;
-  return `Bloomkeeper only knows what a model pays on your Mac by running it. So it spends ${time} measuring other models, only while pace is below $${protectUsdPerHour.toFixed(2)} an hour, and only models with real demand. A model earning more than that is never interrupted just to learn.`;
+  return `BloomGauge only knows what a model pays on your Mac by running it. So it spends ${time} measuring other models, only while pace is below $${protectUsdPerHour.toFixed(2)} an hour, and only models with real demand. A model earning more than that is never interrupted just to learn.`;
 }
 
 const pause = (ms: number, signal: AbortSignal) =>

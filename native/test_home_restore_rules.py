@@ -288,7 +288,7 @@ class RestoreRuleTests(tm.Harness):
         self.dark()
         self.ticks(0, 540)
         self.assertIn('a has not been ready since', self.o.detail)
-        self.assertIn('Bloomkeeper restores a', self.o.detail)
+        self.assertIn('BloomGauge restores a', self.o.detail)
         self.at(600)
         self.assertEqual(self.restores() + self.loads(), [])  # nothing runs without settings
         self.assertIn('could not be read; nothing was sent', self.o.detail)

@@ -94,7 +94,7 @@ export function OptimizerPlan({
         name: id,
         available: false,
         reason: id.startsWith('@combo:')
-          ? 'A model pair Bloomkeeper holds'
+          ? 'A model pair BloomGauge holds'
           : 'Not in the current catalog',
       })),
   ];
@@ -117,7 +117,7 @@ export function OptimizerPlan({
     return (
       <div className="optimizer-plan-summary">
         <span>
-          {on ? 'Bloomkeeper keeps' : 'When on, Bloomkeeper keeps'} the best of{' '}
+          {on ? 'BloomGauge keeps' : 'When on, BloomGauge keeps'} the best of{' '}
           <strong>{count ? `${count} models` : 'your models'}</strong> running,{' '}
           <strong>restores it automatically</strong> after a failure
           {excursions === true ? (
@@ -153,7 +153,7 @@ export function OptimizerPlan({
     return (
       <div className="optimizer-plan-summary">
         <span>
-          When on, Bloomkeeper chooses from{' '}
+          When on, BloomGauge chooses from{' '}
           <strong>{savedSelected.length || 'all available'} models</strong>,
           protects pace above{' '}
           <strong>{money(rules.protectUsdPerHour)} / hour</strong> and{' '}
@@ -185,11 +185,11 @@ export function OptimizerPlan({
   );
   return (
     <div className="optimizer-plan" aria-label="Optimizer plan">
-      <p className="optimizer-plan-label">Models Bloomkeeper can use</p>
+      <p className="optimizer-plan-label">Models BloomGauge can use</p>
       <div
         className="optimizer-plan-models"
         role="group"
-        aria-label="Models Bloomkeeper can use"
+        aria-label="Models BloomGauge can use"
       >
         {choices.map((model) => {
           const label = labels(model.id);
@@ -222,7 +222,7 @@ export function OptimizerPlan({
             label="Protect earnings above"
             unit="USD / hour"
             disabled={!editable}
-            hint="While the current model pays at least this, Bloomkeeper won’t interrupt it to learn. Confident upgrades can still switch."
+            hint="While the current model pays at least this, BloomGauge won’t interrupt it to learn. Confident upgrades can still switch."
             value={rules.protectUsdPerHour}
             range={tuningRanges.protectUsdPerHour}
             onChange={(next) =>
@@ -248,7 +248,7 @@ export function OptimizerPlan({
                 .map((v) => ({ value: String(v), label: learningLabel(v) }))}
             />
             <small className="plan-hint">
-              Time Bloomkeeper may spend measuring other models while pace is
+              Time BloomGauge may spend measuring other models while pace is
               below your protect level, so it knows where to go when the current
               model fades.
             </small>
@@ -265,7 +265,7 @@ export function OptimizerPlan({
         <div className="optimizer-style">
           <div className="optimizer-style-head">
             <label htmlFor="optimizer-style">
-              How actively Bloomkeeper switches
+              How actively BloomGauge switches
             </label>
             <strong>
               {style === null ? 'Custom' : optimizerStyles[style].label}

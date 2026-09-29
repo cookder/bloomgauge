@@ -1,7 +1,7 @@
 """Endpoint setup is not an outside change (1.36.60 beta 41 report, M1 Ultra, Darkbloom 0.9.10).
 
 Every Prepare or Start that set up pre-warming ended with "Provider settings changed during the
-switch": Bloomkeeper compared a digest of the argv it passed with the launch agent that
+switch": BloomGauge compared a digest of the argv it passed with the launch agent that
 `darkbloom start` rebuilds from its own options, which always adds `--port`/`--bind` to
 `--local-endpoint`. The On card kept asking for the same setup. Synthetic providers only; the
 fake `darkbloom start` below writes what Darkbloom 0.9.10 writes. Never a real CLI."""
@@ -161,7 +161,7 @@ class EndpointSetupLoopTests(unittest.TestCase):
         result = self.prepare('a')
         self.assertEqual(result['status'], 'completed', result['detail'])
         self.assertIn(
-            '--local-endpoint', self.provider_calls()[-1], 'Bloomkeeper asked for the endpoint'
+            '--local-endpoint', self.provider_calls()[-1], 'BloomGauge asked for the endpoint'
         )
         self.assertEqual(
             self.plist_args()[-5:], ['--local-endpoint', '--port', '8000', '--bind', '127.0.0.1']
@@ -248,7 +248,7 @@ class EndpointSetupLoopTests(unittest.TestCase):
     def test_three_or_more_enabled_models_get_a_plain_message(self):
         notice = (
             'Darkbloom is set to serve 7 models. Run `darkbloom start` in Terminal and pick '
-            'one model, or use Bloomkeeper’s model controls.'
+            'one model, or use BloomGauge’s model controls.'
         )
         self.args = self.args + ['--local-endpoint', '--port', '8000', '--bind', '127.0.0.1']
         self.write_plist()

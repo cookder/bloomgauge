@@ -1,27 +1,39 @@
 {
-  "id": "bloom-1.36.61-beta42",
-  "version": "1.36.61",
-  "title": "The manager keeps working on more Macs, and knows how Macs like yours are doing",
+  "id": "bloom-1.36.62-beta43",
+  "version": "1.36.62",
+  "title": "Bloomkeeper is now BloomGauge, and it keeps itself up to date",
   "highlights": [
     {
-      "title": "Fixes that kept the manager from running",
-      "detail": "Setting up pre-warming no longer loops on \"Provider settings changed\". Bloomkeeper now accepts the launch settings Darkbloom writes for itself. The manager stays on across app and Darkbloom updates, and when it does turn off it says why. It restarts a provider that Darkbloom left drained, works while Darkbloom preloads at startup, handles a new device key, and turns on with a stopped pair. If Darkbloom is set to serve 3 or more models, Bloomkeeper says so and tells you how to pick one. Also works with Darkbloom 0.9.11."
+      "title": "Bloomkeeper is now BloomGauge",
+      "detail": "Same app, same data, same settings, with a new name. The website moves to bloomgauge.io, and old links keep working."
     },
     {
-      "title": "Macs like yours",
-      "detail": "The Pulse shows how this Mac's requests compare with Macs of the same chip and memory on the same model. If they're getting work and this Mac isn't, Bloomkeeper treats it as a stall and recovers sooner."
+      "title": "BloomGauge now updates itself",
+      "detail": "New versions download in the background and install while you're away from the Mac. They never install during a model switch, warm-up or trial. BloomGauge reopens the way it was and keeps its home model, and Darkbloom keeps serving throughout. To turn this off, clear Update BloomGauge automatically in More → Help & feedback. If you had turned automatic update checks off before, they stay off."
     },
     {
-      "title": "\"It's not you\"",
-      "detail": "When Darkbloom has a network-wide problem, a banner says so, and Bloomkeeper holds off restarts and automatic problem reports until it's over."
+      "title": "Fewer hours earning nothing",
+      "detail": "After Darkbloom unloads an idle model, BloomGauge reloads it right away. Before, it could wait 20+ minutes thinking a model was loading, or say there wasn't enough free memory. With cache cleanup allowed, it clears the macOS file cache and reloads every time. Turning the manager on also works on battery power now."
     },
     {
-      "title": "Smarter excursions",
-      "detail": "Macs that can hold a larger model try it when public data shows it clearly paying more and its demand is high for the time of day, at most once a week per model until Bloomkeeper has its own pay data for it. A model that pays less than home needs stronger evidence for the next two weeks. New Macs start on the model that pays best on Macs like them, with a notice and a one-tap Keep."
+      "title": "Ready for macOS 27 and App Attest",
+      "detail": "Macs that Darkbloom verifies through App Attest without its MDM now get everything the others do. BloomGauge brings the previous model back after a failed switch, runtime-gated models like Qwen3.8 can be used, and Macs like yours stall detection works. The Reputation card shows the Mac's trust tier."
     },
     {
-      "title": "Network news",
-      "detail": "The Optimizer tab lists models joining or leaving the network and big changes in how many Macs have them loaded, and flags a model your Mac still offers after the network dropped it."
+      "title": "Pair fallback",
+      "detail": "If you chose two models and Darkbloom can't fit both in memory right now, BloomGauge serves one of them instead of waiting, and says so. It goes back to the pair once there is enough free memory."
+    },
+    {
+      "title": "A simpler Pulse",
+      "detail": "One earnings graph with 1 h, 3 h, 6 h, 12 h, 24 h, 3 d and 7 d views shows what you earned in that time, base rewards included. A Today tile shows the end-of-day estimate."
+    },
+    {
+      "title": "Alerts and notification settings",
+      "detail": "Choose which alerts go to this Mac and to your phone in Optimizer → Overview → Notifications. New: regular Mac notifications, an alert when earnings stay high, and alerts when the manager considers or makes a switch. Quiet hours hold everything except problems. Phone notifications now show amounts (encrypted on the way); you can turn amounts off."
+    },
+    {
+      "title": "Clearer statuses and problem reports",
+      "detail": "Statistics wait until the Darkbloom network has cleared the Mac after a restart, and a switch the network didn't accept says why. Reading Darkbloom's settings no longer fails mid-rewrite, the model controls name launch settings Darkbloom dropped, and problem reports say whether the Manager or the older optimizer was on."
     }
   ]
 }

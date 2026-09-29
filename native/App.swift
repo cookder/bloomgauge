@@ -2,6 +2,7 @@ import AppKit
 import WebKit
 import ServiceManagement
 import UniformTypeIdentifiers
+import UserNotifications
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler, NSWindowDelegate {
     var window: NSWindow!
@@ -22,6 +23,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var updateAdmission: BloomUpdateAdmission?
     var terminationAttempt: UUID?
     var updateTermination = false
+    // Quiet installs of automatically downloaded updates (see BloomQuietInstallPolicy).
+    var launchUptime: TimeInterval = 0
+    var quietTimer: Timer?
+    var quietProbeInFlight = false
+    var quietRetryAt: TimeInterval = 0
+    /// A quiet install that asked Sparkle to quit the app: when (systemUptime), whether it
+    /// carries the automatic soft holds, and the probe's reservation it reuses. Only the
+    /// first termination request within a few seconds counts as that install.
+    var quietPending: (at: TimeInterval, automatic: Bool, probe: BloomQuietProbe)?
+    /// The termination in progress is a quiet install (never a person's Quit).
+    var quietAttempt = false
+    /// The waiting update's install was last started by the quiet path, not by a person.
+    var quietIntent = false
+    /// A person quit while Sparkle's installer waited to relaunch: mark the relaunch to close.
+    var quitRecordOnExit = false
+    var relaunchFocusObserver: NSObjectProtocol?
+    var admissionSend: BloomUpdateAdmission.Send {
+        {[weak self] body,completion in
+            guard let self=self else{completion(0,nil);return}
+            self.updateAdmissionRequest(body,completion:completion)
+        }
+    }
+    /// Releases a held quiet-install reservation so model changes are not blocked by it.
+    func dropQuietProbe(){
+        if let pending=quietPending {bloomReleaseQuietProbe(pending.probe,send:admissionSend)}
+        quietPending=nil
+    }
+    /// Sparkle's installer asks the app to quit with a quit Apple event sent by its Updater
+    /// helper. Menu, Dock and logout quits come from elsewhere: those are a person's Quit.
+    func sparkleQuitRequest()->Bool{
+        guard let event=NSAppleEventManager.shared().currentAppleEvent,
+              event.eventClass==AEEventClass(kCoreEventClass),event.eventID==AEEventID(kAEQuitApplication),
+              let pid=event.attributeDescriptor(forKeyword:AEKeyword(keySenderPIDAttr))?.int32Value,pid>0,
+              let sender=NSRunningApplication(processIdentifier:pid) else{return false}
+        return sender.bundleIdentifier=="org.sparkle-project.Sparkle.Updater"
+    }
+    func endRelaunchFocusWatch(){
+        if let observer=relaunchFocusObserver {NotificationCenter.default.removeObserver(observer);relaunchFocusObserver=nil}
+    }
+    /// Gives focus back to the app the person was using when a quiet install began.
+    func handBackFocus(_ bundleIdentifier:String?){
+        if let id=bundleIdentifier,id != Bundle.main.bundleIdentifier,
+           let app=NSRunningApplication.runningApplications(withBundleIdentifier:id).first(where:{!$0.isTerminated}) {
+            NSApp.yieldActivation(to:app)
+            if app.activate(from:NSRunningApplication.current,options:[]) {return}
+        }
+        NSApp.deactivate()
+    }
     #if BLOOM_UPDATE_TESTING
     // Only the separately compiled updater test app uses this. Its collector
     // stays in preview mode even after Sparkle relaunches without arguments.
@@ -34,6 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // accounts can read the dashboard but cannot change anything.
     let sessionToken = UUID().uuidString + UUID().uuidString
     var reputationConnection: ReputationConnection?
+    var notificationRelay: BloomNotificationRelay?
+    /// A notification clicked before the local service was up: its screen opens with the first load.
+    var pendingScreen: String?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         // The dashboard's Appearance choice (System, Light or Dark), saved when the
@@ -46,23 +98,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             updates = BloomUpdates()
         }
         #endif
+        launchUptime = ProcessInfo.processInfo.systemUptime
         updates?.changed = { [weak self] in self?.publishUpdateStatus() }
         updates?.cancelledInstallation = { [weak self] in self?.cancelUpdateTermination() }
+        // A person's Install Update Now takes the ordinary path: safety check, and a
+        // "postponed" alert if a model change is running.
+        updates?.installNowRequested = { [weak self] in
+            guard let self=self,!self.pendingTermination,!self.quitting else{return}
+            self.quietIntent=false;self.dropQuietProbe();self.updates?.installQuietly()
+        }
+        if updates != nil {
+            quietTimer = Timer.scheduledTimer(withTimeInterval:60,repeats:true){[weak self] _ in self?.quietInstallTick()}
+        }
         let menu = NSMenu()
         let appItem = NSMenuItem(); menu.addItem(appItem)
         let appMenu = NSMenu(); appItem.submenu = appMenu
-        appMenu.addItem(withTitle: "About Bloomkeeper", action: #selector(about), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About BloomGauge", action: #selector(about), keyEquivalent: "")
         if let updates = updates { updates.addMenuItems(to:appMenu) }
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle:"Open at Login",action:#selector(toggleLogin(_:)),keyEquivalent:"")
         appMenu.item(withTitle:"Open at Login")?.state = !setupPreview && SMAppService.mainApp.status == .enabled ? .on : .off
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle:"Hide Bloomkeeper",action:#selector(NSApplication.hide(_:)),keyEquivalent:"h")
+        appMenu.addItem(withTitle:"Hide BloomGauge",action:#selector(NSApplication.hide(_:)),keyEquivalent:"h")
         let hideOthers=appMenu.addItem(withTitle:"Hide Others",action:#selector(NSApplication.hideOtherApplications(_:)),keyEquivalent:"h")
         hideOthers.keyEquivalentModifierMask=[.command,.option]
         appMenu.addItem(withTitle:"Show All",action:#selector(NSApplication.unhideAllApplications(_:)),keyEquivalent:"")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Bloomkeeper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit BloomGauge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let editItem = NSMenuItem(); menu.addItem(editItem); let edit = NSMenu(title:"Edit"); editItem.submenu=edit
         edit.addItem(withTitle:"Undo",action:Selector(("undo:")),keyEquivalent:"z")
         let redo=edit.addItem(withTitle:"Redo",action:Selector(("redo:")),keyEquivalent:"z");redo.keyEquivalentModifierMask=[.command,.shift]
@@ -84,15 +146,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         help.addItem(withTitle:"Help & Feedback…",action:#selector(openSupport),keyEquivalent:"")
         NSApp.mainMenu = menu
         statusItem=NSStatusBar.system.statusItem(withLength:NSStatusItem.variableLength)
-        statusItem?.button?.image=NSImage(systemSymbolName:"leaf",accessibilityDescription:"Bloomkeeper")
+        statusItem?.button?.image=NSImage(systemSymbolName:"leaf",accessibilityDescription:"BloomGauge")
         let statusMenu=NSMenu()
-        statusMenu.addItem(withTitle:"Open Bloomkeeper",action:#selector(showDashboard),keyEquivalent:"")
+        statusMenu.addItem(withTitle:"Open BloomGauge",action:#selector(showDashboard),keyEquivalent:"")
         statusMenu.addItem(withTitle:"Monitoring continues when this window closes",action:nil,keyEquivalent:"")
         statusMenu.addItem(.separator())
-        statusMenu.addItem(withTitle:"Quit Bloomkeeper",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"")
+        statusMenu.addItem(withTitle:"Quit BloomGauge",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"")
         statusItem?.menu=statusMenu
         window=NSWindow(contentRect:NSRect(x:0,y:0,width:1280,height:910),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
-        window.title=Bundle.main.object(forInfoDictionaryKey:"CFBundleDisplayName") as? String ?? "Bloomkeeper"
+        window.title=Bundle.main.object(forInfoDictionaryKey:"CFBundleDisplayName") as? String ?? "BloomGauge"
         window.delegate=self
         window.isReleasedWhenClosed=false
         window.minSize=NSSize(width:700,height:540)
@@ -124,9 +186,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         message.frame=NSRect(x:40,y:window.contentView!.bounds.midY,width:window.contentView!.bounds.width-80,height:60)
         message.autoresizingMask=[.width,.minYMargin,.maxYMargin]
         window.contentView!.addSubview(message)
-        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        // After a quiet update the window comes back the way it was, without taking focus.
+        let saved=UserDefaults.standard.object(forKey:quietRelaunchDefaultsKey)
+        let relaunch=bloomRelaunchWindow(saved,now:Date().timeIntervalSince1970)
+        UserDefaults.standard.removeObject(forKey:quietRelaunchDefaultsKey)
+        // The person quit while an update waited; Sparkle installed it and relaunched. Stay closed.
+        if relaunch == .quit {DispatchQueue.main.async{NSApp.terminate(nil)};return}
+        switch relaunch {
+        case .hidden?: break
+        case .back?: window.orderBack(nil)
+        default: window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        }
+        // macOS activates a relaunched app, sometimes a moment after launch. Hand focus back
+        // to what the person was using, once, within the first few seconds.
+        if relaunch == .hidden || relaunch == .back {
+            let front=bloomRelaunchFrontApp(saved)
+            if NSApp.isActive {handBackFocus(front)}
+            else {
+                relaunchFocusObserver=NotificationCenter.default.addObserver(forName:NSApplication.didBecomeActiveNotification,object:nil,queue:.main){[weak self] _ in
+                    self?.handBackFocus(front);self?.endRelaunchFocusWatch()
+                }
+                // Only the relaunch's own activation; a person opening the window later keeps it.
+                DispatchQueue.main.asyncAfter(deadline:.now()+4){[weak self] in self?.endRelaunchFocusWatch()}
+            }
+        }
+        // Set before launch finishes, so a click that launched the app still opens its screen.
+        if !setupPreview {UNUserNotificationCenter.current().delegate=self}
         startCollector()
         updates?.start()
+    }
+    /// Once a minute while a downloaded update waits: install it if this is a quiet moment
+    /// and the collector confirms nothing is switching, warming or on a trial.
+    func quietInstallTick(){
+        // Sparkle never asked to quit after the last attempt (installer failure): start over.
+        if let pending=quietPending,!pendingTermination,ProcessInfo.processInfo.systemUptime-pending.at>20 {postponeQuietInstall()}
+        guard let updates=updates,updates.automaticUpdates,updates.quietInstallWaiting,let since=updates.waitingSince,quietPending==nil,
+              !pendingTermination,!quitting,!quietProbeInFlight,!cachePermissionOpen,!diagnosticsSaveOpen,
+              collector?.isRunning==true else{return}
+        let now=Date().timeIntervalSince1970
+        guard now>=quietRetryAt else{return}
+        let waiting=now-since
+        let idle=CGEventSource.secondsSinceLastEventType(.combinedSessionState,eventType:CGEventType(rawValue:~0)!)
+        guard BloomQuietInstallPolicy.due(waiting:waiting,sinceLaunch:ProcessInfo.processInfo.systemUptime-launchUptime,
+                                          userIdle:idle,appActive:NSApp.isActive) else{return}
+        let automatic=BloomQuietInstallPolicy.automatic(waiting:waiting)
+        let send:BloomUpdateAdmission.Send={[weak self] body,completion in
+            guard let self=self else{completion(0,nil);return}
+            self.updateAdmissionRequest(body,completion:completion)
+        }
+        quietProbeInFlight=true
+        bloomProbeQuietInstall(send:send,automatic:automatic){[weak self] probe in
+            guard let self=self else{if let probe=probe{bloomReleaseQuietProbe(probe,send:send)};return}
+            self.quietProbeInFlight=false
+            guard let probe=probe else{self.quietRetryAt=Date().timeIntervalSince1970+BloomQuietInstallPolicy.retrySeconds;return}
+            guard !self.pendingTermination,!self.quitting,self.updates?.automaticUpdates==true,self.updates?.quietInstallWaiting==true else{
+                bloomReleaseQuietProbe(probe,send:send)
+                self.quietRetryAt=Date().timeIntervalSince1970+BloomQuietInstallPolicy.retrySeconds;return
+            }
+            UserDefaults.standard.set(bloomQuietRelaunchRecord(windowVisible:self.window.isVisible && !NSApp.isHidden,
+                                                               appActive:NSApp.isActive,now:Date().timeIntervalSince1970,
+                                                               frontApp:NSWorkspace.shared.frontmostApplication?.bundleIdentifier),
+                                      forKey:quietRelaunchDefaultsKey)
+            // The probe's reservation stays held (about a minute at most), so no model work
+            // can start between here and the collector stopping.
+            self.quietPending=(ProcessInfo.processInfo.systemUptime,automatic,probe)
+            self.quietIntent=true
+            self.updates?.installQuietly()
+        }
+    }
+    /// A quiet attempt that could not finish: no alert, try again later, normal launch next time.
+    func postponeQuietInstall(){
+        dropQuietProbe();quietAttempt=false
+        UserDefaults.standard.removeObject(forKey:quietRelaunchDefaultsKey)
+        quietRetryAt=Date().timeIntervalSince1970+BloomQuietInstallPolicy.retrySeconds
+        updates?.quietInstallPostponed()
     }
     func startCollector(){
         guard let resources=Bundle.main.resourceURL else { fail("App resources are missing.");return }
@@ -141,10 +274,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let dataDirectory=setupPreview ? files.temporaryDirectory.appendingPathComponent("bloom-setup-preview-\(ProcessInfo.processInfo.processIdentifier)",isDirectory:true) : support.appendingPathComponent(dataName,isDirectory:true)
         #endif
         do { try files.createDirectory(at:dataDirectory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700]) }
-        catch { fail("Could not open Bloomkeeper's saved data: \(error.localizedDescription)");return }
+        catch { fail("Could not open BloomGauge's saved data: \(error.localizedDescription)");return }
         let process=Process();collector=process
         let python=resources.appendingPathComponent("python/bin/python3")
-        guard files.isExecutableFile(atPath:python.path) else{fail("Bloomkeeper’s bundled runtime is missing. Reinstall the application; no separate Python installation is required.");return}
+        guard files.isExecutableFile(atPath:python.path) else{fail("BloomGauge’s bundled runtime is missing. Reinstall the application; no separate Python installation is required.");return}
         process.executableURL=python
         process.arguments=["-I","-B","-u",resources.appendingPathComponent("runtime-entry.py").path,"--port",setupPreview ? "0":"8765","--remote-port",setupPreview ? "0":"8766","--static",resources.appendingPathComponent("web").path,"--data",dataDirectory.appendingPathComponent("history.sqlite3").path]
         if setupPreview{process.arguments?.append("--setup-preview")}
@@ -161,11 +294,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self=self else{return}
                 self.localURL=url
-                if !self.setupPreview{self.reputationConnection=ReputationConnection(baseURL:url,token:self.nativeToken);self.reputationConnection?.restore()}
-                print("Bloomkeeper: \(url.absoluteString)");fflush(stdout)
+                if !self.setupPreview{
+                    self.reputationConnection=ReputationConnection(baseURL:url,token:self.nativeToken);self.reputationConnection?.restore()
+                    self.startNotificationRelay()
+                }
+                print("BloomGauge: \(url.absoluteString)");fflush(stdout)
                 guard let cookie=bloomSessionCookie(url:url,token:self.sessionToken) else{self.fail("The local collector could not start.");return}
                 self.webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie){[weak self] in
-                    self?.webView.load(URLRequest(url:url))
+                    guard let self=self else{return}
+                    let screen=self.pendingScreen.flatMap{bloomScreenURL(url,$0)};self.pendingScreen=nil
+                    self.webView.load(URLRequest(url:screen ?? url))
                 }
             }
         }
@@ -176,32 +314,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reputationConnection?.refreshTimer?.invalidate()
         reputationConnection?.accountView?.stopLoading()
         reputationConnection?.accountWindow?.orderOut(nil);reputationConnection=nil
+        notificationRelay?.stop();notificationRelay=nil
         let now=ProcessInfo.processInfo.systemUptime
         restartTimes=restartTimes.filter{now-$0<300}
-        guard restartTimes.count<3 else{fail("Bloomkeeper could not keep its local service running. Another copy may already be open. Quit the extra copy, then reopen Bloomkeeper. Your saved history is intact.");showDashboard();return}
+        guard restartTimes.count<3 else{fail("BloomGauge could not keep its local service running. Another copy may already be open. Quit the extra copy, then reopen BloomGauge. Your saved history is intact.");showDashboard();return}
         restartTimes.append(now)
-        fail("Reconnecting to Bloomkeeper’s local service…")
+        fail("Reconnecting to BloomGauge’s local service…")
         DispatchQueue.main.asyncAfter(deadline:.now()+Double(restartTimes.count*3)){[weak self] in
             guard let self=self,!self.quitting else{return};self.startCollector()
         }
     }
     @objc func showDashboard(){window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)}
+    /// Mac notifications queued by the collector (never in setup preview).
+    func startNotificationRelay(){
+        notificationRelay?.stop()
+        guard !setupPreview,!quitting else{notificationRelay=nil;return}
+        notificationRelay=BloomNotificationRelay(send:{[weak self] body,completion in
+            guard let self=self else{completion(0,nil);return}
+            self.nativeRequest("/api/notifications/native",action:"notifications",body:body,limit:65536,completion:completion)
+        })
+        notificationRelay?.start()
+    }
+    /// Brings the dashboard forward at an allow-listed screen (from a clicked notification).
+    func openScreen(_ screen:String){
+        guard !quitting,bloomNotificationScreens.contains(screen) else{return}
+        showDashboard()
+        guard let base=localURL,let url=bloomScreenURL(base,screen) else{pendingScreen=screen;return}
+        webView.load(URLRequest(url:url))
+    }
     @objc func openSupport(){NSWorkspace.shared.open(URL(string:"https://bloomformac.com/support")!)}
     @objc func toggleLogin(_ sender:NSMenuItem){
         guard !setupPreview else{return}
         do{if SMAppService.mainApp.status == .enabled{try SMAppService.mainApp.unregister();sender.state = .off}else{try SMAppService.mainApp.register();sender.state = .on}}
-        catch{let alert=NSAlert();alert.messageText="Could not change Open at Login";alert.informativeText="Move Bloomkeeper into Applications first. You can also manage login items in System Settings.";alert.runModal()}
+        catch{let alert=NSAlert();alert.messageText="Could not change Open at Login";alert.informativeText="Move BloomGauge into Applications first. You can also manage login items in System Settings.";alert.runModal()}
     }
     @objc func reload(){ if let url=localURL {message.stringValue="Reconnecting…";message.isHidden=false;webView.load(URLRequest(url:url))} }
     @objc func zoomIn(){webView.pageZoom=min(2.5,webView.pageZoom+0.1)}
     @objc func zoomOut(){webView.pageZoom=max(0.75,webView.pageZoom-0.1)}
     @objc func zoomReset(){webView.pageZoom=1}
-    @objc func about(){NSApp.orderFrontStandardAboutPanel(options:[.applicationName:"Bloomkeeper",.applicationVersion:Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "",.credits:NSAttributedString(string:"An independent companion for Darkbloom, formerly Bloom. Not affiliated with Darkbloom or Eigen Labs.\nA local dashboard for Darkbloom earnings and your Mac’s hardware.\nIncludes opt-in model experiments. Sensor mappings adapted from Stats (MIT).")])}
+    @objc func about(){NSApp.orderFrontStandardAboutPanel(options:[.applicationName:"BloomGauge",.applicationVersion:Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "",.credits:NSAttributedString(string:"An independent companion for Darkbloom, formerly Bloomkeeper. Not affiliated with Darkbloom or Eigen Labs.\nA local dashboard for Darkbloom earnings and your Mac’s hardware.\nIncludes opt-in model experiments. Sensor mappings adapted from Stats (MIT).")])}
     func publishUpdateStatus(_ requestId:String? = nil){
         guard webView != nil else{return}
         let snapshot=updates?.snapshot(requestId:requestId) ?? ["requestId":requestId as Any? ?? NSNull(),"available":false,
             "installedVersion":Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "Unknown",
-            "automaticChecks":false,"canCheck":false,"checking":false,"lastCheck":NSNull(),"status":"idle","error":NSNull()]
+            "automaticChecks":false,"automaticUpdates":false,"canCheck":false,"checking":false,"lastCheck":NSNull(),"status":"idle","error":NSNull()]
         guard let data=try? JSONSerialization.data(withJSONObject:snapshot),let json=String(data:data,encoding:.utf8) else{return}
         webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('bloom-updates-status',{detail:\(json)}))",completionHandler:nil)
     }
@@ -258,10 +414,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         cachePermissionOpen=true
         let enabling=command.action=="cache-setup",alert=NSAlert()
-        alert.messageText=enabling ? "Enable optional cache recovery?" : "Remove Bloomkeeper’s cache permission?"
+        alert.messageText=enabling ? "Enable optional cache recovery?" : "Remove BloomGauge’s cache permission?"
         alert.informativeText=enabling
-            ? "macOS will ask for administrator approval once. This allows your Mac account to run only /usr/sbin/purge with no arguments without another password prompt. Bloomkeeper never receives your password. Setup does not clear cache or start a model. You can remove Bloomkeeper’s permission here later."
-            : "macOS will ask for administrator approval to remove only Bloomkeeper’s exact cache-cleanup permission. Other administrator rules are left alone. This does not stop a model or clear cache."
+            ? "macOS will ask for administrator approval once. This allows your Mac account to run only /usr/sbin/purge with no arguments without another password prompt. BloomGauge never receives your password. Setup does not clear cache or start a model. You can remove BloomGauge’s permission here later."
+            : "macOS will ask for administrator approval to remove only BloomGauge’s exact cache-cleanup permission. Other administrator rules are left alone. This does not stop a model or clear cache."
         alert.addButton(withTitle:enabling ? "Continue" : "Remove permission");alert.addButton(withTitle:"Cancel")
         alert.beginSheetModal(for:window){[weak self] response in
             guard let self=self else{return}
@@ -290,7 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
               let report=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any],
               report["schema"] as? String == "bloom-diagnostics-v1" else{diagnosticsResult(requestId,"failed");return}
         diagnosticsSaveOpen=true
-        let panel=NSSavePanel();panel.title="Save reviewed diagnostics";panel.nameFieldStringValue="Bloomkeeper diagnostics.json"
+        let panel=NSSavePanel();panel.title="Save reviewed diagnostics";panel.nameFieldStringValue="BloomGauge diagnostics.json"
         panel.allowedContentTypes=[.json];panel.canCreateDirectories=true
         panel.beginSheetModal(for:window){[weak self] response in
             guard let self=self else{return};self.diagnosticsSaveOpen=false
@@ -316,36 +472,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication)->Bool{false}
     func updateAdmissionRequest(_ body:[String:Any],completion:@escaping (Int,[String:Any]?)->Void){
+        nativeRequest("/api/update/native",action:"update",body:body,limit:4096,completion:completion)
+    }
+    /// POSTs JSON to one of the collector's native routes: token header, no cookies, no redirects,
+    /// 5 s, and a reply of at most `limit` bytes. Completes on the main thread (status 0 on failure).
+    func nativeRequest(_ path:String,action:String,body:[String:Any],limit:Int,completion:@escaping (Int,[String:Any]?)->Void){
         guard let localURL=localURL,localURL.scheme=="http",localURL.host=="127.0.0.1",
-              let url=URL(string:"/api/update/native",relativeTo:localURL)?.absoluteURL,
+              let url=URL(string:path,relativeTo:localURL)?.absoluteURL,
               let data=try? JSONSerialization.data(withJSONObject:body) else{completion(0,nil);return}
         var request=URLRequest(url:url,cachePolicy:.reloadIgnoringLocalCacheData,timeoutInterval:5)
         request.httpMethod="POST";request.httpBody=data
         request.setValue("application/json",forHTTPHeaderField:"Content-Type")
         request.setValue(nativeToken,forHTTPHeaderField:"X-Bloom-Native")
-        request.setValue("update",forHTTPHeaderField:"X-Bloom-Action")
+        request.setValue(action,forHTTPHeaderField:"X-Bloom-Action")
         let configuration=URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource=5;configuration.httpShouldSetCookies=false
         let session=URLSession(configuration:configuration,delegate:BloomLocalUpdateSessionDelegate(),delegateQueue:nil)
         session.dataTask(with:request){data,response,error in
             let status=(response as? HTTPURLResponse)?.statusCode ?? 0
-            let result=(data != nil && data!.count<=4096) ? ((try? JSONSerialization.jsonObject(with:data!)) as? [String:Any]) : nil
+            let result=(data != nil && data!.count<=limit) ? ((try? JSONSerialization.jsonObject(with:data!)) as? [String:Any]) : nil
             session.finishTasksAndInvalidate()
             DispatchQueue.main.async{completion(error == nil ? status : 0,result)}
         }.resume()
     }
     func cancelUpdateTermination(){
+        if quietPending != nil || quietAttempt {dropQuietProbe();quietAttempt=false;UserDefaults.standard.removeObject(forKey:quietRelaunchDefaultsKey)}
         guard updateTermination,pendingTermination,!quitting else{return}
         updateAdmission?.cancel();pendingTermination=false;terminationAttempt=nil;updateTermination=false
         NSApp.reply(toApplicationShouldTerminate:false)
     }
     func applicationShouldTerminate(_ sender:NSApplication)->NSApplication.TerminateReply {
-        if cachePermissionOpen{return .terminateCancel}
+        // A quit from Sparkle's installer is always an update and always gets the safety
+        // check; it is quiet when the quiet path started it. Any other quit (menu, Dock,
+        // logout) is a person's Quit: never refused silently, and it cancels a quiet attempt.
+        let fromSparkle=sparkleQuitRequest()
+        let pending=quietPending
+        quietPending=nil
+        let release={[weak self] in if let pending=pending,let self=self {bloomReleaseQuietProbe(pending.probe,send:self.admissionSend)}}
+        let waited=updates?.waitingSince.map{Date().timeIntervalSince1970-$0} ?? 0
+        let quiet:(automatic:Bool,requestId:String?)?=fromSparkle && quietIntent
+            ? (pending?.automatic ?? BloomQuietInstallPolicy.automatic(waiting:waited),pending?.probe.requestId) : nil
+        if !fromSparkle && pending != nil {release();updates?.quietInstallPostponed()}
+        if cachePermissionOpen{if quiet != nil {release();postponeQuietInstall()};return .terminateCancel}
         guard let process=collector,process.isRunning else{return .terminateNow}
-        if pendingTermination{return .terminateLater}
+        if pendingTermination{if quiet != nil {release()};return .terminateLater}
         pendingTermination=true
         let attempt=UUID();terminationAttempt=attempt
-        if updates?.requiresSafeTermination() == true {
+        quietAttempt = quiet != nil
+        if fromSparkle || updates?.requiresSafeTermination() == true {
             updateTermination=true
             let admission=BloomUpdateAdmission(send:{[weak self] body,completion in
                 guard let self=self else{completion(0,nil);return}
@@ -356,12 +530,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // returned terminateLater, never from inside the initial callback.
             DispatchQueue.main.async { [weak self] in
             guard let self=self,self.pendingTermination,self.terminationAttempt==attempt else{admission.cancel();return}
-            admission.begin(ready:{[weak self] in
+            admission.begin(automatic:quiet?.automatic ?? false,requestId:quiet?.requestId,ready:{[weak self] in
                 guard let self=self,self.pendingTermination,self.terminationAttempt==attempt else{admission.cancel();return}
                 self.beginCollectorTermination(process,attempt:attempt)
             },failed:{[weak self] message in
                 guard let self=self,self.pendingTermination,self.terminationAttempt==attempt else{return}
                 self.pendingTermination=false;self.terminationAttempt=nil;self.updateTermination=false
+                if quiet != nil {
+                    // Nobody asked for this install: wait quietly for the next good moment.
+                    release();self.postponeQuietInstall()
+                    NSApp.reply(toApplicationShouldTerminate:false)
+                    return
+                }
                 self.updates?.installationBlocked(message)
                 NSApp.reply(toApplicationShouldTerminate:false)
                 self.showDashboard()
@@ -372,7 +552,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         } else {
             updateTermination=false
             // Intentional Quit preserves its existing behavior. Update admission
-            // is only required for a termination initiated by the installer.
+            // is only required for a termination initiated by the installer. If Sparkle's
+            // installer is still waiting from a postponed quiet attempt, it will install and
+            // relaunch after this Quit: the relaunched app then closes again.
+            quitRecordOnExit = updates?.installerArmed == true
             beginCollectorTermination(process,attempt:attempt)
         }
         return .terminateLater
@@ -382,6 +565,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         quitting=true
         reputationConnection?.refreshTimer?.invalidate()
         reputationConnection?.accountView?.stopLoading()
+        notificationRelay?.stop()
         // Stop only our collector. Never signal Darkbloom or force-kill it.
         process.terminationHandler={ [weak self] _ in DispatchQueue.main.async {
             guard let self=self,self.pendingTermination,self.terminationAttempt==attempt else{return}
@@ -394,13 +578,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.pendingTermination=false;self.terminationAttempt=nil
             if !process.isRunning{NSApp.reply(toApplicationShouldTerminate:true);return}
             self.updateAdmission?.cancel()
-            self.quitting=false
+            self.quitting=false;self.quitRecordOnExit=false
             process.terminationHandler={ [weak self] _ in DispatchQueue.main.async {self?.collectorStopped()} }
+            self.startNotificationRelay()
             NSApp.reply(toApplicationShouldTerminate:false)
-            self.fail("Bloomkeeper is still saving local state. Please try the update or Quit again in a moment.");self.showDashboard()
+            if self.quietAttempt {self.updateTermination=false;self.postponeQuietInstall();return}
+            self.fail("BloomGauge is still saving local state. Please try the update or Quit again in a moment.");self.showDashboard()
         }
     }
-    func applicationWillTerminate(_ notification:Notification){quitting=true;collector?.terminationHandler=nil}
+    func applicationWillTerminate(_ notification:Notification){
+        quitting=true;collector?.terminationHandler=nil;notificationRelay?.stop()
+        // Timed from the actual exit, so the installer's relaunch finds it fresh.
+        if quitRecordOnExit {
+            UserDefaults.standard.set(bloomQuitRelaunchRecord(now:Date().timeIntervalSince1970),forKey:quietRelaunchDefaultsKey)
+            CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
+        }
+    }
 }
 
 /// Fixed identity of the dashboard window's persistent WebKit data store.
@@ -429,7 +622,7 @@ func bloomAppearanceName(_ choice:String?)->NSAppearance.Name? {
 
 // BEGIN help link policy (compiled directly by its regression test).
 func isBloomHelpLink(_ url:URL)->Bool {
-    if url.absoluteString == "mailto:support@bloomkeeper.io" {return true}
+    if url.absoluteString == "mailto:support@bloomgauge.io" {return true}
     guard url.scheme == "https",url.user == nil,url.password == nil,url.port == nil,url.query == nil else{return false}
     if url.host == "darkbloom.slack.com" {return url.path == "/archives/C0C4HC8HZLN" && url.fragment == nil}
     return url.host == "bloomformac.com" && ((["","/","/support","/privacy","/changelog","/beta/quickstart"].contains(url.path) && url.fragment == nil) || (url.path == "/" && url.fragment == "release"))

@@ -117,6 +117,12 @@ T90 = (
 BLOCK_SECONDS = 86400
 BLOCK_MAX_SECONDS = 4 * 86400
 HOME_RETRY_SECONDS = 3600  # a failed return home retries after 1 h, 2 h, 4 h ... (<= 24 h)
+# A pair Darkbloom refused is served as one model (pair_fallback) and goes back to the pair
+# once BloomGauge's memory check fits it again: from 1 h, then 2 h, 4 h ... (<= 24 h) after
+# each refusal in the last week.
+PAIR_RETRY_SECONDS = 3600
+PAIR_RETRY_MAX_SECONDS = 86400
+PAIR_REFUSALS_SECONDS = 7 * 86400
 RETRY_SECONDS = 15 * 60  # a move that could not start (no command sent)
 DEFER_RETRY_SECONDS = 60  # a deferred move retries after 1, 2, 4 ... min (<= RETRY_SECONDS)
 RESTORE_GRACE_SECONDS = 180  # after a failed switch: does the target become ready anyway?
@@ -139,8 +145,10 @@ LOAD_SECONDS = 90
 WAKE_GAP_SECONDS = 90
 IDLE_DEFAULT_MINUTES = 60  # Darkbloom's idle-unload default (IdleCommand.swift)
 EXCURSION_MAX_MINUTES = 24 * 60  # runaway cap; excursions end on evidence (excursions.end_check)
-STOPPED_WINDOW_SECONDS = 20 * 60  # Bloomkeeper restarts a provider its own command left stopped
+STOPPED_WINDOW_SECONDS = 20 * 60  # BloomGauge restarts a provider its own command left stopped
 STOPPED_GRACE_SECONDS = 90
+# MLX memory that means a model is really being loaded, in GB (a load allocates several).
+LOADING_ACTIVE_GB = 0.5
 BUSY = {'draining', 'switching', 'loading', 'starting', 'restarting', 'verifying', 'preloading'}
 PIN_SOURCES = ('manual', 'external')
 # Darkbloom's idle timeout unloaded a model that served: base rewards need a loaded model at
@@ -291,7 +299,8 @@ def provider_busy(raw):
         lifecycle.get('outcome') in BUSY
         or switch.get('outcome') in BUSY
         or raw.get('startup_preload_pending_models')
-        or (finite(active) and active > 0 and not raw.get('warm_models'))
+        # An idle unload leaves a few bytes allocated (Sep 29: 0.000005 GB): not a load.
+        or (finite(active) and active >= LOADING_ACTIVE_GB and not raw.get('warm_models'))
     ):
         return 'loading'
     return None
@@ -599,7 +608,7 @@ def notice_text(notice):
     """The announcement of a planned home change (event log and status)."""
     own = notice.get('ownUsdPerHour')
     return (
-        'Bloomkeeper will switch to %s at %s: it pays best on Macs like yours (about $%.3f/h on '
+        'BloomGauge will switch to %s at %s: it pays best on Macs like yours (about $%.3f/h on '
         '%s Macs%s). Choose Keep %s in Optimizer → Overview to stay on it.'
         % (
             notice['model'],
@@ -957,7 +966,14 @@ def decide(decision, state, context, now):
     elif current != name:
         failed = home.get('failedAt')
         why = admission(context['rows'].get(name), rules) or retry_hold(m, name, now)
-        if failed:
+        fallback = m.get('pairFallback') or {}
+        if fallback.get('pair') == name and fallback.get('solo') == current:
+            reason = (
+                '%s doesn’t fit in memory right now, so %s serves alone. BloomGauge goes back '
+                'to the pair once there is room (checking from %s).'
+                % (name, current, clock(fallback.get('retryAt') or now))
+            )
+        elif failed:
             reason = (
                 'Your pick %s could not be restored, so %s keeps serving. Pick it again to retry.'
                 % (name, current or 'the current model')
@@ -983,7 +999,7 @@ def decide(decision, state, context, now):
                 else 'Returning to home model %s.' % name
             )
     elif pinned(home):
-        reason = 'Holding your pick %s. Bloomkeeper will not switch away from it.' % name
+        reason = 'Holding your pick %s. BloomGauge will not switch away from it.' % name
     else:
         reason = 'Holding home model %s' % name + (
             ' (best paid on this Mac: $%.3f per ready hour over the last 30 days).'
@@ -1257,7 +1273,7 @@ class ManagerControl:
         self.dark_since = None
         self.dark_text = None
         self.offline_since = None
-        self.last_command = None  # Bloomkeeper's own last `darkbloom start` (this app run)
+        self.last_command = None  # BloomGauge's own last `darkbloom start` (this app run)
         self.tick_at = None
         self.observed_since = time.time()  # launch; a wake resets it
         self.load_cache = (0, LOAD_SECONDS)
@@ -1421,7 +1437,7 @@ class ManagerControl:
             o.proposal = None
             o.status = 'optimizing'
             o.detail = (
-                'Your pick %s is released. Bloomkeeper chooses the home model again and returns '
+                'Your pick %s is released. BloomGauge chooses the home model again and returns '
                 'to it right away if another model is serving.' % model
             )
             detail = o.detail
@@ -1439,8 +1455,8 @@ class ManagerControl:
             o.proposal = None
             o.status = 'optimizing'
             o.detail = (
-                'You kept %s: Bloomkeeper holds it as your pick and will not switch to %s. '
-                'Choose Manager on to let Bloomkeeper choose the home model again.'
+                'You kept %s: BloomGauge holds it as your pick and will not switch to %s. '
+                'Choose Manager on to let BloomGauge choose the home model again.'
                 % (model, notice['model'])
             )
             detail = o.detail
@@ -1490,14 +1506,19 @@ class ManagerControl:
             ):
                 m['home'] = {k: home[k] for k in SAVED_HOME_KEYS if k in home}
                 changed = True
-                detail = 'Home model is now %s (%s).' % (
+                fallback = m.get('pairFallback') or {}
+                detail = readable('Home model is now %s (%s).' % (
                     home['model'],
                     'best realized pay per ready hour on this Mac'
                     if home['source'] == 'history'
                     else network_note(home)
                     if home['source'] == 'network'
+                    else 'served alone because %s did not fit in memory' % fallback.get('pair')
+                    if fallback.get('solo') == home['model']
+                    else 'back on the pair now that it fits in memory'
+                    if fallback.get('pair') == home['model']
                     else 'the model serving when the manager started',
-                )
+                ))
             # The notice's timing is state; its figures are the decision's (saved as announced).
             # One that drops out without the change being made is kept a while as
             # homeNoticeLast, so that it comes back with its deadline and is not announced
@@ -1596,7 +1617,7 @@ class ManagerControl:
         session = raw.get('started_at')
         if served(raw) == 0 and finite(session):
             # This session never served: it has been dark since it started or last
-            # counted a ready minute, even if Bloomkeeper only noticed now (e.g. On).
+            # counted a ready minute, even if BloomGauge only noticed now (e.g. On).
             start = min(start, max(session, self.last_ready(settings)))
         # Our own switch or restore owns its time; the watchdog counts from its end.
         ended = (settings.get('lastSwitchResult') or {}).get('at')
@@ -1658,7 +1679,7 @@ class ManagerControl:
             self.dark_text = text
 
     def window(self, raw, drained=False):
-        """W = max(10 min, drain deadline + 3 x median load). `drained`: Bloomkeeper's own
+        """W = max(10 min, drain deadline + 3 x median load). `drained`: BloomGauge's own
         command already waited out the drain, so only the loads remain."""
         from optimizer import graceful_drain, DRAIN_SECONDS
 
@@ -1685,7 +1706,7 @@ class ManagerControl:
         if ready and not load_failed:
             self.dark_since = self.dark_text = self.offline_since = None
             self.settle(now, m, raw, current)
-            return False
+            return self.pair_return(now, settings, live, raw, current, m)
         from optimizer import drained_idle
 
         # Darkbloom's idle timeout unloaded a model that loaded and served in this session.
@@ -1800,7 +1821,7 @@ class ManagerControl:
                     'Loaded %s again after Darkbloom unloaded it while idle, so it keeps earning base rewards.'
                     % target
                     if success
-                    else 'Could not load %s again after Darkbloom unloaded it while idle. Bloomkeeper tries again after %s.'
+                    else 'Could not load %s again after Darkbloom unloaded it while idle. BloomGauge tries again after %s.'
                     % (target, clock(command_at + IDLE_RELOAD_SECONDS))
                 )
             else:
@@ -1819,7 +1840,7 @@ class ManagerControl:
         self.last_command = {'at': now, 'target': target}
 
     def stopped(self, now, settings, live, raw, current, m):
-        """The provider is not running. Start it again only if Bloomkeeper's own command left it
+        """The provider is not running. Start it again only if BloomGauge's own command left it
         stopped moments ago; a stop by the user (or before this app run) is always respected."""
         command = self.last_command or {}
         self.dark_since = None
@@ -1828,7 +1849,7 @@ class ManagerControl:
             return False
         if command.get('restarted'):
             self.say(
-                'Darkbloom stopped again after Bloomkeeper started %s. Start it in Optimizer → Overview or run `darkbloom start`.'
+                'Darkbloom stopped again after BloomGauge started %s. Start it in Optimizer → Overview or run `darkbloom start`.'
                 % command.get('target')
             )
             return True
@@ -1837,7 +1858,7 @@ class ManagerControl:
         home = self.home(settings, live, current, now) or {}
         good = (m.get('lastGood') or {}).get('model')
         target = home.get('model') or good or command.get('target')
-        what = 'Darkbloom stopped after Bloomkeeper’s switch to %s at %s' % (
+        what = 'Darkbloom stopped after BloomGauge’s switch to %s at %s' % (
             command.get('target'),
             clock(command['at']),
         )
@@ -1896,6 +1917,15 @@ class ManagerControl:
             excursion = state.get('excursion')
             if excursion and excursion.get('target') != current:
                 finish_excursion(state, now, 'the serving model changed', 'changed')
+                changed = True
+            fallback = state.get('pairFallback') or {}
+            trip = state.get('excursion') or {}
+            if (
+                fallback
+                and current not in (fallback.get('pair'), fallback.get('solo'))
+                and not (trip.get('target') == current and not trip.get('endReason'))
+            ):
+                state.pop('pairFallback')  # the user chose something else (an excursion returns)
                 changed = True
             if changed:
                 o.save()
@@ -1969,13 +1999,13 @@ class ManagerControl:
         what = self.what(settings, raw, current, start)
         if busy == 'draining' or (busy and elapsed < 2 * window):
             self.say(
-                '%s. Darkbloom is %s; Bloomkeeper restores %s if nothing loads after it.'
+                '%s. Darkbloom is %s; BloomGauge restores %s if nothing loads after it.'
                 % (what, busy, target or 'the home model')
             )
             return True
         if now < due:
             self.say(
-                '%s. If it is still not ready at %s, Bloomkeeper restores %s.'
+                '%s. If it is still not ready at %s, BloomGauge restores %s.'
                 % (what, clock(due), target or 'the home model')
             )
             return True
@@ -1985,7 +2015,7 @@ class ManagerControl:
             and (wd.get('early') or not self.changed(wd, settings, live, raw, target))
         ):
             self.say(
-                '%s, and restoring did not work. Bloomkeeper tries again at %s; check Darkbloom on the Mac.'
+                '%s, and restoring did not work. BloomGauge tries again at %s; check Darkbloom on the Mac.'
                 % (what, clock(wd['nextAt']))
             )
             return True
@@ -1995,7 +2025,7 @@ class ManagerControl:
         """Start one restore in the worker slot, after cheap in-tick checks."""
         o = self.o
         m = settings.get('manager') or {}
-        reason = None
+        reason = notice = remember = None
         stopped = purpose == 'stopped'
         if stopped:
             # Readings other than the provider's own must be fresh; it is known to be stopped.
@@ -2014,11 +2044,59 @@ class ManagerControl:
             reason = o.environment_reason(live, now, manual=True, move='restore', target=target)
             if not reason:
                 budget = o.selection_budget(target, live, raw)
-                credit = o.purge_credit(target, live, now) if budget and target != current else 0
+                # The purge frees file cache, not a loaded model's weights: a cold selection
+                # (idle-unloaded home) gets the credit too, or the Mac stays dark.
+                # A stopped provider's warm list is the last process's: its weights are cache now.
+                cold = stopped or not set(members(target)) <= set(raw.get('warm_models') or [])
+                credit = (
+                    o.purge_credit(target, live, now)
+                    if budget and (target != current or cold)
+                    else 0
+                )
                 if not budget:
                     reason = '%s is not available to load right now.' % target
                 elif budget['afterUnloadGB'] + credit < budget['requiredGB']:
                     reason = 'Not enough free memory to restore %s yet.' % target
+                # A stopped provider's readings are the last process's: its start is the retry.
+                fallback = (
+                    self.pair_fallback(now, target, live, raw, current, m)
+                    if reason and purpose in ('watchdog', 'recovery')
+                    else None
+                )
+                if fallback:
+                    # Waiting for this pair would never end (full-pair-ep-48-*-running).
+                    pair, (target, notice) = target, fallback
+                    old = m.get('pairFallback') or {}
+                    refused_at = (raw.get('last_model_load_error') or {}).get('at')
+                    recent = old.get('pair') == pair and (
+                        0 <= now - old.get('at', 0) < PAIR_REFUSALS_SECONDS
+                    )
+                    # A fallback that didn't start and is tried again, or the refusal of a
+                    # return that restored() counted already, is not a new refusal.
+                    counted = recent and (
+                        refused_at == old.get('refusedAt')
+                        or (finite(refused_at) and refused_at <= old.get('countedAt', 0))
+                    )
+                    refusals = (old.get('refusals', 0) if recent else 0) + (0 if counted else 1)
+                    remember = {
+                        'pair': pair,
+                        'solo': target,
+                        'at': now,
+                        'refusedAt': refused_at,
+                        'countedAt': old.get('countedAt', 0) if recent else 0,
+                        'refusals': max(refusals, 1),
+                        'retryAt': now
+                        + min(
+                            PAIR_RETRY_SECONDS * 2 ** (max(refusals, 1) - 1),
+                            PAIR_RETRY_MAX_SECONDS,
+                        ),
+                    }
+                    notice = readable(
+                        notice
+                        + ' It goes back to the pair once there is enough free memory for it '
+                        '(checking from %s).' % clock(remember['retryAt'])
+                    )
+                    what, reason = notice.split(': it refused')[0], None
         if reason and purpose == 'idle':
             return False  # not a dark Mac: the normal decision keeps the tick
         if reason:
@@ -2057,7 +2135,10 @@ class ManagerControl:
                 'purpose': purpose,
                 'reload': reload,
                 'session': session_key(raw),
+                **({'fallbackFrom': remember['pair']} if remember else {}),
             }
+            if remember:
+                o.state.setdefault('manager', {})['pairFallback'] = remember
             o.save()
             o.status = 'switching'
             o.detail = readable(
@@ -2079,7 +2160,109 @@ class ManagerControl:
                 daemon=False,
             )
             o.worker.start()
+        if notice:
+            o.store.event(live['account'], live['device'], now, 'manager-notice', target, notice)
         return True
+
+    def pair_return(self, now, settings, live, raw, current, m):
+        """Serving one model of a pair Darkbloom refused (pair_fallback): back to the pair once
+        its retry time has come, BloomGauge's memory check fits it, the Mac is idle and a
+        voluntary move may run (battery, heat), while the home is still the pair (a pin) or the
+        one-model stand-in. A home the manager chose on its own evidence (history, Macs like
+        yours) or another pin keeps the model. Returns True only when the restore started;
+        otherwise the normal decision keeps the tick."""
+        fallback = m.get('pairFallback') or {}
+        pair = fallback.get('pair')
+        home = m.get('home') or {}
+        o = self.o
+        stand_in = home.get('source') == 'current' and home.get('model') == current
+        if (
+            not pair
+            or current != fallback.get('solo')
+            or not finite(fallback.get('retryAt'))
+            or now < fallback['retryAt']
+            or not (not home or stand_in or home.get('model') == pair)
+            or (pinned(home) and home.get('model') != pair)
+            or raw.get('inference_active') is not False
+            or provider_busy(raw)
+            or (finite(m.get('restoreAt')) and now < m['restoreAt'])
+            or o.environment_reason(live, now, manual=True, target=pair)
+        ):
+            return False
+        with o.lock:
+            if (
+                o.update_guard.active()
+                or o.state.get('pending')
+                or o.state.get('requestedModel')
+                or (o.worker and o.worker.is_alive())
+                or (o.warmup_worker and o.warmup_worker.is_alive())
+                or o.command_lock.locked()
+            ):
+                return False
+        budget = o.selection_budget(pair, live, raw)
+        if not budget or budget['afterUnloadGB'] + o.purge_credit(pair, live, now) < budget[
+            'requiredGB'
+        ]:
+            return False
+        return self.dispatch(
+            now,
+            pair,
+            'pair',
+            settings,
+            live,
+            raw,
+            current,
+            readable('There is enough free memory for %s again' % pair),
+        )
+
+    def pair_fallback(self, now, target, live, raw, current, m):
+        """(solo model, why) when the pair to restore is the serving pair, Darkbloom refused a
+        member this session (its load gate: loaded() load_failed) and BloomGauge's memory
+        check can't fit the pair either; else None. The member that loaded (warm, serving)
+        comes first, then the other member unless Darkbloom refused it; each must fit alone
+        now and not be blocked. A pair only short of memory for a while, with no refusal from
+        Darkbloom, keeps waiting as before."""
+        models = members(target)
+        if (
+            len(models) != 2
+            or target != current
+            or selection_key(raw.get('advertised_models')) != target
+            or not finite(raw.get('written_at'))
+            or not -5 < now - raw['written_at'] < 15
+            or not loaded(raw, now)[1]
+        ):
+            return None
+        o = self.o
+        pair = o.selection_budget(target, live, raw)
+        if pair and pair['afterUnloadGB'] >= pair['requiredGB']:
+            return None
+        refused = (raw.get('last_model_load_error') or {}).get('model')
+        if refused not in models:
+            return None
+        warm = raw.get('warm_models') if isinstance(raw.get('warm_models'), list) else []
+        order = [x for x in models if x in warm] + [
+            x for x in models if x not in warm and x != refused
+        ]
+        for solo in order:
+            if blocked(m, solo, now) or retry_hold(m, solo, now):
+                continue
+            budget = o.selection_budget(solo, live, raw)
+            if not budget or budget['afterUnloadGB'] + o.purge_credit(
+                solo, live, now
+            ) < budget['requiredGB']:
+                continue
+            return solo, readable(
+                'Darkbloom can’t load %s together on this Mac: it refused %s, and there isn’t '
+                'enough free memory for both. BloomGauge serves %s alone%s instead of waiting '
+                'for the pair.'
+                % (
+                    target,
+                    refused,
+                    solo,
+                    ', which is already loaded,' if solo in warm else '',
+                )
+            )
+        return None
 
     def endpoint_missing(self):
         from provider_control import endpoint_issue
@@ -2161,11 +2344,15 @@ class ManagerControl:
                     except WarmupError as error:
                         code = getattr(error, 'code', None) or 'warmup-failed'
                     return
-                if target != selection and o.purge_before_load(target):
-                    purged = o.read_state()
-                    if session_key(purged) != session_key(raw):
+                # A restart that reloads the same cold model needs the cleanup as much as a
+                # switch (a reload of it recovers the cache in perform_prewarm instead).
+                cold = stopped or not set(members(target)) <= set(raw.get('warm_models') or [])
+                purged = (target != selection or cold) and o.purge_before_load(target)
+                if purged:
+                    fresh = o.read_state()
+                    if session_key(fresh) != session_key(raw):
                         raise ExternalChange('The provider changed during file-cache cleanup.')
-                    raw = purged
+                    raw = fresh
                 live = o.live or {}
                 if stopped:
                     live = {
@@ -2180,6 +2367,12 @@ class ManagerControl:
                         live, time.time(), manual=True, move='restore', target=target
                     )
                 ):
+                    if purged and budget and budget['afterUnloadGB'] < budget['requiredGB']:
+                        # The cleanup didn't free enough: no credit for an hour, as after a
+                        # switch, or every retry purges again while the Mac stays dark.
+                        with o.lock:
+                            o.state['purgeShortfall'] = {'model': target, 'at': time.time()}
+                            o.save()
                     raise Blocked('Memory, heat or fresh readings changed before the restore.')
                 o.store.event(
                     account,
@@ -2187,12 +2380,16 @@ class ManagerControl:
                     start,
                     'switching',
                     target,
-                    'Restoring %s (%s). No accepted work is cancelled; --force is never used.'
-                    % (
-                        target,
-                        {'watchdog': 'readiness watchdog', 'stopped': 'provider stopped'}.get(
-                            purpose, 'failed switch'
-                        ),
+                    readable(
+                        'Restoring %s (%s). No accepted work is cancelled; --force is never used.'
+                        % (
+                            target,
+                            {
+                                'watchdog': 'readiness watchdog',
+                                'stopped': 'provider stopped',
+                                'pair': 'enough free memory for the pair again',
+                            }.get(purpose, 'failed switch'),
+                        )
                     ),
                 )
                 attempted, stage, command_at = True, 'start', time.time()
@@ -2248,7 +2445,7 @@ class ManagerControl:
             selection = None
         notices = []
         with o.lock:
-            o.state.pop('pending', None)
+            fallback_from = (o.state.pop('pending', None) or {}).get('fallbackFrom')
             o.previous = None
             o.idle_since = None
             m = o.state.setdefault('manager', {})
@@ -2279,12 +2476,28 @@ class ManagerControl:
                 o.state['expectedModel'] = target
                 o.state['lastSwitchAt'] = end
                 o.state.pop('rollbackModel', None)
+                pair = m.get('pairFallback') or {}
+                if purpose == 'pair' and pair.get('pair') == target:
+                    if home.get('source') == 'current' and home.get('model') == pair.get('solo'):
+                        # The stand-in home goes with it; the pair is home again (choose_home).
+                        m.pop('home', None)
+                        home = {}
+                    # Only the refusals stay (a new one within a week waits longer).
+                    m['pairFallback'] = {
+                        k: pair[k] for k in ('pair', 'at', 'refusals', 'refusedAt', 'countedAt') if k in pair
+                    }
                 failed = (m.pop('recovery', None) or {}).get('failedTarget')
                 m.pop('watchdog', None)
                 if pinned(home) and home.get('model') != target:
                     home['failedAt'] = end
                 text = (
-                    'Restored %s after the switch to %s failed. Automatic control continues.'
+                    'Now serving %s alone instead of %s. Automatic control continues.'
+                    % (target, fallback_from)
+                    if fallback_from
+                    else 'There was enough free memory for %s again: serving the pair. Automatic control continues.'
+                    % target
+                    if purpose == 'pair'
+                    else 'Restored %s after the switch to %s failed. Automatic control continues.'
                     % (target, failed)
                     if purpose == 'recovery'
                     else 'Started %s again: Darkbloom had stopped after a switch. Automatic control continues.'
@@ -2293,12 +2506,13 @@ class ManagerControl:
                     else 'Watchdog restored %s after %d min with no ready model. Automatic control continues.'
                     % (target, max(0, end - dark_at) // 60 + 1)
                 )
-                if pinned(home) and home.get('model') != target:
+                if pinned(home) and home.get('model') != target and home.get('model') != fallback_from:
                     text += (
                         ' Your pick %s could not be restored; pick it again to retry.'
                         % home['model']
                     )
-                notices.append(text)
+                if not fallback_from:  # dispatch already explained the fallback
+                    notices.append(text)
             elif attempted:
                 o.state['lastSwitchFailure'] = {
                     'model': target,
@@ -2314,6 +2528,18 @@ class ManagerControl:
                 if target == home.get('model'):
                     self.hold_target(m, target, end)  # home: retry hold; pin: counts a failure
                 text = 'Restoring %s did not verify.' % target
+                pair = m.get('pairFallback') or {}
+                if purpose == 'pair' and pair.get('pair') == target:
+                    # Darkbloom refused it again: the next try waits twice as long.
+                    pair['refusals'] = pair.get('refusals', 0) + 1
+                    pair['at'] = pair['countedAt'] = end
+                    pair['retryAt'] = end + min(
+                        PAIR_RETRY_SECONDS * 2 ** (pair['refusals'] - 1), PAIR_RETRY_MAX_SECONDS
+                    )
+                    text = 'Going back to %s did not work: Darkbloom could not load both. BloomGauge tries again from %s if there is room.' % (
+                        target,
+                        clock(pair['retryAt']),
+                    )
                 if purpose == 'recovery':
                     rec = m.get('recovery') or {}
                     rec['attempts'] = rec.get('attempts', 0) + 1
@@ -2333,7 +2559,7 @@ class ManagerControl:
                     if wd.get('attempts', 0) >= RESTORE_ATTEMPTS:
                         back_off(wd, end, o.live)
                         notices.append(
-                            'No model is ready and two restores did not work. Bloomkeeper tries again at %s; check Darkbloom on the Mac (darkbloom doctor).'
+                            'No model is ready and two restores did not work. BloomGauge tries again at %s; check Darkbloom on the Mac (darkbloom doctor).'
                             % clock(wd['nextAt'])
                         )
                     m['watchdog'] = wd
@@ -2362,7 +2588,7 @@ class ManagerControl:
             m.pop('recovery', None)
             wd = m['watchdog'] = back_off(m.get('watchdog') or {}, now, o.live)
             detail = (
-                'Restoring after the failed switch to %s did not work twice. Automatic control stays on. Bloomkeeper tries again at %s; check Darkbloom on the Mac (darkbloom doctor).'
+                'Restoring after the failed switch to %s did not work twice. Automatic control stays on. BloomGauge tries again at %s; check Darkbloom on the Mac (darkbloom doctor).'
                 % (rec.get('failedTarget'), clock(wd['nextAt']))
             )
             detail = readable(detail)
@@ -2597,7 +2823,7 @@ class ManagerControl:
         return resume_manual(self.o.state, request_id, model, status)
 
     def external(self, now, settings, live, raw, current):
-        """The serving model changed outside Bloomkeeper: keep it (a pin), never pause or revert.
+        """The serving model changed outside BloomGauge: keep it (a pin), never pause or revert.
 
         Returns True once handled. False: nothing to adopt yet (stopped, or a selection that
         disagrees with what the daemon advertises); the caller still runs the watchdog.
@@ -2637,9 +2863,9 @@ class ManagerControl:
                 state['home'] = pin(current, now, 'external')
                 for key in ('recovery', 'retryAt'):
                     state.pop(key, None)
-                finish_excursion(state, now, 'the model was changed outside Bloomkeeper', 'external')
+                finish_excursion(state, now, 'the model was changed outside BloomGauge', 'external')
                 detail = (
-                    'The serving model changed outside Bloomkeeper to %s. Holding it as your pick; the manager will not switch away from it.'
+                    'The serving model changed outside BloomGauge to %s. Holding it as your pick; the manager will not switch away from it.'
                     % current
                 )
             detail = readable(detail)

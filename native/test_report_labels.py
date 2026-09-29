@@ -77,3 +77,13 @@ class ReportTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class StrategyLabelTests(unittest.TestCase):
+    def test_reports_name_the_saved_strategy(self):
+        import diagnostics
+
+        self.assertEqual(diagnostics.optimizer_strategy({'managerStrategy': 1}), 'manager')
+        self.assertEqual(diagnostics.optimizer_strategy({'managerStrategy': 0}), 'legacy')
+        # No saved policy: new installs get the Manager.
+        self.assertEqual(diagnostics.optimizer_strategy(None), 'manager')

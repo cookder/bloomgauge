@@ -266,7 +266,7 @@ class RuntimeProofTests(Fixture):
         self.assertEqual(list(saved), [self.live['device']])
         self.assertAlmostEqual(saved[self.live['device']][QWEN], time.time(), delta=5)
         # Back on 'a'. Old rows are pruned; the saved proof alone still counts, also after
-        # Bloomkeeper reopens and reads it back.
+        # BloomGauge reopens and reads it back.
         self.o.raw = copy.deepcopy(self.raw)
         self.o.read_state.return_value = copy.deepcopy(self.raw)
         self.o.live['provider']['model'] = 'a'

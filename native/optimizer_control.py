@@ -97,7 +97,7 @@ class OptimizerControl:
         if self.operation and self.operation.get('status') in ('pending', 'starting', 'waiting'):
             self.operation.update(
                 status='blocked',
-                detail='Bloomkeeper restarted before On was ready. Review the current status, then turn On again.',
+                detail='BloomGauge restarted before On was ready. Review the current status, then turn On again.',
                 blocker={'code': 'interrupted', 'action': 'retry'},
             )
             self.save()
@@ -853,7 +853,7 @@ class OptimizerControl:
             # The manager may turn on with no ready model; its watchdog restores home.
             if not manager.enabled(
                 op.get('policy') if op['firstPlan'] else o.state.get('demandPolicy')
-            ) and not o.tracking(o.raw, time.time())['counting']:
+            ) and not o.tracking(o.raw, time.time(), cleared=False)['counting']:
                 self.operation.update(
                     status='waiting',
                     detail='Waiting for fresh verified readiness before turning On.',

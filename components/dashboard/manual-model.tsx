@@ -372,11 +372,11 @@ export function ManualModelControl({
     ? `Starts Darkbloom with ${label} and checks that it is warm and ready.${fit ? ` ${fit}.` : ''}`
     : sameRunning && !provider?.endpointSetupRequired
       ? managed
-        ? `Nothing restarts. Bloomkeeper keeps ${label} running, restores it if it fails and never switches away from it.`
+        ? `Nothing restarts. BloomGauge keeps ${label} running, restores it if it fails and never switches away from it.`
         : `Nothing restarts. Automatic switching turns off and ${label} keeps serving.`
       : sameRunning
         ? `Sets up pre-warming for ${label}. Darkbloom restarts once and accepted requests finish first.`
-        : `Darkbloom restarts with ${label}${current ? ` instead of ${current}` : ''}; with Darkbloom 0.9.9 or later, accepted requests finish first.${fit ? ` ${fit}.` : ''} ${managed ? `${label} becomes your pick: Bloomkeeper keeps it running and never switches away from it.` : 'Automatic switching stays off.'}`;
+        : `Darkbloom restarts with ${label}${current ? ` instead of ${current}` : ''}; with Darkbloom 0.9.9 or later, accepted requests finish first.${fit ? ` ${fit}.` : ''} ${managed ? `${label} becomes your pick: BloomGauge keeps it running and never switches away from it.` : 'Automatic switching stays off.'}`;
   return (
     <section
       className={`${embedded ? 'manual-model-embedded' : 'panel'} manual-model-control`}
@@ -411,10 +411,10 @@ export function ManualModelControl({
       </div>
       <p className="manual-model-intro">
         {managed
-          ? 'Choose the model Bloomkeeper should hold. It keeps your pick running and restores it if it fails.'
+          ? 'Choose the model BloomGauge should hold. It keeps your pick running and restores it if it fails.'
           : stopped
-            ? 'Choose a model, then start it here. Bloomkeeper starts Darkbloom in the background.'
-            : 'Choose a model and switch here. Bloomkeeper handles the change and checks that the model is ready.'}
+            ? 'Choose a model, then start it here. BloomGauge starts Darkbloom in the background.'
+            : 'Choose a model and switch here. BloomGauge handles the change and checks that the model is ready.'}
       </p>
       <div className="manual-model-form">
         <div className="manual-model-choice">
@@ -515,11 +515,11 @@ export function ManualModelControl({
         }
       >
         {uncertain
-          ? 'Your original selection is held while Bloomkeeper checks the command receipt.'
+          ? 'Your original selection is held while BloomGauge checks the command receipt.'
           : blocker && fresh && !operating
             ? withoutCircularHint(blocker)
             : managed
-              ? 'Your pick becomes the model Bloomkeeper holds: it is restored after a failure and never switched away. Choose Manager on to let Bloomkeeper choose again.'
+              ? 'Your pick becomes the model BloomGauge holds: it is restored after a failure and never switched away. Choose Manager on to let BloomGauge choose again.'
               : stopped
                 ? 'Starts the selected model. Automatic switching stays off until you turn the optimizer on.'
                 : 'A manual switch pauses automation. With Darkbloom 0.9.9 or later it starts right away and accepted requests finish first. Older versions wait for an idle gap, then switch after five minutes if still busy, which may interrupt requests.'}
@@ -573,8 +573,8 @@ export function ManualModelControl({
           {startOrSwitch} {label} will also verify runtime support, network
           eligibility and warm readiness.
           {stopped
-            ? ' If verification fails, Bloomkeeper shows the reason here.'
-            : ' If verification fails, Bloomkeeper attempts to restore the previous ready model when safe.'}
+            ? ' If verification fails, BloomGauge shows the reason here.'
+            : ' If verification fails, BloomGauge attempts to restore the previous ready model when safe.'}
         </p>
       )}
       {((loadError && !connectionError) ||
@@ -788,7 +788,7 @@ export function ManualModelControl({
           />
         )}
         <p>
-          Bloomkeeper checks provider identity, memory, power and temperature before
+          BloomGauge checks provider identity, memory, power and temperature before
           changing models. You can cancel a queued switch before it starts.
         </p>
         <button

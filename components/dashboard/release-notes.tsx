@@ -91,15 +91,15 @@ export function ReleaseNotesNotice({ banner = true }: { banner?: boolean }) {
     <section
       ref={panel}
       className={`release-notice ${open ? 'release-notice-open' : ''}`}
-      aria-label="What's new in Bloomkeeper"
+      aria-label="What's new in BloomGauge"
     >
       <div className="release-notice-heading">
         <Sparkles size={19} />
         <div>
           <strong>
             {data?.release
-              ? `What’s new in Bloomkeeper ${data.installedVersion}`
-              : 'What’s new in Bloomkeeper'}
+              ? `What’s new in BloomGauge ${data.installedVersion}`
+              : 'What’s new in BloomGauge'}
           </strong>
           {!open && <p>{data?.release?.title}</p>}
         </div>

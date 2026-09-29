@@ -115,17 +115,17 @@ class UsageIntegration:
             if error == 'opt_out_not_saved':
                 safe['consentSaved'] = False
                 safe['lastError'] = (
-                    'Sharing is stopped for this session, but Bloomkeeper could not save that choice. Keep Bloomkeeper open and retry before quitting.'
+                    'Sharing is stopped for this session, but BloomGauge could not save that choice. Keep BloomGauge open and retry before quitting.'
                 )
             elif error:
                 safe['lastError'] = (
                     'Deletion is pending. Retry when this Mac is connected.'
                     if pending
-                    else 'Usage sharing is temporarily unavailable. Your Bloomkeeper features are unchanged.'
+                    else 'Usage sharing is temporarily unavailable. Your BloomGauge features are unchanged.'
                 )
         except Exception:
             safe['lastError'] = (
-                'Usage sharing is unavailable. Your Bloomkeeper features are unchanged.'
+                'Usage sharing is unavailable. Your BloomGauge features are unchanged.'
             )
         return {
             'schema': 1,

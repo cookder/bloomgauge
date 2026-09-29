@@ -202,7 +202,7 @@ export const DemandGlance = memo(function DemandGlance({
           {data
             ? `, averaged every ${Math.round(data.bucketSeconds / 60) || 1} min`
             : ''}
-          . The three busiest, plus any model Bloomkeeper is serving, trialling or
+          . The three busiest, plus any model BloomGauge is serving, trialling or
           considering.
         </span>
         <button

@@ -317,7 +317,7 @@ class Flow(tm.Harness):
         notice = self.o.state['manager']['homeNotice']
         self.assertEqual((notice['model'], notice['from']), ('b', 'a'))
         self.assertEqual(notice['until'], self.now + 7200)
-        self.assertIn('Bloomkeeper will switch to b at', self.events('manager')[-1])
+        self.assertIn('BloomGauge will switch to b at', self.events('manager')[-1])
         summary = self.control.projection(self.now)['manager']
         shown = summary['homeNotice']
         self.assertEqual((shown['model'], shown['from']), ('b', 'a'))

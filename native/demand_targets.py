@@ -9,7 +9,7 @@ from model_combinations import selection_key
 
 GEMMA = 'gemma-4-26b-qat-4bit'
 # The earnings target is a report-only goal. Decisions use the protect level:
-# above it Bloomkeeper never interrupts a model to learn; below it, learning time may.
+# above it BloomGauge never interrupts a model to learn; below it, learning time may.
 DEFAULT_TARGET = 0.12
 HIGH_EARNINGS_USD = 0.20
 

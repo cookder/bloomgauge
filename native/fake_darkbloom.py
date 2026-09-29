@@ -1,6 +1,6 @@
 """A fake Darkbloom 0.9.10 and a simulated Mac for end-to-end manager tests (test only).
 
-Bloomkeeper's real Optimizer, manager, manual controls and On/Off control run unchanged
+BloomGauge's real Optimizer, manager, manual controls and On/Off control run unchanged
 against a temporary HOME: the launch agent plist, provider.toml, daemon-state.json and
 local.json are real files, and every `darkbloom`/`launchctl`/`pmset`/`sudo` call goes
 through `FakeDarkbloom.run` (the Optimizer's `runner`). Time is virtual (`Clock`): the
@@ -25,10 +25,15 @@ What the fake does, from the 0.9.10 RC source (Layr-Labs/d-inference provider-sw
   (120) while daemon-state is written every 30 s; afterwards every 5 s.
 - `models list` without `--all` lists only enabled_models (ModelsCommand.List).
 - Models load on demand: the coordinator routes work only to warm models; a cold model is
-  loaded by a local-endpoint request (Bloomkeeper's pre-warm) and unloaded again after
+  loaded by a local-endpoint request (BloomGauge's pre-warm) and unloaded again after
   idle_timeout_mins (60 by default; 0 keeps it loaded).
-- Trust: the provider registers after the preload gate and reports trust 'online' after
-  `trust_delay` seconds (App Attest pending while it waits).
+- Trust (coordinator 0.9.11: appattest/service/authorization_status.go, api/provider.go): the
+  provider registers after the preload gate. While verification is pending (`trust_delay`
+  seconds: App Attest or MDM) it is reported ONLINE but not yet authorized, listed in the
+  provider roster as self_signed, and the coordinator routes it no work (the local endpoint
+  serves meanwhile); then hardware-trusted, or with `attest_only` self_signed
+  with an App Attest authorization (serving_trust.py). `untrusted_delay` instead models
+  failing attestation challenges ("no response"): status 'untrusted' for that long.
 """
 
 import copy
@@ -68,8 +73,18 @@ PASSTHROUGH_ENV = (
     'DARKBLOOM_PREFILL_DEADLINE_MODE',
 )
 OS_RESERVE_GB = 4  # HardwareDetector: memoryAvailableGb = total - OS reserve (model scan)
-LOAD_HEADROOM_GB = 4  # ModelLoadAdmission: free memory needed beyond the weights
+# ModelLoadAdmission: free memory needed beyond the weights = the model's activation floor
+# (UnifiedMemoryCap: 5.5 GiB default, 3.5 measured for gpt-oss-20b) + 1 GB minimum KV.
+LOAD_KV_GB = 1
+
+
+def load_headroom_gb(model):
+    return (3.5 if model == 'gpt-oss-20b' else 5.5) + LOAD_KV_GB
 STATE_SECONDS = 5  # heartbeat / 2
+PURGE_RULE = (
+    'Sudoers entry: /private/etc/sudoers.d/bloom-dashboard-cache\n    RunAsUsers: root\n'
+    '    Options: !authenticate\n    Commands:\n\t/usr/sbin/purge ""\n    Matched: /usr/sbin/purge\n'
+)
 PRELOAD_STATE_SECONDS = 30  # preloadLivenessRefreshInterval
 PRELOAD_GATE_SECONDS = 120  # startup_preload_timeout_secs default
 
@@ -226,6 +241,7 @@ class Process:
         self.preload = []  # startup plan still to load
         self.gate_until = None  # registration waits for the preload until then
         self.registered_at = None
+        self.untrusted_until = None
         self.trusted_at = None
         self.requests = self.tokens = 0
         self.active_until = 0
@@ -245,12 +261,28 @@ class FakeDarkbloom:
         runtime_caps=(),
         load_scale=1.0,
         trust_delay=5,
+        untrusted_delay=0,
+        attest_only=False,
         drain_seconds=4,
         traffic_seconds=60,
         downloaded=(GEMMA, QWEN, GPT),
         rotating_key=False,
+        unload_cache=False,
+        purge=False,
+        unload_residual_gb=0,
     ):
         self.mac = mac
+        # macOS keeps an idle-unloaded model's weight files in active file cache, outside the
+        # free + inactive memory Darkbloom admits a load against (Sep 28: 22.8 GB free, need
+        # 23.9, ~9.6 GB cached; the home model could not load again until `sudo purge`).
+        self.unload_cache = unload_cache
+        # MLX memory Darkbloom still reports after an idle unload (Sep 29: 5e-06 GB).
+        self.unload_residual_gb = unload_residual_gb
+        self.residual = False
+        self.battery = False  # pmset reports battery power (the Mac was unplugged)
+        self.file_cache_gb = 0
+        # The exact passwordless `sudo -n /usr/sbin/purge` rule BloomGauge's setup installs.
+        self.purge = purge
         # Darkbloom can't use its keychain key (e.g. a locked keychain): a new temporary
         # attestation key on every start, so the device id changes with each process.
         self.rotating_key = rotating_key
@@ -259,6 +291,13 @@ class FakeDarkbloom:
         self.runtime_caps = sorted(runtime_caps)
         self.load_scale = load_scale
         self.trust_delay = trust_delay
+        self.untrusted_delay = untrusted_delay
+        # Serving through App Attest without Darkbloom MDM (macOS 27, or after
+        # `darkbloom unenroll --keep-serving`): the coordinator reports trust_level
+        # self_signed with an app_attest authorization, and routes work as usual. Seen live on
+        # Sep 28: 162 of ~1,100 online providers (roster: self_signed, app_attest_authorized,
+        # mdm_verified False). Once Darkbloom retires MDM, every Mac.
+        self.attest_only = attest_only
         self.drain_seconds = drain_seconds
         self.traffic_seconds = traffic_seconds  # None: no network work at all
         self.downloaded = [MODELS[m] for m in downloaded]
@@ -291,7 +330,10 @@ class FakeDarkbloom:
         }
         if env:
             plist['EnvironmentVariables'] = dict(env)
-        self.plist_path.write_bytes(plistlib.dumps(plist))
+        # Darkbloom writes the agent atomically (LaunchAgent.swift: .atomic).
+        tmp = self.plist_path.with_suffix('.tmp')
+        tmp.write_bytes(plistlib.dumps(plist))
+        tmp.replace(self.plist_path)
 
     def plist(self):
         return plistlib.loads(self.plist_path.read_bytes())
@@ -329,7 +371,7 @@ class FakeDarkbloom:
     # -- CLI --------------------------------------------------------------------------
 
     def run(self, argv, **kwargs):
-        """subprocess.run for every command Bloomkeeper sends."""
+        """subprocess.run for every command BloomGauge sends."""
         argv = [str(a) for a in argv]
         with self.lock:
             self.commands.append((self.mac.clock.time(), argv))
@@ -337,7 +379,14 @@ class FakeDarkbloom:
             text = '\t"%s" => %s\n' % (LABEL, 'true' if self.disabled else 'false')
             return subprocess.CompletedProcess(argv, 0, stdout='disabled services = {\n%s}\n' % text)
         if argv[0] == '/usr/bin/pmset':
-            return subprocess.CompletedProcess(argv, 0, stdout="Now drawing from 'AC Power'\n")
+            source = 'Battery Power' if self.battery else 'AC Power'
+            return subprocess.CompletedProcess(argv, 0, stdout="Now drawing from '%s'\n" % source)
+        if argv == ['/usr/bin/sudo', '-n', '-ll', '/usr/sbin/purge'] and self.purge:
+            return subprocess.CompletedProcess(argv, 0, stdout=PURGE_RULE, stderr='')
+        if argv == ['/usr/bin/sudo', '-n', '/usr/sbin/purge'] and self.purge:
+            with self.lock:
+                self.file_cache_gb = 0
+            return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
         if argv[0] in ('/usr/bin/sudo', '/usr/bin/security'):
             return subprocess.CompletedProcess(argv, 1, stdout='', stderr='')
         if argv[0] != str(self.bin):
@@ -396,7 +445,7 @@ class FakeDarkbloom:
         return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(body), stderr='')
 
     def elapse(self, seconds, deadline, argv, kwargs):
-        """The CLI blocks for `seconds`; Bloomkeeper kills it at its subprocess timeout."""
+        """The CLI blocks for `seconds`; BloomGauge kills it at its subprocess timeout."""
         limit = kwargs.get('timeout')
         if limit is not None and self.mac.clock.time() + seconds > deadline:
             self.mac.sleep(max(0, deadline - self.mac.clock.time()))
@@ -479,7 +528,7 @@ class FakeDarkbloom:
         self.end_process('stopped')
         return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
 
-    # -- user and Darkbloom actions outside Bloomkeeper ------------------------------
+    # -- user and Darkbloom actions outside BloomGauge ------------------------------
 
     def restart(self, version=None):
         """`darkbloom restart` or a self-update: drain, relaunch from the same plist."""
@@ -563,7 +612,8 @@ class FakeDarkbloom:
 
     def register(self, proc, now):
         proc.registered_at = now
-        proc.trusted_at = now + self.trust_delay
+        proc.untrusted_until = now + self.untrusted_delay
+        proc.trusted_at = now + max(self.trust_delay, self.untrusted_delay)
 
     def busy(self, proc):
         return proc.active_until > self.mac.clock.time()
@@ -574,9 +624,23 @@ class FakeDarkbloom:
     def free_gb(self):
         return self.mac.memory_available()
 
+    def load_reserve_gb(self):
+        """UnifiedMemoryCap's load reserve: memory_reserve_gb (default 4), but at least what
+        the 90% cap (2 GiB floor) leaves the OS. Darkbloom holds it back from free memory
+        before admitting a load (ModelLoadAdmission.freeForLoadGb)."""
+        configured = 4
+        try:
+            table = parse_toml(self.config_path().read_text())
+            value = (table.get('provider') or {}).get('memory_reserve_gb')
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+                configured = value
+        except (OSError, ValueError, AttributeError):
+            pass
+        return max(configured, self.mac.memory_gb * 0.1, 2)
+
     def begin_load(self, proc, model, now, via):
-        need = MODELS[model].gb + LOAD_HEADROOM_GB
-        if self.free_gb() < need:
+        need = MODELS[model].gb + load_headroom_gb(model)
+        if self.free_gb() - self.load_reserve_gb() < need:
             proc.load_error = {'model': model, 'at': now, 'reason': 'insufficient memory'}
             return False
         proc.loading = (model, now + self.load_seconds(model), via)
@@ -593,6 +657,9 @@ class FakeDarkbloom:
             proc.warm[model] = now
             proc.current = model
             proc.loading = None
+            self.residual = False
+            # The load read its weights through the cache: they are the model's memory now.
+            self.file_cache_gb = max(0, round(self.file_cache_gb - MODELS[model].gb, 2))
             self.loaded_store = sorted(proc.warm)
         if proc.preload and not proc.loading and proc.lifecycle['outcome'] == 'serving':
             model = proc.preload.pop(0)
@@ -622,6 +689,9 @@ class FakeDarkbloom:
             for model, used in list(proc.warm.items()):
                 if now - used >= proc.idle_minutes * 60 and not self.busy(proc):
                     del proc.warm[model]
+                    self.residual = True
+                    if self.unload_cache:
+                        self.file_cache_gb = round(self.file_cache_gb + MODELS[model].gb, 2)
                     self.loaded_store = sorted(proc.warm)
         cadence = PRELOAD_STATE_SECONDS if proc.registered_at is None else STATE_SECONDS
         if proc.written_at is None or now - proc.written_at >= cadence:
@@ -654,14 +724,37 @@ class FakeDarkbloom:
             'stats': {'requests_served': proc.requests, 'tokens_generated': proc.tokens, 'usage_gaps': 0},
             'capacity': {
                 'total_memory_gb': self.mac.memory_gb,
-                'gpu_memory_active_gb': self.resident_gb(),
+                'gpu_memory_active_gb': self.resident_gb()
+                or (self.unload_residual_gb if self.residual else 0),
                 'gpu_memory_cache_gb': 0,
             },
         }
-        if proc.trusted_at is not None and now >= proc.trusted_at:
-            state['trust'] = {'trust_level': 'hardware', 'status': 'online', 'reason': '', 'received_at': proc.trusted_at}
+        if proc.trusted_at is not None and now >= proc.trusted_at and self.attest_only:
+            state['trust'] = {
+                'trust_level': 'self_signed', 'status': 'online', 'reason': 'Provider authorization updated',
+                'received_at': proc.trusted_at,
+                'authorization': {'path': 'app_attest', 'reason': 'app_attest_verified', 'protocol': 1,
+                                  'app_attest_available': True, 'mdm_removal_ready': True},
+            }
+        elif proc.trusted_at is not None and now >= proc.trusted_at:
+            state['trust'] = {
+                'trust_level': 'hardware', 'status': 'online', 'reason': 'MDM verification passed',
+                'received_at': proc.trusted_at,
+                'authorization': {'path': 'legacy', 'reason': 'legacy_verification_active', 'protocol': 1},
+            }
+        elif proc.untrusted_until is not None and now < proc.untrusted_until:
+            state['trust'] = {
+                'trust_level': 'none', 'status': 'untrusted', 'reason': 'no response',
+                'received_at': proc.registered_at,
+                'authorization': {'path': 'none', 'reason': 'app_attest_qualification_required', 'protocol': 1},
+            }
         elif proc.registered_at is not None:
-            state['trust'] = {'trust_level': 'none', 'status': 'untrusted', 'reason': 'App Attest pending', 'received_at': proc.registered_at}
+            state['trust'] = {
+                'trust_level': 'self_signed', 'status': 'online',
+                'reason': 'SE attestation verified, awaiting MDM verification',
+                'received_at': proc.registered_at,
+                'authorization': {'path': 'none', 'reason': 'app_attest_qualification_required', 'protocol': 1},
+            }
         if proc.load_error:
             state['last_model_load_error'] = dict(proc.load_error)
         tmp = self.state_path.with_suffix('.tmp')
@@ -679,25 +772,45 @@ class FakeDarkbloom:
         return bool(self.proc and (pid is None or self.proc.pid == pid))
 
     def roster_row(self):
-        """The coordinator's /v1/providers/attestation row for this Mac."""
+        """The coordinator's /v1/providers/attestation row for this Mac.
+
+        The coordinator lists every registered provider whatever its trust (api/provider.go
+        handleProviderAttestation: ForEachProvider, catalog-eligible models), so a Mac still
+        being verified is listed self_signed and not authorized, and one failing its
+        challenges is listed untrusted."""
         proc = self.proc
         now = self.mac.clock.time()
-        if not proc or proc.trusted_at is None or now < proc.trusted_at:
+        if not proc or proc.registered_at is None:
             return None
         catalog = {m['id']: m for m in self.mac.network.catalog}
         routable = [
             m for m in proc.models
             if catalog.get(m, {}).get('active') and set(MODELS[m].caps) <= set(self.runtime_caps)
         ]
-        return {
+        row = {
             'se_public_key': self.key,
             'provider_id': 'provider-' + self.mac.name,
             'models': routable,
-            'status': 'serving' if proc.warm else 'online',
-            'trust_level': 'hardware',
+            'status': 'online',
+            'trust_level': 'self_signed',
+            'app_attest_authorized': False,
+            'mdm_verified': False,
+            'mda_verified': False,
         }
+        if proc.trusted_at is not None and now >= proc.trusted_at:
+            return {
+                **row,
+                'status': 'serving' if proc.warm else 'online',
+                'trust_level': 'self_signed' if self.attest_only else 'hardware',
+                'app_attest_authorized': self.attest_only,
+                'mdm_verified': not self.attest_only,
+                'mda_verified': not self.attest_only,
+            }
+        if proc.untrusted_until is not None and now < proc.untrusted_until:
+            return {**row, 'status': 'untrusted', 'trust_level': 'none'}
+        return row
 
-    # -- the local endpoint (Bloomkeeper's pre-warm) -----------------------------------
+    # -- the local endpoint (BloomGauge's pre-warm) -----------------------------------
 
     def opener(self):
         fake = self
@@ -758,7 +871,7 @@ class FakeDarkbloom:
 
 
 class FakeNetwork:
-    """The public Darkbloom API Bloomkeeper reads (catalog, roster, capacity)."""
+    """The public Darkbloom API BloomGauge reads (catalog, roster, capacity)."""
 
     def __init__(self, mac, models=None):
         self.mac = mac
@@ -783,10 +896,10 @@ class FakeNetwork:
 
 
 class Mac:
-    """A Mac running Bloomkeeper and a fake Darkbloom on a virtual clock.
+    """A Mac running BloomGauge and a fake Darkbloom on a virtual clock.
 
     `start()` installs the clock and process patches; `stop()` removes them. `launch()`
-    opens Bloomkeeper (a new Optimizer on the Mac's history database); `run()` is the app's
+    opens BloomGauge (a new Optimizer on the Mac's history database); `run()` is the app's
     loops (collector every 3 s, discovery/identity refresh, control tick every 15 s, the On
     control and any worker it starts). The `ui_*` methods do what the app's buttons send.
     """
@@ -808,7 +921,7 @@ class Mac:
         self.patches = []
         self.collect_at = self.refresh_at = -1e18
         self.errors = []  # exceptions from the app's loops
-        self.account = 'acct'  # the Darkbloom account Bloomkeeper is signed in to
+        self.account = 'acct'  # the Darkbloom account BloomGauge is signed in to
         self.log = []  # (at, kind, detail): UI results and status changes
         self.trace = []  # (at, advertised models) while a selection is loaded and trusted
         self.seen = None
@@ -849,7 +962,7 @@ class Mac:
         self.tmp.cleanup()
 
     def launch(self):
-        """Open Bloomkeeper (again): a new Optimizer over the same history database."""
+        """Open BloomGauge (again): a new Optimizer over the same history database."""
         from unittest.mock import Mock
 
         from history import History
@@ -927,7 +1040,7 @@ class Mac:
                 'memoryTotalGB': self.memory_gb,
                 'memoryUsedGB': self.memory_gb - available,
                 'memoryAvailableGB': available,
-                'cachedFilesGB': 0,
+                'cachedFilesGB': self.darkbloom.file_cache_gb,
                 'cpuTemp': 50,
                 'gpuTemp': 55,
                 'thermal': 'Nominal',
@@ -942,7 +1055,13 @@ class Mac:
             self.errors.append((now, 'observe', repr(error)))
 
     def memory_available(self):
-        return round(self.memory_gb - self.base_used_gb - self.darkbloom.resident_gb(), 2)
+        return round(
+            self.memory_gb
+            - self.base_used_gb
+            - self.darkbloom.resident_gb()
+            - self.darkbloom.file_cache_gb,
+            2,
+        )
 
     # -- the app's loops --------------------------------------------------------------
 
@@ -953,7 +1072,7 @@ class Mac:
             if worker and worker.is_alive():
                 worker.join(120)
                 if worker.is_alive():
-                    raise AssertionError('a Bloomkeeper worker did not finish (deadlock?)')
+                    raise AssertionError('a BloomGauge worker did not finish (deadlock?)')
 
     def tick(self):
         o = self.app
@@ -1131,7 +1250,7 @@ class Mac:
         return [tuple(r) for r in rows if kinds is None or r[1] in kinds]
 
     def settings(self):
-        """User-chosen provider settings Bloomkeeper must never change on its own."""
+        """User-chosen provider settings BloomGauge must never change on its own."""
         plist = self.darkbloom.plist()
         args = plist['ProgramArguments'][3:]
         flags = []
@@ -1176,7 +1295,7 @@ def user_mac(
     version='0.9.10',
     **fake,
 ):
-    """A Mac as a field user has it, before Bloomkeeper opens: Darkbloom set up with `models`
+    """A Mac as a field user has it, before BloomGauge opens: Darkbloom set up with `models`
     (provider.toml enabled_models and the launch agent's --model list), running for 5 min.
     `initial`: 'running', 'stopped' (`darkbloom stop` ran) or 'drained' (a start's drain
     finished but nothing restarted it: running, serving nothing, launch agent disabled)."""

@@ -1,11 +1,11 @@
 """Bug matrix (Sep 28 2026): the manager against a fake Darkbloom 0.9.10 on field setups.
 
 Every provider command, file and wait is simulated by fake_darkbloom (a temporary HOME, a
-virtual clock); Bloomkeeper's Optimizer, manager, model controls and On/Off run unchanged.
+virtual clock); BloomGauge's Optimizer, manager, model controls and On/Off run unchanged.
 Setups come from the field reports (1, 2 or 3+ enabled models, endpoint off or on, an
 auto-select launch, an older config path, idle policies, a stopped or drained provider,
 launch-agent variables, a runtime-gated model, 48/128/192 GB). Each runs the journey a user
-takes: open Bloomkeeper -> set up pre-warming -> Manager on -> pin -> release the pin ->
+takes: open BloomGauge -> set up pre-warming -> Manager on -> pin -> release the pin ->
 Off -> Manager on again, with a Darkbloom restart and an update. The invariants:
 
 - no failure loop: the same refusal or failure again after the action it asked for;
@@ -13,7 +13,7 @@ Off -> Manager on again, with a Darkbloom restart and an update. The invariants:
 - every blocked state shows a specific, actionable message (never a generic retry);
 - no restart storm (at most STARTS_PER_HOUR `darkbloom start`s an hour on its own);
 - a setting the user chose (launch-agent flags and variables, provider.toml values other
-  than enabled_models) is never changed by Bloomkeeper's commands.
+  than enabled_models) is never changed by BloomGauge's commands.
 
 Set BLOOM_MATRIX=full for every setup combination (slower); the default runs the
 representative subset below. Regression tests for the bugs found follow the matrix.
@@ -46,7 +46,7 @@ DAY = 86400
 
 
 def saved_plan(mac, kind):
-    """Bloomkeeper's saved optimizer settings from an earlier version, before it opens."""
+    """BloomGauge's saved optimizer settings from an earlier version, before it opens."""
     from history import History
     from optimizer_store import device_id
 
@@ -324,6 +324,7 @@ SETUPS = {
     'endpoint-without-port': dict(models=[GEMMA], endpoint_args=['--local-endpoint']),
     'rotating-device-key': dict(models=[GEMMA], rotating_key=True),
     'app-attest-slow': dict(models=[GEMMA], trust_delay=420),
+    'app-attest-slow-rotating-key': dict(models=[GEMMA], trust_delay=420, rotating_key=True),
     'm3-pro-36': dict(models=[GEMMA], memory_gb=36, chip='Apple M3 Pro', caps=(), pin=GPT),
     'm3-ultra-192-big-pin': dict(
         models=[GEMMA], pin=BIG, downloaded=(GEMMA, QWEN, GPT, BIG), **HARDWARE[192]
@@ -331,22 +332,43 @@ SETUPS = {
     'week-test-finished': dict(models=[GEMMA], plan='week-finished'),
     'week-test-paused': dict(models=[GEMMA], plan='week-paused'),
 }
+# Serving through App Attest without MDM (self_signed + app_attest authorization).
+ATTEST_ONLY = {
+    'attest-gemma': dict(models=[GEMMA], attest_only=True),
+    'attest-qwen': dict(models=[QWEN], attest_only=True),
+    'attest-stopped': dict(models=[GEMMA], initial='stopped', attest_only=True),
+    'attest-drained': dict(models=[GEMMA], initial='drained', attest_only=True),
+    'attest-pair-128': dict(models=[GPT, QWEN], attest_only=True, **HARDWARE[128]),
+    'attest-no-endpoint': dict(models=[GEMMA], endpoint=False, attest_only=True),
+    'attest-slow': dict(models=[GEMMA], trust_delay=420, attest_only=True),
+}
+SETUPS.update(ATTEST_ONLY)
 QUIET = {
     'quiet-default-idle': dict(models=[GEMMA]),
     'quiet-idle-0': dict(models=[GEMMA], idle=0),
     'quiet-idle-30': dict(models=[GEMMA], idle=30),
     'quiet-endpoint-off': dict(models=[GEMMA], endpoint=False),
     'quiet-pair': dict(models=[GPT, QWEN], **HARDWARE[128]),
+    # Sep 28 21:20-22:10 on Andrew's Mac: the idle unload left gemma's weights in file cache,
+    # Darkbloom refused the reload for memory, and the restore never tried the purge.
+    'quiet-unload-cache': dict(models=[GEMMA], unload_cache=True, purge=True),
+    # Sep 29 06:42: after the idle unload Darkbloom reported 0.000005 GB of MLX memory; the
+    # manager read it as a load in progress, skipped the reload and waited 2 watchdog windows.
+    'quiet-unload-residual': dict(models=[GEMMA], unload_residual_gb=0.000005),
 }
 # Setups where the manager can't hold a model on its own (and why the journey still runs).
-NO_HOLD = {'quiet-idle-30': 'the user chose to unload after 30 idle minutes'}
+# The gpt-oss + qwen pair on 48 GB: Darkbloom's own load gate (ModelLoadAdmission: weights +
+# activation floor + 1 GB KV within free memory minus the load reserve, max(4 GB, 10%)) has
+# no room for it once macOS uses its share, so BloomGauge's pair budget refusing the start is
+# right (it keeps 1 GB more KV). The fake used to skip the reserve and served it (Sep 28).
+PAIR_48 = 'Darkbloom itself refuses the gpt-oss + qwen pair on 48 GB'
+NO_HOLD = {
+    'quiet-idle-30': 'the user chose to unload after 30 idle minutes',
+    'full-pair-ep-48-None-stopped': PAIR_48,
+    'full-pair-ep-48-30-stopped': PAIR_48,
+}
 # Setups that still break an invariant: the bug, until its fix lands (expected failures).
 KNOWN = {
-    # Bloomkeeper's pair budget (weights + reserve + activation + KV: 45 GB) refuses to start the
-    # gpt-oss + qwen pair on 48 GB although the fake Darkbloom serves it; unverified on a Mac.
-    'full-pair-ep-48-None-stopped': 'the stopped pair start is refused by the pair budget',
-    'full-pair-ep-48-30-stopped': 'the stopped pair start is refused by the pair budget',
-    'app-attest-slow': 'a pick fails at the 6-min deadline while App Attest is pending (false failure)',
 }
 
 
@@ -554,7 +576,7 @@ class DrainedProviderTests(Regression):
 class LegacyIdleFlagTests(Regression):
     """Launch agents written before Darkbloom 0.8.14 carry `--idle-timeout N`. Darkbloom's
     launchd child ignores it once provider.toml sets idle_timeout_mins (`darkbloom idle`), but
-    `darkbloom start --idle-timeout N` writes N into provider.toml. Bloomkeeper passed the
+    `darkbloom start --idle-timeout N` writes N into provider.toml. BloomGauge passed the
     launch agent's flags to every start, so a switch replaced the user's idle choice (here
     "always ready", 0) with the stale 30: the model then unloaded after 30 idle minutes and the
     manager, reading 30 as the user's choice, left the Mac empty."""
@@ -594,7 +616,7 @@ class ThreeModelTests(Regression):
     """Darkbloom set to serve three or more models (the start picker saves every pick; the
     Darkbloom app and `darkbloom switch` save provider.toml's list). The manager holds one
     model or a pair, and its On card says "Darkbloom is set to serve N models. Run `darkbloom
-    start` in Terminal and pick one model, or use Bloomkeeper's model controls." The model
+    start` in Terminal and pick one model, or use BloomGauge's model controls." The model
     controls refused every pick: with three --model flags they could not read the launch
     agent ("Provider status could not be verified. Refresh."), and with Darkbloom serving the
     list they showed that same notice. Picking one model in them now replaces the list."""
@@ -639,10 +661,10 @@ class ThreeModelTests(Regression):
 class RotatingDeviceKeyTests(Regression):
     """When Darkbloom can't use its keychain key (a locked keychain) it makes a new temporary
     attestation key on every start, and the device id is that key's hash. Every start
-    Bloomkeeper sent then failed its verification with "Provider identity changed during the
+    BloomGauge sent then failed its verification with "Provider identity changed during the
     switch", although the model came up: picks read as failed, restores counted as failed
     (holding home back for an hour) and automatic moves blocked their target for a day. The
-    session Bloomkeeper's own command started may now carry a new key, once, after the provider
+    session BloomGauge's own command started may now carry a new key, once, after the provider
     roster matches it; the manager then adopts it (device_changed)."""
 
     def failures(self, mac):
@@ -711,7 +733,7 @@ class FailedPickMessageTests(Regression):
     hold it."""
 
     def pick_while_attest_pends(self, mac):
-        mac.darkbloom.trust_delay = 420  # from the next start on
+        mac.darkbloom.untrusted_delay = 420  # attestation challenges fail for 7 min, next start on
         self.assertIsNone(mac.ui_select(QWEN))
         mac.run(900, until=lambda: mac.app.state['manualResult']['status'] == 'failed')
         return mac.app.state['manualResult']
@@ -733,6 +755,302 @@ class FailedPickMessageTests(Regression):
         result = self.pick_while_attest_pends(mac)
         self.assertEqual((result['status'], mac.app.state['mode']), ('failed', 'observe'))
         self.assertIn('Automatic switching is paused', result['detail'])
+
+
+class PairFallbackTests(Regression):
+    """A running gpt-oss + qwen pair on 48 GB: gpt-oss loads, Darkbloom's load gate refuses
+    qwen. The manager's watchdog kept "restoring" the same pair (not enough memory, work in
+    flight, again) and never held a model (full-pair-ep-48-*-running). Now it serves the
+    loaded member alone, says why, and goes back to the pair once it fits."""
+
+    M5_PRO = dict(chip='Apple M5 Pro', caps=('apple_m5', 'mlx_nax'))
+
+    def shown(self, mac):
+        return [e[3] for e in mac.events()] + [e[2][2] or '' for e in mac.log if e[1] == 'status']
+
+    def test_the_manager_serves_the_loaded_member_alone_and_says_why(self):
+        mac = self.mac(models=[GPT, QWEN], memory_gb=48, **self.M5_PRO)
+        self.assertEqual(mac.raw()['warm_models'], [GPT])
+        self.assertIsNone(mac.ui_on())
+        self.assertTrue(mac.run(HOLD_SECONDS, until=mac.holding))
+        self.assertEqual(mac.raw()['advertised_models'], [GPT])
+        notices = [e[3] for e in mac.events(('manager-notice',))]
+        self.assertEqual(len(notices), 1, notices)
+        self.assertIn('it refused %s' % QWEN, notices[0])
+        self.assertIn('serves %s alone, which is already loaded, instead' % GPT, notices[0])
+        self.assertIn('goes back to the pair once there is enough free memory', notices[0])
+        recovered = [e[3] for e in mac.events(('recovered',))]
+        self.assertEqual(recovered, ['Now serving %s alone instead of %s + %s. Automatic control continues.' % (GPT, GPT, QWEN)])
+        for text in self.shown(mac):
+            self.assertNotIn('@combo:', text)
+            self.assertNotIn('serving when the manager started', text)
+        # The pair never fits 48 GB by BloomGauge's check either: no attempt, no more starts.
+        starts = len(mac.darkbloom.starts)
+        mac.run(3 * 3600)
+        self.assertEqual(len(mac.darkbloom.starts), starts)
+        self.assertTrue(mac.holding())
+
+    def test_after_a_memory_squeeze_the_pair_comes_back_once_it_fits(self):
+        mac = self.squeezed_pair()  # other apps held 20 GB while the pair started
+        fell_back = mac.clock.now
+        mac.base_used_gb = 6  # the other apps quit
+        self.assertTrue(mac.run(3 * 3600, until=lambda: mac.raw()['advertised_models'] == [GPT, QWEN] and mac.holding()))
+        self.assertGreaterEqual(mac.clock.now - fell_back, 3600 - 20 * 60)
+        self.assertIn('enough free memory for %s + %s again' % (GPT, QWEN), mac.events(('recovered',))[-1][3])
+        # It stays on the pair: the stand-in home went with the fallback.
+        starts = len(mac.darkbloom.starts)
+        mac.run(6 * 3600)
+        self.assertEqual(mac.raw()['advertised_models'], [GPT, QWEN])
+        self.assertEqual(len(mac.darkbloom.starts), starts)
+        with mac.app.lock:
+            self.assertNotEqual((mac.app.state['manager'].get('home') or {}).get('model'), GPT)
+
+    def squeezed_pair(self):
+        import fake_darkbloom
+        from unittest import mock
+
+        init = fake_darkbloom.Mac.__init__
+
+        def squeezed(mac, *args, **kwargs):
+            init(mac, *args, **kwargs)
+            mac.base_used_gb = 20
+
+        with mock.patch.object(fake_darkbloom.Mac, '__init__', squeezed):
+            mac = self.mac(models=[GPT, QWEN], memory_gb=64, **self.M5_PRO)
+        self.assertIsNone(mac.ui_on())
+        self.assertTrue(mac.run(HOLD_SECONDS, until=mac.holding))
+        self.assertEqual(mac.raw()['advertised_models'], [GPT])
+        return mac
+
+    def test_a_refused_return_goes_back_to_one_model_and_waits_twice_as_long(self):
+        mac = self.squeezed_pair()
+        # The fake's work comes every 60 s like clockwork, in step with the 60-s restore
+        # retry, so a restore that waits for an idle moment never finds one; real work doesn't.
+        mac.darkbloom.traffic_seconds = None
+        mac.base_used_gb = 6
+        run = mac.app.runner
+
+        def start(argv, **kwargs):
+            if 'start' in argv and QWEN in argv:
+                mac.base_used_gb = 20  # squeezed again just as the pair starts
+            return run(argv, **kwargs)
+
+        mac.app.runner = start
+        self.assertTrue(mac.run(3 * 3600, until=lambda: mac.base_used_gb == 20))
+        mac.app.runner = run
+        self.assertTrue(mac.run(HOLD_SECONDS + 1800, until=lambda: mac.raw()['advertised_models'] == [GPT] and mac.holding()))
+        with mac.app.lock:
+            fallback = dict(mac.app.state['manager']['pairFallback'])
+        self.assertEqual(fallback['refusals'], 2)
+        self.assertGreaterEqual(fallback['retryAt'] - fallback['at'], 2 * 3600)
+        self.assertTrue(any('did not work: Darkbloom could not load both' in e[3] for e in mac.events(('failed',))))
+        # Nothing more until the longer wait is over, even with memory free again.
+        mac.base_used_gb = 6
+        starts = len(mac.darkbloom.starts)
+        mac.run(max(0, fallback['retryAt'] - mac.clock.now - 60))
+        self.assertEqual(len(mac.darkbloom.starts), starts)
+
+    def test_a_pinned_pair_comes_back_too(self):
+        import fake_darkbloom
+        from unittest import mock
+        from model_combinations import selection_key
+
+        init = fake_darkbloom.Mac.__init__
+
+        def squeezed(mac, *args, **kwargs):
+            init(mac, *args, **kwargs)
+            mac.base_used_gb = 20
+
+        with mock.patch.object(fake_darkbloom.Mac, '__init__', squeezed):
+            mac = self.mac(models=[GPT, QWEN], memory_gb=64, **self.M5_PRO)
+        self.assertIsNone(mac.ui_on())
+        pair = selection_key([GPT, QWEN])
+        with mac.app.lock:
+            mac.app.state.setdefault('manager', {})['home'] = manager.pin(pair, mac.clock.now)
+            mac.app.save()
+        self.assertTrue(mac.run(HOLD_SECONDS, until=mac.holding))
+        self.assertEqual(mac.raw()['advertised_models'], [GPT])
+        mac.base_used_gb = 6
+        self.assertTrue(mac.run(3 * 3600, until=lambda: mac.raw()['advertised_models'] == [GPT, QWEN] and mac.holding()))
+        mac.run(60)  # the manager's next reading settles the pin
+        with mac.app.lock:
+            home = dict(mac.app.state['manager']['home'])
+        self.assertEqual(home['model'], pair)
+        self.assertNotIn('failedAt', home)
+        for text in self.shown(mac):
+            self.assertNotIn('ick it again', text)
+            self.assertNotIn('@combo:', text)
+
+    def test_a_home_chosen_on_evidence_keeps_the_one_model_without_flipping(self):
+        mac = self.squeezed_pair()
+        mac.darkbloom.traffic_seconds = None
+        mac.base_used_gb = 6
+        self.assertTrue(mac.run(3 * 3600, until=lambda: mac.raw()['advertised_models'] == [GPT, QWEN] and mac.holding()))
+        # Say gpt-oss earned a home of its own during the fallback (days served alone).
+        home = manager.ManagerControl.home
+
+        def evidence(control, settings, live, current, now, rows=None):
+            return {'model': GPT, 'source': 'history', 'at': now - 2 * 86400, 'usdPerHour': 0.1,
+                    'hours': 20, 'days': 3, 'low': 0.05}
+
+        manager.ManagerControl.home = evidence
+        self.addCleanup(setattr, manager.ManagerControl, 'home', home)
+        starts = len(mac.darkbloom.starts)
+        mac.run(2 * 3600)
+        self.assertLessEqual(len(mac.darkbloom.starts) - starts, 1)
+
+    def test_an_excursion_from_the_stand_in_keeps_the_way_back(self):
+        mac = self.squeezed_pair()
+        control, now = mac.app.manager, mac.clock.now
+        with mac.app.lock:
+            state = mac.app.state['manager']
+            state['excursion'] = {'target': QWEN, 'at': now}
+            m = dict(state)
+        control.settle(now, m, mac.raw(), QWEN)
+        with mac.app.lock:
+            self.assertIn('pairFallback', mac.app.state['manager'])
+            mac.app.state['manager'].pop('excursion')
+        control.settle(now, m, mac.raw(), QWEN)  # a pick of something else ends it
+        with mac.app.lock:
+            self.assertNotIn('pairFallback', mac.app.state['manager'])
+
+    def test_no_fallback_without_a_fresh_refusal_of_this_pair(self):
+        mac = self.mac(models=[GPT, QWEN], **HARDWARE[128])
+        self.assertIsNone(mac.ui_on())
+        self.assertTrue(mac.run(HOLD_SECONDS, until=mac.holding))
+        from model_combinations import selection_key
+
+        raw, manager, now = mac.raw(), mac.app.manager, mac.clock.now
+        with mac.app.lock:
+            live = dict(mac.app.live)
+        pair = selection_key(raw['advertised_models'])
+        refusal = {'model': QWEN, 'at': raw['started_at'] + 1}
+        refused = {**raw, 'warm_models': [GPT], 'last_model_load_error': refusal}
+        squeezed = {**live, 'hardware': {**live['hardware'], 'memoryAvailableGB': 2}}
+        self.assertIsNotNone(manager.pair_fallback(now, pair, squeezed, refused, pair, {}))
+        cases = {
+            'no refusal': ({**refused, 'last_model_load_error': None}, squeezed),
+            'the pair fits': (refused, live),
+            'stale reading': ({**refused, 'written_at': now - 60}, squeezed),
+            'another selection': ({**refused, 'advertised_models': [GPT]}, squeezed),
+            'a refusal of another model': (
+                {**refused, 'last_model_load_error': {**refusal, 'model': GEMMA}}, squeezed
+            ),
+        }
+        for name, (state, reading) in cases.items():
+            with self.subTest(name):
+                self.assertIsNone(manager.pair_fallback(now, pair, reading, state, pair, {}))
+
+
+class SlowVerificationTests(Regression):
+    """After every start the coordinator verifies the new session before it sends it work
+    (online, self_signed, verification pending) and lists it in the provider roster meanwhile
+    (handleProviderAttestation; 56 such Macs live on Sep 28). The fake used to leave it out of
+    the roster, so a 7-minute verification failed a pick at the 6-minute deadline
+    (app-attest-slow). With the real roster the pick completes on the local warm-up
+    (Darkbloom's local endpoint has no trust check); statistics wait for the network."""
+
+    def pick(self, mac, model=QWEN, until=1800):
+        self.assertIsNone(mac.ui_select(model))
+        mac.run(until, until=lambda: mac.app.state['manualResult']['status'] in ('completed', 'failed'))
+        return mac.app.state['manualResult']
+
+    def counting(self, mac):
+        return mac.app.tracking(mac.raw(), mac.clock.now)
+
+    def test_a_slow_verification_completes_the_pick_and_statistics_wait_for_the_network(self):
+        mac = self.mac(models=[GEMMA], traffic_seconds=None)
+        mac.darkbloom.trust_delay = 420  # from the next start on
+        started = mac.clock.now
+        result = self.pick(mac)
+        self.assertEqual(result['status'], 'completed', result.get('detail'))
+        self.assertLess(mac.clock.now - started, 360)
+        self.assertIn('still clearing this Mac to serve', result['detail'])
+        self.assertEqual(mac.raw()['advertised_models'], [QWEN])
+        tracking = self.counting(mac)
+        self.assertFalse(tracking['counting'])
+        self.assertIn('hasn’t cleared this Mac to serve', tracking['detail'])
+        self.assertTrue(mac.run(900, until=lambda: self.counting(mac)['counting']))
+        self.assertGreaterEqual(mac.clock.now, mac.darkbloom.proc.trusted_at)
+
+    def test_a_mac_never_cleared_counts_again_after_the_grace_so_the_stall_ladder_sees_it(self):
+        from optimizer import CLEARANCE_GRACE_SECONDS
+
+        mac = self.mac(models=[GEMMA], traffic_seconds=None)
+        mac.darkbloom.trust_delay = 7200
+        result = self.pick(mac)
+        self.assertEqual(result['status'], 'completed', result.get('detail'))
+        self.assertFalse(self.counting(mac)['counting'])
+        self.assertTrue(mac.run(1800, until=lambda: self.counting(mac)['counting']))
+        since = mac.clock.now - mac.raw()['started_at']
+        self.assertGreaterEqual(since, CLEARANCE_GRACE_SECONDS)
+        self.assertLess(since, CLEARANCE_GRACE_SECONDS + 60)
+        self.assertLess(mac.clock.now, mac.darkbloom.proc.trusted_at)
+
+    def test_a_fast_verification_adds_no_note(self):
+        mac = self.mac(models=[GEMMA])
+        result = self.pick(mac)
+        self.assertEqual(result['status'], 'completed', result.get('detail'))
+        self.assertNotIn('clearing this Mac', result['detail'])
+
+    def test_failing_challenges_fail_the_pick_with_the_networks_reason(self):
+        mac = self.mac(models=[GEMMA])
+        mac.darkbloom.untrusted_delay = 420  # attestation challenges fail for 7 min
+        result = self.pick(mac)
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('had not accepted this Mac', result['detail'])
+        self.assertIn('no response', result['detail'])
+
+
+class DroppedEnvironmentTests(Regression):
+    """Darkbloom rebuilds the launch agent on every start and keeps only its allowlisted
+    variables; a start BloomGauge sent dropped the others without a word."""
+
+    def test_a_start_that_drops_launch_variables_says_so(self):
+        mac = self.mac(models=[GEMMA, QWEN], env={'HF_HOME': '/Volumes/Models', 'DARKBLOOM_MLX_CACHE_LIMIT_GB': '12'})
+        self.assertNotIn('dropped', mac.app.provider_control.snapshot()['detail'])
+        self.assertIsNone(mac.ui_select(QWEN))
+        mac.run(900, until=lambda: mac.app.state['manualResult']['status'] in ('completed', 'failed'))
+        self.assertEqual(mac.app.state['manualResult']['status'], 'completed')
+        env = mac.settings()['env']
+        self.assertEqual(env, {'DARKBLOOM_MLX_CACHE_LIMIT_GB': '12'})
+        detail = mac.app.provider_control.snapshot()['detail']
+        self.assertIn('dropped HF_HOME', detail)
+        self.assertNotIn('DARKBLOOM_MLX_CACHE_LIMIT_GB', detail)
+
+
+class AttestOnlyTests(Regression):
+    """A Mac serving through App Attest without Darkbloom MDM reports trust_level self_signed
+    (with an app_attest authorization). Restores and runtime verification required
+    'hardware', so a failed pick left the Mac on the broken model, dark for 30+ minutes, and
+    a runtime-gated model could never be verified."""
+
+    def break_qwen(self, mac):
+        begin = mac.darkbloom.begin_load
+
+        def refuse(proc, model, now, via):
+            if model == QWEN:
+                proc.load_error = {'model': model, 'at': now, 'reason': 'model load failed'}
+                return False
+            return begin(proc, model, now, via)
+
+        mac.darkbloom.begin_load = refuse
+
+    def test_a_failed_pick_is_restored(self):
+        mac = self.mac(models=[GEMMA], attest_only=True)
+        self.assertIsNone(mac.ui_on())
+        self.assertTrue(mac.run(HOLD_SECONDS, until=mac.holding))
+        self.break_qwen(mac)
+        self.assertIsNone(mac.ui_select(QWEN))
+        mac.run(1800, until=lambda: mac.app.state['manualResult']['status'] in ('recovered', 'failed', 'completed'))
+        self.assertEqual(mac.app.state['manualResult']['status'], 'recovered')
+        self.assertTrue(mac.run(HOLD_SECONDS, until=mac.holding))
+        self.assertEqual(mac.raw()['advertised_models'], [GEMMA])
+
+    def test_a_runtime_gated_model_can_be_verified(self):
+        mac = self.mac(models=[GEMMA], attest_only=True)
+        self.assertTrue(mac.app.identity_hardware)
+        self.assertNotIn('not yet verified', mac.ui_select(QWEN38) or '')
 
 
 class PairTextTests(unittest.TestCase):
@@ -793,6 +1111,32 @@ class StoppedPairOnTests(Regression):
         self.assertEqual(card['phase'], 'blocked')
         self.assertIn(QWEN + ' is not available for automatic selection', card['detail'])
         self.assertEqual(mac.darkbloom.starts, [])
+
+
+
+
+class OnBatteryTests(Regression):
+    """Sep 28 22:50: Andrew picked gpt-oss by hand, went to bed with the Mac unplugged and
+    turned the manager On from his phone to go back to gemma. On waited forever at "Model
+    switching waits while the Mac is on battery power": turning On counted as one of the
+    manager's own pay-chasing moves, while a pick or a restore is allowed on battery."""
+
+    def test_manager_on_while_unplugged_goes_back_to_the_home_model(self):
+        mac = self.mac()
+        mac.ui_on()
+        mac.run(900)
+        self.assertTrue(mac.holding())
+        mac.ui_off()
+        mac.run(60)
+        mac.ui_select(GPT)
+        mac.run(900)
+        self.assertEqual(mac.raw().get('advertised_models'), [GPT])
+        mac.darkbloom.battery = True
+        mac.ui_on()
+        mac.run(1800)
+        self.assertTrue(mac.holding(), mac.app.detail)
+        self.assertEqual(mac.raw().get('advertised_models'), [GEMMA])
+        self.assertEqual(mac.errors, [])
 
 
 if __name__ == '__main__':

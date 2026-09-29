@@ -253,6 +253,65 @@ class ContributionsTests(unittest.TestCase):
         with self.assertRaises(module.ContributionsUnavailable):
             self.result('earnings', start)
 
+    def test_base_rewards_are_account_wide_aligned_and_kept_out_of_model_series(self):
+        start = NOW - 120
+        self.coverage(start, NOW)
+        self.credit(start + 5, micro=1000)
+        self.credit(start + 10, model='base_reward', micro=5000)
+        # Base rewards follow the account, as the hourly Monitor counts them: no
+        # provider identity is needed, but another account's never count.
+        self.credit(start + 70, model='base_reward', micro=3000, provider='foreign-provider')
+        self.credit(start + 71, model='base_reward', micro=2000, provider='')
+        self.credit(start + 20, model='base_reward', micro=999, account='foreign-account')
+        self.credit(NOW, model='base_reward', micro=7000)
+        result = self.result('earnings', start)
+        # The model report is unchanged: inference only.
+        self.assertEqual([s['id'] for s in result['series']], ['model:a'])
+        self.assertAlmostEqual(result['summary']['total'], 0.001)
+        self.assertEqual(result['status'], 'ok')
+        base = result['baseRewards']
+        self.assertEqual(base['attribution'], 'account')
+        self.assertEqual(len(base['values']), len(result['points']))
+        # USD per elapsed hour, like the model values: $0.005 in a minute = $0.30/h.
+        self.assertAlmostEqual(base['values'][0], 0.3)
+        self.assertAlmostEqual(base['values'][1], 0.3)
+        self.assertAlmostEqual(base['total'], 0.01)
+        self.assertNotIn('foreign-account', json.dumps(result))
+
+    def test_base_rewards_follow_poll_coverage_and_invalid_amounts_stay_unknown(self):
+        start = NOW - 180
+        self.coverage(start, start + 50)
+        self.coverage(start + 120, NOW)
+        self.credit(start + 1, model='base_reward', micro=1000)
+        self.credit(start + 61, model='base_reward', micro=1000)
+        self.credit(start + 121, model='base_reward', micro=None)
+        result = self.result('earnings', start)
+        base = result['baseRewards']
+        self.assertAlmostEqual(base['values'][0], 0.06)  # 50 of 60 s covered
+        self.assertIsNone(base['values'][1])  # not polled: unknown, not zero
+        self.assertIsNone(base['values'][2])  # malformed amount
+        self.assertIsNone(base['total'])
+        # A covered minute without a base reward is a real zero.
+        self.db.execute('DELETE FROM opt_credits')
+        self.coverage(start + 50, start + 120)
+        covered = self.result('earnings', start)['baseRewards']
+        self.assertEqual(covered['values'], [0, 0, 0])
+        self.assertEqual(covered['total'], 0)
+        # Nothing recorded and nothing polled: unknown.
+        self.db.execute('DELETE FROM opt_coverage')
+        self.assertIsNone(self.result('earnings', start)['baseRewards']['total'])
+
+    def test_only_available_earnings_reports_carry_base_rewards(self):
+        start = NOW - 60
+        self.coverage(start, NOW)
+        self.credit(start + 1, model='base_reward', micro=1000)
+        self.frame(start, {'a': 1})
+        for metric in ('activity', 'requests', 'tokens'):
+            self.assertNotIn('baseRewards', self.result(metric, start))
+        missing = self.result('earnings', start, device='new-mac')
+        self.assertEqual(missing['status'], 'unavailable')
+        self.assertNotIn('baseRewards', missing)
+
     def test_query_limits_and_clipping(self):
         good = f'metric=activity&from={NOW - 60}&to={NOW + 60}'
         self.assertEqual(module.query(good, NOW), ('activity', NOW - 60, NOW))

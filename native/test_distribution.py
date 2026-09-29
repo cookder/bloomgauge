@@ -20,7 +20,7 @@ class DistributionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.dmg = Path(self.temp.name) / 'Bloomkeeper Beta.dmg'
+        self.dmg = Path(self.temp.name) / 'BloomGauge Beta.dmg'
         self.dmg.write_bytes(b'fixture signed container')
         self.calls = []
 

@@ -71,7 +71,7 @@ const appSections = [
       ['sources', 'Sources'],
       ['guide', 'Guide'],
       ['support', 'Help & feedback'],
-      ['plan', 'About Bloomkeeper'],
+      ['plan', 'About BloomGauge'],
       ['workload', 'Workload'],
       ['traffic', 'Network traffic'],
       ['fleet', 'Network fleet'],
@@ -489,7 +489,7 @@ export function NavigationHub({ optimizer = false }: { optimizer?: boolean }) {
             items: [
               [
                 'plan',
-                'About Bloomkeeper',
+                'About BloomGauge',
                 'What’s included, plus optional sharing and contact.',
               ],
               [

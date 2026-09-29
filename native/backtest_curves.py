@@ -50,7 +50,7 @@ def backtest(store, days, shared=None, since=None):
     start = end - days * 86400
     earned = store.evidence(account, device, start - curves.LOOKBACK_SECONDS, end + 60, end + 400)
     if since:
-        # Simulate a Mac new to Bloomkeeper at `since`: its own paid history before then is hidden.
+        # Simulate a Mac new to BloomGauge at `since`: its own paid history before then is hidden.
         for row in earned.values():
             row['minutes'] = [m for m in row['minutes'] if m['at'] >= since]
     models = sorted(m for m in earned if len(curves.members(m)) == 1)

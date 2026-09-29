@@ -250,7 +250,7 @@ class StallControl:
             or settings.get('requestedModel')
             or not account
             or not device
-            or not self.o.tracking(raw, now)['counting']
+            or not self.o.tracking(raw, now, cleared=False)['counting']
             or (trial.get('current') and not trial.get('complete'))
         ):
             with self.lock:
@@ -271,7 +271,7 @@ class StallControl:
                     'reason': note
                     + 'No work after '
                     + ' and '.join(taken)
-                    + '. Holding the home model; Bloomkeeper has stopped trying. Check Darkbloom (darkbloom doctor, Slack) for a routing problem.',
+                    + '. Holding the home model; BloomGauge has stopped trying. Check Darkbloom (darkbloom doctor, Slack) for a routing problem.',
                 }
                 if taken
                 else {
@@ -389,7 +389,7 @@ class StallControl:
         return status
 
     def send_pending(self, account, device, push, now):
-        """Push a notice when Bloomkeeper stops trying (the 'hold' step)."""
+        """Push a notice when BloomGauge stops trying (the 'hold' step)."""
         with self.o.store.h.lock:
             rows = [
                 dict(r)
@@ -407,7 +407,7 @@ class StallControl:
             if push.enqueue_notice(
                 account,
                 key,
-                'Bloomkeeper · no work arriving' if hold else 'Bloomkeeper · model recovery',
+                'BloomGauge · no work arriving' if hold else 'BloomGauge · model recovery',
                 row['detail']
                 or 'This Mac stopped getting jobs. Check Darkbloom for a routing or verification problem.',
             ) or push.has_event(account, key):

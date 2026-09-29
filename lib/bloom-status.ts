@@ -34,6 +34,7 @@ export const steadyPauseDetails = [
   'waiting to observe fresh serving output',
   'Per-model statistics need one model or a pair',
   'to the provider roster',
+  'cleared this Mac to serve',
 ];
 
 /** The backend's reason when statistics pause for a steady state; null otherwise. */
@@ -93,7 +94,7 @@ export function bloomHealth(
       urgent: true,
       detail:
         error ||
-        'No fresh dashboard reading for at least a minute. Check that the Mac is awake, Bloomkeeper is open, and phone access is connected.',
+        'No fresh dashboard reading for at least a minute. Check that the Mac is awake, BloomGauge is open, and phone access is connected.',
     };
   const earnings = data.earnings,
     earningsAge = earnings?.updatedAt == null ? null : now - earnings.updatedAt;
@@ -140,13 +141,13 @@ export function bloomHealth(
     return {
       tone: 'yellow',
       detail:
-        'Bloomkeeper is connected, but earnings are waiting for a fresh confirmed reading.',
+        'BloomGauge is connected, but earnings are waiting for a fresh confirmed reading.',
     };
   if (!data.provider?.online)
     return {
       tone: 'yellow',
       detail:
-        'Bloomkeeper is connected. Darkbloom is stopped or its provider reading is not yet available; check model controls if this is unexpected.',
+        'BloomGauge is connected. Darkbloom is stopped or its provider reading is not yet available; check model controls if this is unexpected.',
     };
   const steady = steadyPause(data);
   if (steady)
@@ -163,7 +164,7 @@ export function bloomHealth(
     return {
       tone: 'yellow',
       detail:
-        'Bloomkeeper is connected. Model readiness or statistics are still updating; model details explain the current run.',
+        'BloomGauge is connected. Model readiness or statistics are still updating; model details explain the current run.',
     };
   return {
     tone: 'green',

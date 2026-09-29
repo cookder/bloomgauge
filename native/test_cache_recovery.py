@@ -97,6 +97,34 @@ class CacheControllerTests(unittest.TestCase):
                 self.o.recover_file_cache(self.raw, 'a', ['--local-endpoint'])
         run.assert_not_called()
 
+    def test_a_load_after_the_cleanup_allows_one_more_in_the_session(self):
+        """Sep 28: each idle unload leaves the weights in file cache again; the once-per-session
+        limit left the Mac dark after the second unload of a long-running provider."""
+        self.cold()
+        key = session_key(self.raw)
+        cleared = {'session': key, 'at': self.now - 700, 'status': 'cleared'}
+        snapshot = {**copy.deepcopy(self.o.live), 'at': self.now}
+        for warm, written, status in (
+            ([], self.now, 'cleared'),  # never loaded: still one attempt
+            (['a'], self.now - 800, 'cleared'),  # a reading from before the cleanup
+            (['a'], self.now, 'loaded'),
+        ):
+            self.o.state['cacheRecovery'] = dict(cleared)
+            self.o.observe('acct', {**self.raw, 'warm_models': warm, 'written_at': written}, snapshot)
+            self.assertEqual(self.o.state['cacheRecovery']['status'], status)
+        self.o.live['hardware'].update(memoryAvailableGB=10, cachedFilesGB=24)
+
+        def clear(runner):
+            self.o.live['at'] = self.now + 1
+
+        with patch('optimizer.clear_file_cache', side_effect=clear) as run:
+            self.o.recover_file_cache(self.raw, 'a', ['--local-endpoint'])
+            run.assert_called_once()
+            self.assertEqual(self.o.state['cacheRecovery']['status'], 'cleared')
+            self.now += 700
+            with self.assertRaisesRegex(WarmupError, 'already attempted'):
+                self.o.recover_file_cache(self.raw, 'a', ['--local-endpoint'])
+
     def test_busy_or_changed_session_never_clears(self):
         self.cold()
         old = copy.deepcopy(self.raw)

@@ -91,7 +91,7 @@ for (const engine of ['chromium', 'webkit']) {
         const panel = page.locator('.support-panel');
         assert.equal(
           await page
-            .getByRole('navigation', { name: 'Bloomkeeper website links' })
+            .getByRole('navigation', { name: 'BloomGauge website links' })
             .filter({ visible: true })
             .getByRole('link', { name: 'Support website', exact: true })
             .getAttribute('href'),
@@ -101,7 +101,7 @@ for (const engine of ['chromium', 'webkit']) {
           await panel
             .getByRole('link', { name: 'Email support', exact: true })
             .getAttribute('href'),
-          'mailto:support@bloomkeeper.io',
+          'mailto:support@bloomgauge.io',
         );
         assert.equal(
           await panel.getByLabel('Diagnostics JSON preview').count(),

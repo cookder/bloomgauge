@@ -31,7 +31,7 @@ import { ManualModelControl } from './manual-model';
 import { OptimizerControl } from './optimizer-control';
 import { ModelHistory } from './model-history';
 import { DemandBaselines } from './demand-baselines';
-import { ModelSwitchNotifications } from './demand-alerts';
+import { NotificationSettings } from './notification-settings';
 import {
   DemandAutoPanel,
   defaultDemandRules,
@@ -334,7 +334,7 @@ export function OptimizerTab({
         });
         if (!res.ok)
           throw Error(
-            'The optimizer is unavailable. Check that Bloomkeeper is running.',
+            'The optimizer is unavailable. Check that BloomGauge is running.',
           );
         const read = readOptimizerResponse<Optimizer>(await res.json());
         if (!read)
@@ -881,9 +881,9 @@ export function OptimizerTab({
                       'Waiting for the updated demand-following service.'
                     : selected.length < 2 ||
                         selected.length > (mode === 'demand' ? 16 : 6)
-                      ? `Choose 2–${mode === 'demand' ? 16 : 6} models under Models Bloomkeeper can use.`
+                      ? `Choose 2–${mode === 'demand' ? 16 : 6} models under Models BloomGauge can use.`
                       : !selected.includes(data.currentModel ?? '')
-                        ? 'Include the current model under Models Bloomkeeper can use so Bloomkeeper can compare it with alternatives.'
+                        ? 'Include the current model under Models BloomGauge can use so BloomGauge can compare it with alternatives.'
                         : selected.some(
                               (id) =>
                                 !data.models.some(
@@ -904,7 +904,7 @@ export function OptimizerTab({
           <div className="eyebrow">OPTIMIZER</div>
           <h1>Your Mac. Your choice.</h1>
           <p>
-            Let Bloomkeeper manage models, or choose one yourself. Reporting
+            Let BloomGauge manage models, or choose one yourself. Reporting
             continues in either mode.
           </p>
         </div>
@@ -1336,7 +1336,7 @@ export function OptimizerTab({
             )}
             <p>
               The Manager runs one model, or a pair without Gemma, so Darkbloom
-              manages this set and Bloomkeeper never changes it. Public network
+              manages this set and BloomGauge never changes it. Public network
               data shows Macs serving Gemma alone get about twice the Gemma work
               of Macs that mix it with other models. To let the Manager run,
               pick one model in Model controls, then turn the Manager on.
@@ -1560,7 +1560,7 @@ export function OptimizerTab({
           className="quiet-disclosure model-evidence-disclosure"
           onToggle={(event) => setEvidenceOpen(event.currentTarget.open)}
         >
-          <summary>What Bloomkeeper knows about each model</summary>
+          <summary>What BloomGauge knows about each model</summary>
           <ModelEvidence
             open={evidenceOpen}
             rows={data?.demandAuto?.opportunities}
@@ -1572,7 +1572,7 @@ export function OptimizerTab({
           onToggle={(event) => setInsightsOpen(event.currentTarget.open)}
         >
           <summary>
-            {managed ? 'Decision details' : 'Why Bloomkeeper chooses a model'}
+            {managed ? 'Decision details' : 'Why BloomGauge chooses a model'}
           </summary>
           {insightsOpen && (
             <>
@@ -1590,10 +1590,7 @@ export function OptimizerTab({
             </>
           )}
         </details>
-        <details className="quiet-disclosure">
-          <summary>Switch notifications</summary>
-          <ModelSwitchNotifications />
-        </details>
+        <NotificationSettings remote={data?.remote} />
 
         {failedCleanup && (
           <div className="notice optimizer-switch-warning" role="status">
@@ -1608,8 +1605,8 @@ export function OptimizerTab({
               {running
                 ? 'This test is running again. The same cleanup can fail on a later rotation until Mac setup is complete.'
                 : managed
-                  ? 'Bloomkeeper restores the previous or home model and stays on.'
-                  : 'Bloomkeeper pauses switching after a failed load and attempts to restore the previous model.'}
+                  ? 'BloomGauge restores the previous or home model and stays on.'
+                  : 'BloomGauge pauses switching after a failed load and attempts to restore the previous model.'}
             </p>
             {mobile && (
               <button
@@ -1637,7 +1634,7 @@ export function OptimizerTab({
           <p className="footnote">
             After the current solo test, compare compatible pairs for seven more
             days in {data?.blockHours ?? 2}-hour runs, with a solo reference and
-            changing time slots. Bloomkeeper warms each model in turn, then
+            changing time slots. BloomGauge warms each model in turn, then
             verifies both are loaded together. Memory, power, temperature and
             idle checks still apply.
           </p>
@@ -1649,7 +1646,7 @@ export function OptimizerTab({
               {comboEnded
                 ? ''
                 : comboPlan.status === 'queued'
-                  ? `Starts after ${stamp(comboPlan.queuedFor)}, when Bloomkeeper is running.`
+                  ? `Starts after ${stamp(comboPlan.queuedFor)}, when BloomGauge is running.`
                   : comboPlan.startedAt
                     ? `${stamp(comboPlan.startedAt)} → ${stamp(comboPlan.endsAt)}.`
                     : ''}
@@ -1872,12 +1869,12 @@ export function OptimizerTab({
               <strong>Automatic cache recovery</strong>
               <p className="footnote">
                 If a new model is cold and blocked by file-cache pressure,
-                Bloomkeeper clears the macOS cache before retrying warm-up. This
+                BloomGauge clears the macOS cache before retrying warm-up. This
                 needs a one-time authorization on the Mac. Cleanup runs at most
                 once per provider session and once every ten minutes; healthy
                 models are left alone. Your manual{' '}
                 <code>sudo /usr/sbin/purge</code> fallback remains available.
-                Bloomkeeper never collects your administrator password.
+                BloomGauge never collects your administrator password.
               </p>
               {data?.memory?.cacheRecovery?.detail && (
                 <p className="footnote" role="status">

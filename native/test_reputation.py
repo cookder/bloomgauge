@@ -168,3 +168,13 @@ class ReputationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TrustTierTests(unittest.TestCase):
+    def test_app_attest_macs_show_their_tier(self):
+        # Macs verified through App Attest without Darkbloom MDM are 'self_signed'.
+        p = provider()
+        p['trust_level'] = 'self_signed'
+        self.assertEqual(normalize(p)['trustLevel'], 'self_signed')
+        p['trust_level'] = 'made_up'
+        self.assertIsNone(normalize(p)['trustLevel'])

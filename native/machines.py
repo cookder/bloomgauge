@@ -1,6 +1,6 @@
 """Private, read-only multi-Mac summaries. No provider command proxy or cloud service.
 
-Peers must expose Bloomkeeper through owner-authenticated Tailscale Serve. Registration
+Peers must expose BloomGauge through owner-authenticated Tailscale Serve. Registration
 pins an installation; later identity changes require removal and explicit pairing.
 Only allowlisted, device-attributed metrics leave the collector through this API.
 """
@@ -195,7 +195,7 @@ def validate_summary(value, hours):
         or not ID.fullmatch(str(value.get('installation', '')))
         or value.get('hours') != hours
     ):
-        raise ValueError('This address did not return a compatible Bloomkeeper Mac summary.')
+        raise ValueError('This address did not return a compatible BloomGauge Mac summary.')
     keys = {
         'schema',
         'installation',
@@ -398,7 +398,7 @@ class Machines:
                     report = validate_summary(self.fetcher(address, 24), 24)
                 except Exception:
                     raise ValueError(
-                        'Could not verify this Mac. Keep it awake, enable Phone access in its Bloomkeeper beta, and connect both Macs to the same Tailscale owner account.'
+                        'Could not verify this Mac. Keep it awake, enable Phone access in its BloomGauge beta, and connect both Macs to the same Tailscale owner account.'
                     ) from None
                 with self.lock:
                     if report['installation'] == self.c.installation or any(

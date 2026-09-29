@@ -760,7 +760,7 @@ export function DemandSettings({
       )}
       {number(
         'trialCooldownMinutes',
-        'Bloomkeeper retry wait after an unpaid trial',
+        'BloomGauge retry wait after an unpaid trial',
         'min',
         'Before testing the same model again.',
       )}
@@ -780,7 +780,7 @@ export function DemandSettings({
         'planningMinutes',
         'Compare expected earnings over',
         'min',
-        'The window Bloomkeeper forecasts earnings for.',
+        'The window BloomGauge forecasts earnings for.',
       )}
       {number(
         'memoryHeadroomGB',
@@ -804,7 +804,7 @@ export function DemandSettings({
         'learningMinutesPerDay',
         'Learning time per day',
         'min',
-        'Time Bloomkeeper may spend measuring other models while pace is below your protect level. 0 turns learning off.',
+        'Time BloomGauge may spend measuring other models while pace is below your protect level. 0 turns learning off.',
       )}
       {control(
         'targetUsdPerHour',
@@ -832,7 +832,7 @@ export function DemandSettings({
         </div>
         {advanced}
         <p className="footnote">
-          These are Bloomkeeper controls, not network cooldowns. Daily downtime
+          These are BloomGauge controls, not network cooldowns. Daily downtime
           reserves room for a possible recovery; earnings comparisons deduct
           only the next load. A demand trial can leave before the normal minimum
           run. Limits persist across restarts.
@@ -859,7 +859,7 @@ export function DemandSettings({
         )}
       </div>
       <p className="footnote">
-        The target guides earnings comparisons. Bloomkeeper protects productive runs
+        The target guides earnings comparisons. BloomGauge protects productive runs
         and learns from confirmed paid work.
       </p>
       <details>
@@ -882,14 +882,14 @@ export function DemandSettings({
           Exceptional-demand trials need two five-minute windows above 3× the
           model’s usual demand and load per warm provider, with load/warm of at
           least 1 and no sharp fade. Up to three trials per rolling day; repeat
-          testing needs a materially larger spike. Bloomkeeper saves the previous paid
+          testing needs a materially larger spike. BloomGauge saves the previous paid
           rate and rechecks a return if the trial is worse. These are learning
           experiments, not predicted upgrades.
         </p>
 
         {advanced}
         <p className="footnote">
-          These are Bloomkeeper controls, not network cooldowns. Daily downtime
+          These are BloomGauge controls, not network cooldowns. Daily downtime
           reserves room for a possible recovery; earnings comparisons deduct
           only the next load. A demand trial can leave before the normal minimum
           run. Limits persist across restarts.
@@ -1002,7 +1002,7 @@ export function DemandAutoPanel({
       </div>
       <p className="small muted">
         {data.enabled
-          ? 'Runs on your Mac, even with this phone app closed. Keep Bloomkeeper running and your Mac awake.'
+          ? 'Runs on your Mac, even with this phone app closed. Keep BloomGauge running and your Mac awake.'
           : 'Once enabled, switching runs on your Mac. Your phone app can be closed.'}
       </p>
       {(scanStale ||
@@ -1126,7 +1126,7 @@ export function DemandAutoPanel({
               Protect level · {money(goal.protectUsdPerHour ?? 0.2)} / hour
             </strong>
             <span>
-              Above this, Bloomkeeper doesn’t interrupt the current model to learn.
+              Above this, BloomGauge doesn’t interrupt the current model to learn.
             </span>
           </div>
           <p>
@@ -1664,17 +1664,17 @@ export function DemandAutoPanel({
         <p>
           <strong>Memory:</strong> space after unloading must cover model
           weights, the provider’s OS and inference reserves, plus{' '}
-          {data.policy.memoryHeadroomGB} GB of extra Bloomkeeper margin.
+          {data.policy.memoryHeadroomGB} GB of extra BloomGauge margin.
         </p>
         {managed ? (
           <p>
-            <strong>Bloomkeeper retry waits:</strong> a model that fails to load
+            <strong>BloomGauge retry waits:</strong> a model that fails to load
             as an automatic move is skipped for 24 hours, then 48 and 96 hours if
             it fails again. Your own picks are never skipped.
           </p>
         ) : (
           <p>
-            <strong>Bloomkeeper retry waits:</strong>{' '}
+            <strong>BloomGauge retry waits:</strong>{' '}
             {data.policy.trialCooldownMinutes} minutes after an unpaid trial; 15
             minutes after a load failure. Successful loads have no added retry
             cooldown. The normal observation period is{' '}
@@ -1694,7 +1694,7 @@ export function DemandAutoPanel({
           interrupt them. Fresh identity/readiness checks, AC power, memory and
           safe temperatures still apply.{' '}
           {managed
-            ? 'A failed switch never turns automation off: Bloomkeeper restores the previous or home model. If two restores fail, it tells you and keeps retrying, at least every two hours.'
+            ? 'A failed switch never turns automation off: BloomGauge restores the previous or home model. If two restores fail, it tells you and keeps retrying, at least every two hours.'
             : 'A failed load pauses automation; recovery keeps its existing idle check.'}
         </p>
       </details>

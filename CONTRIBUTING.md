@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for helping improve Bloomkeeper. Bug reports, reliability fixes and test cases from different Mac models are the most useful contributions right now.
+Thanks for helping improve BloomGauge. Bug reports, reliability fixes and test cases from different Mac models are the most useful contributions right now.
 
 ## Reporting a problem
 
 Open an issue that includes:
 
-- your Bloomkeeper version, Mac chip, memory size and exact macOS version
+- your BloomGauge version, Mac chip, memory size and exact macOS version
 - the Darkbloom provider version (`darkbloom status`)
 - what you expected, what happened, and the steps to reproduce it
 

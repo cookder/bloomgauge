@@ -1,4 +1,7 @@
 /* Push-only worker: dashboard responses and account data are never cached. */
+// Screens a notification may open. Never a URL or path from the payload.
+const SCREENS = ['overview', 'test', 'demand'];
+const screenFor = (value) => (SCREENS.includes(value) ? value : 'test');
 self.addEventListener('install', () => {
   self.skipWaiting();
 });
@@ -15,23 +18,24 @@ self.addEventListener('push', (event) => {
   const title =
     typeof payload.title === 'string'
       ? payload.title.slice(0, 100)
-      : 'Bloomkeeper · model update';
+      : 'BloomGauge · model update';
   const body =
     typeof payload.body === 'string'
       ? payload.body.slice(0, 240)
-      : 'Open Bloomkeeper to see the current model and switch details.';
+      : 'Open BloomGauge to see the current model and switch details.';
   const tag =
     typeof payload.tag === 'string' &&
     /^bloom-switch-[a-f0-9]+$/.test(payload.tag)
       ? payload.tag
       : 'bloom-switch';
+  const screen = screenFor(payload.screen);
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
       tag,
       icon: '/bloom-icon-192.png',
       badge: '/bloom-icon-192.png',
-      data: { path: '/?screen=test' },
+      data: { screen, path: '/?screen=' + screen },
     }),
   );
 });
@@ -39,7 +43,8 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   // Never accept a remote URL or arbitrary path from push content.
-  const target = new URL('/?screen=test', self.location.origin).href;
+  const screen = screenFor(event.notification.data?.screen);
+  const target = new URL('/?screen=' + screen, self.location.origin).href;
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({

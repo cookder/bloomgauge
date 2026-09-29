@@ -286,7 +286,7 @@ class EarningsPulse:
         """Save the exact meter readings, not reconstructed historical earnings.
 
         Cold/stale/unmatched periods are null. History's normal sample commits
-        flush these writes, and closing Bloomkeeper commits the final partial batch.
+        flush these writes, and closing BloomGauge commits the final partial batch.
         """
         if not account or type(pulse.get('sessionId')) is not int:
             return
@@ -472,7 +472,7 @@ class EarningsPulse:
                 'coverageIntervals': gaps,
                 'gaps': len(gaps),
                 'hours': list(hours.values()),
-                'source': 'Bloomkeeper confirmed API ledger',
+                'source': 'BloomGauge confirmed API ledger',
                 'liveCredits': {
                     'status': 'synced' if earnings.get('status') == 'ok' else 'stale',
                     'added': 0,

@@ -29,6 +29,7 @@ import warnings
 
 
 MAX_SUBSCRIPTIONS = 8
+SCREENS = ('overview', 'test', 'demand')  # screens a notification may open (push-sw.js)
 MAX_TOTAL_SUBSCRIPTIONS = 32
 PUSH_REASONS = frozenset(
     (
@@ -404,6 +405,8 @@ class WebPush:
                             or len(item['payload'][k]) > limit
                             for k, limit in [('title', 100), ('body', 240)]
                         )
+                        or set(item['payload']) - {'title', 'body', 'tag', 'screen'}
+                        or item['payload'].get('screen', 'test') not in SCREENS
                     ):
                         raise ValueError()
             else:
@@ -432,7 +435,7 @@ class WebPush:
             return True
         except (ImportError, OSError, ValueError, TypeError, KeyError, AttributeError):
             self.state = None
-            self.problem = 'Notification keys or dependencies could not be loaded. Reopen Bloomkeeper on the Mac.'
+            self.problem = 'Notification keys or dependencies could not be loaded. Reopen BloomGauge on the Mac.'
             return False
 
     def save(self):
@@ -496,7 +499,7 @@ class WebPush:
                 'categories': {'demandSpikes': False, 'modelSwitches': True},
                 'detail': self.problem
                 or (
-                    'Model-switch notifications with the reason. Demand-spike push alerts are off.'
+                    'Alerts you turn on under Notifications for the phone: model switches, problems, earnings and more.'
                     if configured
                     else 'Push delivery needs a valid sender contact configured on the Mac. Phone permission and subscriptions are preserved.'
                 ),
@@ -536,8 +539,8 @@ class WebPush:
             record.update(lastTestAt=now, lastTestResultAt=None, lastTestError=None)
             self.save()
             payload = {
-                'title': 'Bloomkeeper · notification test',
-                'body': 'Test notification from Bloomkeeper. Tap to open the dashboard.',
+                'title': 'BloomGauge · notification test',
+                'body': 'Test notification from BloomGauge. Tap to open the dashboard.',
                 'tag': 'bloom-switch-' + uuid.uuid4().hex[:24],
             }
             self.queue.put_nowait((digest(account), payload, subscription_id))
@@ -599,6 +602,19 @@ class WebPush:
                 self.thread = threading.Thread(target=self.run, daemon=True, name='bloom-web-push')
                 self.thread.start()
 
+    def ready(self, account):
+        """A phone of this account can receive alerts. Never creates push keys."""
+        with self.lock:
+            if self.state is None and (self.path is None or not self.path.exists()):
+                return False
+            if not account or not self.load() or not self.state.get('contact'):
+                return False
+            scope = digest(account)
+            return any(
+                r.get('account') == scope and r.get('status') != 'expired'
+                for r in self.state['subscriptions'].values()
+            )
+
     def has_event(self, account, event_id):
         with self.lock:
             return bool(
@@ -627,14 +643,15 @@ class WebPush:
             return False
         key = digest(account + ':' + str(event_id))
         payload = {
-            'title': 'Bloomkeeper · model switched',
+            'title': 'BloomGauge · model switched',
             'body': (old + ' → ' + new + '. ' + REASONS.get(reason, REASONS['automatic']))[:240],
             'tag': 'bloom-switch-' + key[:24],
         }
         return self.enqueue_payload(account, key, payload)
 
-    def enqueue_notice(self, account, event_id, title, body):
-        """A one-off notice (e.g. work stopped arriving), same delivery as switches."""
+    def enqueue_notice(self, account, event_id, title, body, screen=None):
+        """A one-off notice (e.g. work stopped arriving), same delivery as switches.
+        screen: the dashboard screen a tap opens (push-sw.js allow-list; default test)."""
         if not account or not isinstance(event_id, (str, int)) or len(str(event_id)) > 256:
             return False
         if (
@@ -646,15 +663,14 @@ class WebPush:
             return False
         key = digest(account + ':' + str(event_id))
         # Saved pending items and the service worker accept only this tag form.
-        return self.enqueue_payload(
-            account,
-            key,
-            {
-                'title': title.strip()[:60],
-                'body': body.strip()[:240],
-                'tag': 'bloom-switch-' + key[:24],
-            },
-        )
+        payload = {
+            'title': title.strip()[:60],
+            'body': body.strip()[:240],
+            'tag': 'bloom-switch-' + key[:24],
+        }
+        if screen in SCREENS:
+            payload['screen'] = screen
+        return self.enqueue_payload(account, key, payload)
 
     def enqueue_payload(self, account, key, payload):
         with self.lock:
@@ -730,7 +746,7 @@ class WebPush:
                 self.resume_pending()
             except Exception:
                 with self.lock:
-                    self.problem = 'Saved notifications could not resume. Bloomkeeper will retry.'
+                    self.problem = 'Saved notifications could not resume. BloomGauge will retry.'
             try:
                 scope, payload, target = self.queue.get(timeout=1)
             except queue.Empty:

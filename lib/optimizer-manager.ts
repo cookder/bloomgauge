@@ -770,9 +770,9 @@ export function homeSource(home: ManagerHome | null, pinned: boolean): string {
   if (!home)
     return 'Not chosen yet: no model has earned here on 3 separate days in the last 30 days';
   if (home.source === 'manual' || (pinned && home.source !== 'external'))
-    return 'Your pick · Bloomkeeper won’t switch away from it';
+    return 'Your pick · BloomGauge won’t switch away from it';
   if (home.source === 'external')
-    return 'Changed outside Bloomkeeper · held as your pick';
+    return 'Changed outside BloomGauge · held as your pick';
   if (home.source === 'history')
     return home.usdPerHour != null
       ? `Best paid on this Mac · ${usd(home.usdPerHour)} per ready hour${home.hours != null ? ` over ${Math.round(home.hours)} h` : ''}${home.days != null ? ` on ${home.days} days` : ''} in 30 days`
@@ -786,7 +786,7 @@ export function homeSource(home: ManagerHome | null, pinned: boolean): string {
   return 'Home model';
 }
 
-/** "Bloomkeeper will switch to Gemma 4 26B at 5:40 PM, which pays best on Macs like yours…" */
+/** "BloomGauge will switch to Gemma 4 26B at 5:40 PM, which pays best on Macs like yours…" */
 export function homeNoticeText(notice: HomeNotice, label: Label = same) {
   const pays =
     notice.usdPerHour != null
@@ -798,7 +798,7 @@ export function homeNoticeText(notice: HomeNotice, label: Label = same) {
       : notice.currentUsdPerHour != null
         ? ` Macs like yours make ~${usd(notice.currentUsdPerHour)}/h on ${label(notice.from)}.`
         : '';
-  return `Bloomkeeper will switch to ${label(notice.model)} at ${clock(notice.until)}, which pays best on Macs like yours${pays}.${here}`;
+  return `BloomGauge will switch to ${label(notice.model)} at ${clock(notice.until)}, which pays best on Macs like yours${pays}.${here}`;
 }
 
 export type Readiness = {

@@ -429,7 +429,7 @@ function DashboardContent() {
             </span>
             <div>
               <strong>
-                Bloomkeeper<span className="brand-wide"> / Dashboard</span>
+                BloomGauge<span className="brand-wide"> / Dashboard</span>
                 <MobilePageTitle />
               </strong>
               <p>{data?.deviceName || 'YOUR MAC, IN VIEW'}</p>
@@ -605,6 +605,7 @@ function DashboardContent() {
                               shown && visible('overview') && tab === 'mac'
                             }
                             connected={(paused || readingsFresh) && !!data}
+                            outlookConnected={(paused || !stale) && !!data}
                             forecast={data?.forecast}
                             earningsUpdatedAt={e?.updatedAt}
                             earningsStatus={e?.status}

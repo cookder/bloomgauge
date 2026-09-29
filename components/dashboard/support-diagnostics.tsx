@@ -36,7 +36,7 @@ function AutoSendSetting() {
             .catch((e) =>
               setError(
                 e instanceof SupportRequestError && e.status === 'mac_only'
-                  ? 'Turn this on in Bloomkeeper on your Mac.'
+                  ? 'Turn this on in BloomGauge on your Mac.'
                   : 'Could not save. Try again.',
               ),
             );
@@ -45,7 +45,7 @@ function AutoSendSetting() {
       <span>
         <strong>Send problem reports automatically</strong>
         <small>
-          When Bloomkeeper hits a problem, it sends the same short report you
+          When BloomGauge hits a problem, it sends the same short report you
           would send with one tap: app version, Mac chip and memory size, and
           status codes. Never earnings, account details, model names or logs.{' '}
           {error}
@@ -164,7 +164,7 @@ export function SupportDiagnostics() {
         !Array.isArray(value.optimizer?.recentEvents)
       ) {
         throw Error(
-          'The report format was not recognized. Refresh Bloomkeeper before trying again.',
+          'The report format was not recognized. Refresh BloomGauge before trying again.',
         );
       }
       if (mounted.current && request.current === controller) setReport(value);
@@ -174,7 +174,7 @@ export function SupportDiagnostics() {
           controller.signal.aborted
             ? 'The request timed out. Your provider was not changed.'
             : err instanceof SyntaxError
-              ? 'The report format was not recognized. Refresh Bloomkeeper before trying again.'
+              ? 'The report format was not recognized. Refresh BloomGauge before trying again.'
               : (err as Error).message,
         );
     } finally {
@@ -231,7 +231,7 @@ export function SupportDiagnostics() {
     try {
       await navigator.share({
         files: [file()],
-        title: 'Bloomkeeper diagnostics',
+        title: 'BloomGauge diagnostics',
       });
     } catch (err) {
       if ((err as Error).name !== 'AbortError')
@@ -264,7 +264,7 @@ export function SupportDiagnostics() {
         </div>
         <p>
           Ask a question, report a problem, or suggest something for
-          Bloomkeeper. Most setup issues are covered in the{' '}
+          BloomGauge. Most setup issues are covered in the{' '}
           <button
             type="button"
             className="text-link"
@@ -294,9 +294,9 @@ export function SupportDiagnostics() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            Join the Bloomkeeper Slack channel
+            Join the BloomGauge Slack channel
           </a>
-          <a className="action" href="mailto:support@bloomkeeper.io">
+          <a className="action" href="mailto:support@bloomgauge.io">
             Email support
           </a>
         </div>
@@ -363,7 +363,7 @@ export function SupportDiagnostics() {
             <h3>Ready for your review</h3>
             <p>
               Captured {new Date(report.generatedAt).toLocaleString()} ·
-              Bloomkeeper {report.app.version}
+              BloomGauge {report.app.version}
             </p>
             <dl>
               <div>

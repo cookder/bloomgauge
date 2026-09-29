@@ -80,7 +80,7 @@ def endpoint_fix(failure):
         return None
     return (
         'Setting up pre-warming failed %s this way. To set it up yourself, run %s%s` in '
-        'Terminal, then refresh Bloomkeeper.'
+        'Terminal, then refresh BloomGauge.'
         % ('twice' if count == 2 else '%d times' % count, ENDPOINT_FIX, model)
     )
 
@@ -94,7 +94,7 @@ def multi_model_notice(home, options):
     """provider.toml's [backend] enabled_models lists three or more models. Darkbloom 0.9.10's
     launchd child serves that list, not the launch agent's --model
     (StartCommand.usesPinnedModelSelection), and a failed `start` puts it back
-    (ProviderModelSelection.withReplacement). Bloomkeeper runs one model or a pair, so it says
+    (ProviderModelSelection.withReplacement). BloomGauge runs one model or a pair, so it says
     so plainly rather than waiting or retrying. A `darkbloom start --model` from the model
     controls replaces the list."""
     count = len(set(manager.toml_models(home, options) or []))
@@ -102,7 +102,25 @@ def multi_model_notice(home, options):
         return None
     return (
         'Darkbloom is set to serve %d models. Run `darkbloom start` in Terminal and pick one '
-        'model, or use Bloomkeeper’s model controls.' % count
+        'model, or use BloomGauge’s model controls.' % count
+    )
+
+
+DROPPED_NOTE_SECONDS = 7 * 86400
+
+
+def dropped_environment_note(dropped, now):
+    """A sentence for the model controls after a start dropped launch-agent variables."""
+    if not isinstance(dropped, dict) or not isinstance(dropped.get('keys'), list):
+        return ''
+    at = dropped.get('at')
+    keys = [k for k in dropped['keys'] if isinstance(k, str) and k][:8]
+    if not keys or not isinstance(at, (int, float)) or not 0 <= now - at < DROPPED_NOTE_SECONDS:
+        return ''
+    return (
+        ' When Darkbloom last started, it kept only its own launch settings and dropped '
+        + ', '.join(keys)
+        + '. A start from Terminal does the same; set them again only if Darkbloom supports them.'
     )
 
 
@@ -126,7 +144,7 @@ class ProviderControl:
         from optimizer import launch_options
 
         o = self.o
-        plist = plistlib.loads(o.plist_path.read_bytes())
+        plist = o.read_agent()
         model, options = launch_options(plist, allow_auto=True, allow_many=True)
         if pathlib.Path(plist['ProgramArguments'][0]).resolve() != o.binary.resolve():
             raise ValueError(
@@ -238,6 +256,7 @@ class ProviderControl:
             else DRAINED
             if fenced_drain(v['status'], v['disabled'], v['raw'])
             else 'Running in the background. Closing this window does not stop Darkbloom.'
+            + dropped_environment_note(o.state.get('environmentDropped'), time.time())
             if v['status'] == 'running'
             else 'Stopped. Start it in Optimizer → Overview; automatic control stays on.'
             if v['status'] == 'stopped' and manager.active(o.state)
@@ -449,7 +468,7 @@ class ProviderControl:
                                 'Waiting for memory estimates for every saved model. Refresh models before starting.'
                             )
                         # The user's own Start: provider.toml's memory_reserve_gb is the reserve,
-                        # and knobs that hold only Bloomkeeper's voluntary moves don't refuse it.
+                        # and knobs that hold only BloomGauge's voluntary moves don't refuse it.
                         reserve = configured_reserve_gb(o.home, current['options'])
                         if len(models) == 2:
                             reason = combination_config_error(

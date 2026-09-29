@@ -130,7 +130,7 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
         const value: unknown = await response.json();
         if (!valid(value) || value.hours !== hours)
           throw Error(
-            'Could not read this fleet response. Update Bloomkeeper on each Mac.',
+            'Could not read this fleet response. Update BloomGauge on each Mac.',
           );
         if (own === version.current) {
           setData(value);
@@ -359,8 +359,8 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
           </div>
           <p className="footnote">
             Pace is each live Mac’s confirmed pay over its last 5 warm minutes,
-            as everywhere in Bloomkeeper, split across its models by what each
-            one earned. A Mac on an older Bloomkeeper that serves more than one
+            as everywhere in BloomGauge, split across its models by what each
+            one earned. A Mac on an older BloomGauge that serves more than one
             model adds no pace here. Demand is the network’s requests per warm
             Mac for that model now, compared with its usual for this time of day, read on this
             Mac.
@@ -502,7 +502,7 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
               )}
               {mac.status === 'unreachable' && (
                 <p className="footnote">
-                  Check that this Mac is awake, Bloomkeeper is running and Tailscale
+                  Check that this Mac is awake, BloomGauge is running and Tailscale
                   is connected.
                 </p>
               )}
@@ -567,7 +567,7 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
           </div>
           <ol className="mac-setup-steps">
             <li>
-              <strong>Install Bloomkeeper on each Mac</strong> and finish its setup.
+              <strong>Install BloomGauge on each Mac</strong> and finish its setup.
               Each Mac keeps running its own optimizer.
             </li>
             <li>
@@ -586,7 +586,7 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
           </ol>
           <p className="footnote">
             Connections are read-only and private to your Tailscale account.
-            Nothing goes through a Bloomkeeper server, and it’s free.
+            Nothing goes through a BloomGauge server, and it’s free.
           </p>
           <form
             className="mac-rename"
@@ -677,7 +677,7 @@ export function MyMacs({ paused = false }: { paused?: boolean }) {
         </section>
       ) : current ? (
         <div className="notice">
-          Add, rename or remove connections in Bloomkeeper on the dashboard host Mac.
+          Add, rename or remove connections in BloomGauge on the dashboard host Mac.
           Your phone can monitor the whole group from this page.
         </div>
       ) : null}

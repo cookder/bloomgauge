@@ -267,7 +267,7 @@ for (const engine of options.engine
       const card = page.getByRole('region', { name: 'Optimizer control' }); // section with an accessible name
       const on = () =>
         card.getByRole('button', {
-          name: 'Optimizer on Bloomkeeper follows earning opportunities',
+          name: 'Optimizer on BloomGauge follows earning opportunities',
           exact: true,
         });
       const manual = () =>
@@ -436,7 +436,7 @@ for (const engine of options.engine
           .click();
         const settings = page.locator('.optimizer-settings-panel');
         await settings
-          .getByText('Models Bloomkeeper may choose · 3 selected', { exact: true })
+          .getByText('Models BloomGauge may choose · 3 selected', { exact: true })
           .click();
         await expect(
           settings.getByRole('checkbox', { name: /Gemma/ }),
@@ -449,7 +449,7 @@ for (const engine of options.engine
         ).toBeChecked();
         await settings.getByRole('checkbox', { name: /Gemma/ }).uncheck();
         await expect(
-          settings.getByText('Models Bloomkeeper may choose · 2 selected', {
+          settings.getByText('Models BloomGauge may choose · 2 selected', {
             exact: true,
           }),
         ).toBeVisible();

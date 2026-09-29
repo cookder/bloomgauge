@@ -284,7 +284,7 @@ export function ModelHistory({
         );
         if (!res.ok)
           throw Error(
-            'Saved model history could not be refreshed. Check that Bloomkeeper is running on your Mac.',
+            'Saved model history could not be refreshed. Check that BloomGauge is running on your Mac.',
           );
         const value = (await res.json()) as History;
         if (
@@ -426,7 +426,7 @@ export function ModelHistory({
       <p className="footnote">
         Every observed run adds to this library, whether you choose the model
         yourself or run a scheduled test. Starting a test resets its schedule,
-        never these records. Collecting requires Bloomkeeper to stay open.
+        never these records. Collecting requires BloomGauge to stay open.
       </p>
       <div className="model-history-toolbar">
         <Choice
@@ -686,7 +686,7 @@ export function ModelHistory({
           Older records are preserved, but did not save proof that the model was
           loaded and pre-warmed. They appear in amber and never inflate verified
           earnings rates or automatic-switching evidence. Saved credits remain
-          real money; they can cover periods when Bloomkeeper was not recording
+          real money; they can cover periods when BloomGauge was not recording
           runtime. No missing hours are reconstructed from credit timestamps.
         </p>
         <p className="footnote">

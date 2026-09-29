@@ -264,7 +264,7 @@ class MembershipTests(Base):
 
 
 class ReplayTests(Base):
-    """Real capacity windows from Bloomkeeper's history (model_catalog_fixture.json)."""
+    """Real capacity windows from BloomGauge's history (model_catalog_fixture.json)."""
 
     def replay(self, name):
         doc = json.loads(FIXTURE.read_text())

@@ -40,7 +40,7 @@ export function OptimizerIntro({
         <DialogContent className="support-report-dialog optimizer-intro">
           <DialogTitle>What the manager does</DialogTitle>
           <DialogDescription>
-            Once it’s on, Bloomkeeper keeps this Mac serving the best model it
+            Once it’s on, BloomGauge keeps this Mac serving the best model it
             knows, and fixes problems without switching itself off.
           </DialogDescription>
           <ul className="optimizer-intro-points">
@@ -53,7 +53,7 @@ export function OptimizerIntro({
           <h3>Your options</h3>
           <p>
             Off leaves models entirely to you. Manual (pin) keeps the model you
-            choose and restores it if it fails. Manager on lets Bloomkeeper
+            choose and restores it if it fails. Manager on lets BloomGauge
             choose the home model. Every move still passes memory and daily
             switch-limit checks.
           </p>
@@ -95,7 +95,7 @@ export function OptimizerIntro({
       <DialogContent className="support-report-dialog optimizer-intro">
         <DialogTitle>What the optimizer does</DialogTitle>
         <DialogDescription>
-          Once it’s on, Bloomkeeper picks which model this Mac serves, automatically.
+          Once it’s on, BloomGauge picks which model this Mac serves, automatically.
         </DialogDescription>
         <ul className="optimizer-intro-points">
           {introPoints.map((p) => (
@@ -118,10 +118,10 @@ export function OptimizerIntro({
           <>
             <div className="optimizer-intro-boost">
               <strong>
-                New to Bloomkeeper on this Mac? Add a 3-day Learning boost.
+                New to BloomGauge on this Mac? Add a 3-day Learning boost.
               </strong>
               <p>
-                For three days Bloomkeeper measures more models, more often, so it
+                For three days BloomGauge measures more models, more often, so it
                 learns this Mac’s earnings faster. With Darkbloom 0.9.9 or
                 later, requests in progress finish before a switch. The boost
                 ends by itself.

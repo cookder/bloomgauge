@@ -103,7 +103,7 @@ function useShadowReport(open: boolean) {
   return { report, error };
 }
 
-/** What Bloomkeeper has measured for each selected model, and whether it can switch to it confidently. */
+/** What BloomGauge has measured for each selected model, and whether it can switch to it confidently. */
 export function ModelEvidence({
   rows,
   open = true,
@@ -198,10 +198,10 @@ export function ModelEvidence({
         </table>
       </div>
       <p className="footnote shadow-note">
-        <strong>Shadow estimate</strong> is a new method Bloomkeeper is testing: it
+        <strong>Shadow estimate</strong> is a new method BloomGauge is testing: it
         predicts each model’s pay from how busy the network is for it right now,
         including models with little history. It is{' '}
-        <strong>not used for switching</strong>; Bloomkeeper checks it against what
+        <strong>not used for switching</strong>; BloomGauge checks it against what
         actually happens. {report ? shadowProgress(report, money) : error}
         {report?.latest && (
           <>

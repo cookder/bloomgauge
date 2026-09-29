@@ -21,7 +21,7 @@ def raw(at=T, jobs=10, tokens=100, **changes):
         'advertised_models': ['a'],
         'current_model': 'a',
         'warm_models': ['a'],
-        'trust': {'status': 'online'},
+        'trust': {'status': 'online', 'trust_level': 'hardware'},
         'inference_active': False,
         'stats': {'requests_served': jobs, 'tokens_generated': tokens},
         **changes,
@@ -89,6 +89,40 @@ class WarmStatisticsTests(unittest.TestCase):
         self.assertFalse(
             readiness({**pair, 'warm_models': ['a']}, proof(pair), T, True)['counting']
         )
+
+    def test_counting_waits_until_the_network_clears_the_session_to_serve(self):
+        r = raw()
+        p = proof(r)
+        self.assertTrue(readiness(r, p, T, True)['counting'])  # authorized None: not checked
+        self.assertTrue(readiness(r, p, T, True, False, authorized=True)['counting'])
+        paused = readiness(r, p, T, True, False, authorized=False)
+        self.assertFalse(paused['counting'])
+        self.assertIn('hasn’t cleared this Mac to serve', paused['detail'])
+        # A switch in progress still says so first.
+        self.assertIn('model switching', readiness(r, p, T, True, True, authorized=False)['detail'])
+
+    def test_control_gates_skip_the_clearance_that_statistics_wait_for(self):
+        o = Optimizer(self.h, Mock(), self.home, threading.Event(), Mock())
+        o.identity_ok = True
+        o.identity_at = T
+        o.identity_session = (T - 100, 10)
+        verifying = {'status': 'online', 'trust_level': 'self_signed', 'authorization': {
+            'path': 'none', 'reason': 'app_attest_qualification_required', 'protocol': 1}}
+        state = raw(trust=verifying)
+        o.warmup = proof(state)
+        self.assertFalse(o.tracking(state, T)['counting'])
+        # Resume, On and the stall ladder keep today's rule, so a restart can still help.
+        self.assertTrue(o.tracking(state, T, cleared=False)['counting'])
+        o.identity_hardware = True  # this session's roster row says it may serve
+        self.assertTrue(o.tracking(state, T)['counting'])
+        o.identity_hardware = False
+        attested = {**verifying, 'authorization': {'path': 'app_attest', 'reason': 'app_attest_verified'}}
+        self.assertTrue(o.tracking(raw(trust=attested), T)['counting'])
+        # Still not cleared 15 min after the start: stuck, not verifying. It counts as before,
+        # so its silent minutes reach the stall ladder.
+        late = T - 100 + 900
+        o.identity_at = late
+        self.assertTrue(o.tracking(raw(at=late, trust=verifying), late)['counting'])
 
     def test_model_counters_pause_without_restarting_session_and_do_not_catch_up_warmups(self):
         first = self.observe(raw(), False)

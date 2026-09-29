@@ -1,6 +1,7 @@
 """Local, opt-in model experiments and evidence-based provider switching."""
 
 import copy, hashlib, json, math, os, pathlib, plistlib, re, ssl, subprocess, threading, time, urllib.error, uuid
+from xml.parsers.expat import ExpatError
 from optimizer_store import OptimizerStore, device_id, CONTINUITY_SECONDS
 from decision_journal import DecisionJournal, reason_code
 from switch_alerts import SwitchAlerts, switch_reason
@@ -35,6 +36,7 @@ import bloom_log  # noqa: F401  (quiet until the app configures logging)
 
 log = logging.getLogger('bloom.optimizer')
 from update_guard import UpdateGuard
+from serving_trust import daemon_authorized, daemon_verifying, roster_authorized
 from provider_control import (
     DRAINED,
     ENDPOINT_SETUP,
@@ -209,8 +211,8 @@ def roster_identity(raw, rows):
             and sum(r.get('provider_id') == row['provider_id'] for r in rows if isinstance(r, dict))
             == 1
         ),
-        'hardwareVerified': row.get('status') in ('online', 'serving')
-        and row.get('trust_level') == 'hardware',
+        # Serving-authorized: hardware trust, or App Attest without MDM (serving_trust).
+        'hardwareVerified': roster_authorized(row),
     }
 
 
@@ -246,7 +248,7 @@ def memory_budget(
 
 
 def unknown_flag(token):
-    """A `--name`/`-x` option Bloomkeeper does not parse (bare `-`/`--` never qualify)."""
+    """A `--name`/`-x` option BloomGauge does not parse (bare `-`/`--` never qualify)."""
     known = VALUE_FLAGS | BOOL_FLAGS | {'--model', '--foreground'}
     return (
         isinstance(token, str)
@@ -255,13 +257,42 @@ def unknown_flag(token):
     )
 
 
+
+# After a start the network verifies the new session before it sends work (serving_trust
+# daemon_verifying). Statistics wait for that clearance only this long after the start: longer
+# than any verification modelled (7 min in the bug matrix). A Mac still not cleared after that
+# isn't being verified but stuck; it counts as before, so its silent minutes reach the stall
+# ladder, which may restart it (stall_recovery: probe at 5, restart at 8 silent minutes).
+CLEARANCE_GRACE_SECONDS = 900
+
+AGENT_READS = 3
+
+
+def read_launch_agent(path, wait=time.sleep):
+    """The provider's launch agent, read as a whole.
+
+    Darkbloom rewrites this plist in place while it starts (not atomically), so a read can
+    catch it empty or half-written: plistlib then raises InvalidFileException or Expat's
+    parse error. Retry briefly; a plist still unreadable after that is reported as a
+    ValueError, which every caller already treats as "settings unreadable, try again"."""
+    for attempt in range(AGENT_READS):
+        data = path.read_bytes()
+        try:
+            return plistlib.loads(data)
+        except (plistlib.InvalidFileException, ExpatError, ValueError) as error:
+            if attempt == AGENT_READS - 1:
+                raise ValueError(
+                    'The provider launch settings are being rewritten. Try again in a moment.'
+                ) from error
+            wait(0.25)
+
 def launch_options(plist, allow_auto=False, allow_many=False):
     """Retain the user's endpoint, idle policy, config and coordinator. No shell.
 
     `allow_many`: three or more --model flags (the start picker's picks) read as no selection
     (None) instead of an error, for the model controls that replace them with one model.
 
-    Flags Bloomkeeper does not know (a newer Darkbloom's) are kept verbatim and in order, so a
+    Flags BloomGauge does not know (a newer Darkbloom's) are kept verbatim and in order, so a
     restart passes them on unchanged. `--flag=value` is one token. A bare unknown `--flag`
     takes the next token as its value unless that token looks like a flag (starts with `-`
     followed by a letter, or `--`): `--x 5`, `--x -5` and `--x auto` keep their value, while
@@ -404,7 +435,7 @@ class Optimizer:
             self.state['manualResult'] = {
                 **self.state.get('manualResult', {}),
                 'status': 'interrupted',
-                'detail': 'Bloomkeeper closed before the manual switch finished. Check the currently serving model before trying again.',
+                'detail': 'BloomGauge closed before the manual switch finished. Check the currently serving model before trying again.',
             }
         self.state['requestedModel'] = None
         self.state['requestedKind'] = None
@@ -422,12 +453,12 @@ class Optimizer:
             )
         except ValueError:
             rules, repaired = demand_policy(), None
-            off_reason = 'Bloomkeeper could not read its saved optimizer settings when it reopened, so automatic control is off. Your model keeps serving; review the plan and turn it on again.'
+            off_reason = 'BloomGauge could not read its saved optimizer settings when it reopened, so automatic control is off. Your model keeps serving; review the plan and turn it on again.'
         self.state['demandPolicy'] = rules
         if repaired and was_on and not manager.enabled(rules):
-            off_reason = 'Some saved optimizer settings no longer fit this version of Bloomkeeper and were moved to the nearest allowed values, so automatic switching is off. Review them, then turn it on again.'
+            off_reason = 'Some saved optimizer settings no longer fit this version of BloomGauge and were moved to the nearest allowed values, so automatic switching is off. Review them, then turn it on again.'
         elif repaired and was_on:
-            notice = 'Some saved optimizer settings no longer fit this version of Bloomkeeper and were moved to the nearest allowed values. Automatic control stays on.'
+            notice = 'Some saved optimizer settings no longer fit this version of BloomGauge and were moved to the nearest allowed values. Automatic control stays on.'
         if off_reason and was_on:
             self.state['mode'] = 'observe'
         self.state['demandPolicyRevision'] = POLICY_REVISION
@@ -437,7 +468,7 @@ class Optimizer:
             # Manager) would still pause on any failed switch. The Manager takes it over.
             self.cancel_combo('The Manager took over automatic control.')
             self.state['mode'] = 'demand'
-            notice = 'Bloomkeeper now runs automatic control with the Manager, which replaces seven-day tests, historical optimization and pair tests. Automatic control stays on.'
+            notice = 'BloomGauge now runs automatic control with the Manager, which replaces seven-day tests, historical optimization and pair tests. Automatic control stays on.'
         if (off_reason and was_on or notice) and self.state.get('account'):
             self.store.event(
                 self.state['account'],
@@ -457,7 +488,7 @@ class Optimizer:
         if interrupted and manager.active(self.state):
             # Automatic control stays on: the manager checks what is serving and restores.
             manager.interrupted(self.state, interrupted, time.time())
-            self.detail = 'Bloomkeeper closed during a switch. Checking the provider; the manager restores the home model if nothing becomes ready.'
+            self.detail = 'BloomGauge closed during a switch. Checking the provider; the manager restores the home model if nothing becomes ready.'
         elif interrupted:
             self.state['mode'] = 'observe'
             self.detail = 'The dashboard closed during a switch. Automatic switching is paused; check the provider status.'
@@ -465,20 +496,20 @@ class Optimizer:
         if self.state.get('providerResult', {}).get('status') == 'working':
             self.state['providerResult'].update(
                 status='interrupted',
-                detail='Bloomkeeper closed before this provider command was verified. Refresh the model controls before retrying; no command is automatically replayed.',
+                detail='BloomGauge closed before this provider command was verified. Refresh the model controls before retrying; no command is automatically replayed.',
             )
         if self.state.get('selectionRequest') and self.state.get('manualResult', {}).get(
             'status'
         ) in ('working', 'interrupted'):
             self.state['manualResult'].update(
                 status='failed',
-                detail='Bloomkeeper reopened before the selected start was verified. Refresh its status; no command was replayed.',
+                detail='BloomGauge reopened before the selected start was verified. Refresh its status; no command was replayed.',
             )
         result = self.state.get('manualResult') or {}
         if result.get('status') in ('interrupted', 'failed') and manager.resume_manual(
             self.state, result.get('id'), result.get('model'), result['status']
         ):
-            self.detail = 'Bloomkeeper closed during your model pick. It is kept as your pick; automatic control continues.'
+            self.detail = 'BloomGauge closed during your model pick. It is kept as your pick; automatic control continues.'
         self.live = None
         self.raw = {}
         self.previous = None
@@ -523,7 +554,7 @@ class Optimizer:
             self.state['account'], self.state['device'], time.time()
         ) and not manager.active(self.state):
             self.state['mode'] = 'observe'
-            self.detail = 'Bloomkeeper reopened during an automatic attempt. Its result is unverified; switching is paused and its downtime allowance is retained.'
+            self.detail = 'BloomGauge reopened during an automatic attempt. Its result is unverified; switching is paused and its downtime allowance is retained.'
         self.save()
         self.automatic_control = OptimizerControl(self)
         self.stall = StallControl(self)
@@ -554,8 +585,11 @@ class Optimizer:
             raise ValueError('Provider status is unavailable.')
         return d
 
+    def read_agent(self):
+        return read_launch_agent(self.plist_path, lambda seconds: self.stop.wait(seconds))
+
     def read_options(self, plist_only=False):
-        plist = plistlib.loads(self.plist_path.read_bytes())
+        plist = self.read_agent()
         model, args = launch_options(plist, allow_auto=True)
         if pathlib.Path(plist['ProgramArguments'][0]).resolve() != self.binary.resolve():
             raise ValueError(
@@ -611,6 +645,18 @@ class Optimizer:
                 )
             self.live = {**snapshot, 'account': account, 'device': device}
             self.raw = raw
+            recovery = self.state.get('cacheRecovery') or {}
+            if (
+                recovery.get('status') == 'cleared'
+                and recovery.get('session') == session_key(raw)
+                and raw.get('warm_models')
+                and finite(written)
+                and written > recovery.get('at', 0)
+            ):
+                # The cleanup let the model load. Darkbloom's next idle unload in this session
+                # leaves its weights in file cache again, so it may clean up once more (Sep 28).
+                recovery.update(status='loaded', detail='macOS file cache cleared; the model loaded.')
+                self.save()
             previous = self.previous
             self.previous = current
             pending = bool(self.state.get('pending'))
@@ -685,14 +731,33 @@ class Optimizer:
                 True,
             )
 
-    def tracking(self, raw, now):
+    def tracking(self, raw, now, cleared=True):
+        """Statistics and the status line: a new session counts once the network lets it
+        serve (the daemon's trust, or this session's roster row; serving_trust), for at most
+        CLEARANCE_GRACE_SECONDS after the start. `cleared=False` skips that wait, for control
+        (resume, On, demand following, the stall ladder), which keeps today's rule."""
         with self.lock:
             verified = (
                 self.identity_ok
                 and now - self.identity_at < 180
                 and self.identity_session == (raw.get('started_at'), raw.get('pid'))
             )
-            return readiness(raw, self.warmup, now, verified, bool(self.state.get('pending')))
+            started = raw.get('started_at')
+            clearing = bool(
+                cleared
+                and finite(started)
+                and 0 <= now - started < CLEARANCE_GRACE_SECONDS
+                and not daemon_authorized(raw)
+                and not (verified and self.identity_hardware)
+            )
+            return readiness(
+                raw,
+                self.warmup,
+                now,
+                verified,
+                bool(self.state.get('pending')),
+                authorized=False if clearing else None,
+            )
 
     def invalidate_reporting_identity(self):
         with self.lock:
@@ -785,7 +850,7 @@ class Optimizer:
                 held,
                 reserve,
             )
-        # Knobs Bloomkeeper can't model stop automatic moves (controlError), not restores.
+        # Knobs BloomGauge can't model stop automatic moves (controlError), not restores.
         if self.combo_config_error(voluntary=False):
             return None
         return pair_budget(
@@ -2018,11 +2083,15 @@ class Optimizer:
             raise ValueError(
                 'The saved plan, provider or account changed. Review it before resuming.'
             )
-        # The manager turns on with a dark or cold model: its watchdog restores home.
-        reason = self.wait_reason(live, now, serving=not managed)
+        # The manager turns on with a dark or cold model: its watchdog restores home. Turning
+        # it On is the person's own choice, like a manual pick: battery power and the pay
+        # feeds don't hold it (Sep 28 22:50, on battery). Its own later moves still check.
+        reason = self.wait_reason(
+            live, now, serving=not managed, move='manual' if managed else None
+        )
         if reason:
             raise ValueError(reason)
-        if not managed and not self.tracking(raw, now)['counting']:
+        if not managed and not self.tracking(raw, now, cleared=False)['counting']:
             raise ValueError(
                 'Wait for the current model to be Warm and ready before resuming. Open Optimizer → Overview to check progress.'
             )
@@ -2298,7 +2367,7 @@ class Optimizer:
             saved = copy.deepcopy(self.state)
             if data['seconds'] and manager.enabled(self.state.get('demandPolicy')):
                 raise ValueError(
-                    'Learning boost is off while Bloomkeeper holds a home model (manager strategy).'
+                    'Learning boost is off while BloomGauge holds a home model (manager strategy).'
                 )
             if data['seconds'] == 0:
                 if not data_gathering.status(self.state.get('dataGathering'), now)['active']:
@@ -2706,9 +2775,9 @@ class Optimizer:
                 None,
                 network_health.describe(outage, signal)
                 + (
-                    ' Bloomkeeper won’t restart the provider for it; moving to another model is still allowed.'
+                    ' BloomGauge won’t restart the provider for it; moving to another model is still allowed.'
                     if outage['scope'] == 'model'
-                    else ' Nothing to fix on this Mac: Bloomkeeper won’t restart the provider or switch models because of it.'
+                    else ' Nothing to fix on this Mac: BloomGauge won’t restart the provider or switch models because of it.'
                 ),
             )
             self.outage_logged[(account, device)] = {'key': key, 'since': outage['since']}
@@ -2732,13 +2801,13 @@ class Optimizer:
             elif status == 'expired':
                 kind, text = 'network-untracked', (
                     'The Darkbloom network problem that began at %s has lasted %d hours: '
-                    'Bloomkeeper takes it as the new normal and no longer holds restarts or '
+                    'BloomGauge takes it as the new normal and no longer holds restarts or '
                     'model switches for it.' % (began, network_health.MAX_SECONDS // 3600)
                 )
             else:
                 kind, text = 'network-untracked', (
-                    'Bloomkeeper stopped tracking the Darkbloom network problem that began at %s: '
-                    'there are no fresh readings on it, so it may not be over. Bloomkeeper no '
+                    'BloomGauge stopped tracking the Darkbloom network problem that began at %s: '
+                    'there are no fresh readings on it, so it may not be over. BloomGauge no '
                     'longer holds restarts or model switches for it.' % began
                 )
             self.store.event(account, device, now, kind, None, text)
@@ -2747,7 +2816,7 @@ class Optimizer:
     def restore_drained(self, settings, live, raw, now):
         """Restart a provider that a failed start left drained, even while paused.
 
-        Only after Bloomkeeper's own start failed, only once the drain has finished and
+        Only after BloomGauge's own start failed, only once the drain has finished and
         stayed finished (a running start would have restarted within seconds), and
         only on the selection the provider is already configured for.
         """
@@ -3183,7 +3252,7 @@ class Optimizer:
             if not automatic and not idle_ready and not timeout_due and not graceful_drain(raw):
                 self.status = 'waiting'
                 self.detail = (
-                    'Waiting for an idle period. After five minutes queued, Bloomkeeper will pause the provider and switch; active requests may be interrupted.'
+                    'Waiting for an idle period. After five minutes queued, BloomGauge will pause the provider and switch; active requests may be interrupted.'
                     if manual_pause_at(settings) is not None
                     else 'Waiting for an idle period before restarting with the next model.'
                 )
@@ -3282,9 +3351,9 @@ class Optimizer:
         with self.lock:
             self.last_demand_decision = copy.deepcopy(decision)
         self.live_projection.record(decision, settings, live, raw)
-        if managed and self.tracking(raw, now)['counting']:
+        if managed and self.tracking(raw, now, cleared=False)['counting']:
             self.manager.remember(decision, now)
-        if not self.tracking(raw, now)['counting'] and not home_return:
+        if not self.tracking(raw, now, cleared=False)['counting'] and not home_return:
             target = None
             decision['reason'] = (
                 managed and self.manager.resting_note(raw, current, options, now)
@@ -3298,7 +3367,7 @@ class Optimizer:
                 or self.state.get('demandPolicy') != settings.get('demandPolicy')
             ):
                 return
-            if self.tracking(raw, now)['counting']:
+            if self.tracking(raw, now, cleared=False)['counting']:
                 self.demand_auto.record_spike_review(
                     live['account'], live['device'], decision.get('spikeReview')
                 )
@@ -3311,7 +3380,7 @@ class Optimizer:
                     now, target, decision, live, raw, current, options, environment
                 )
             previous = self.state.get('demandProposal') or {}
-            ready = self.tracking(raw, now)['counting']
+            ready = self.tracking(raw, now, cleared=False)['counting']
             economic_row = None
             if ready and not decision.get('controlError'):
                 if managed:
@@ -3585,7 +3654,7 @@ class Optimizer:
             live = copy.deepcopy(self.live) or {}
             observed = copy.deepcopy(self.raw)
         if self.stop.is_set():
-            return 'Bloomkeeper is closing; warm-up is stopped.'
+            return 'BloomGauge is closing; warm-up is stopped.'
         if session_key(raw) != session_key(observed):
             return 'Waiting for the new provider session to be observed.'
         reason = self.wait_reason(
@@ -3606,7 +3675,7 @@ class Optimizer:
         if not target:
             return 'Automatic pre-warming supports one or two distinct selected models.'
         if len(models) == 2:
-            # Knobs Bloomkeeper can't model hold only its own voluntary moves (move None).
+            # Knobs BloomGauge can't model hold only its own voluntary moves (move None).
             error = self.combo_config_error(voluntary=move is None)
             if error:
                 return error
@@ -3929,7 +3998,7 @@ class Optimizer:
         now = time.time()
         with self.lock:
             last = self.state.get('cacheRecovery') or {}
-            if last.get('session') == key:
+            if last.get('session') == key and last.get('status') != 'loaded':
                 raise WarmupError(
                     'Cache recovery was already attempted for this provider session. Check the Mac before retrying.',
                     code='cache-recovery-limited',
@@ -3987,7 +4056,7 @@ class Optimizer:
             self.save()
         for _ in range(10):
             if self.stop.wait(2):
-                raise ExternalChange('Bloomkeeper closed during memory recovery.')
+                raise ExternalChange('BloomGauge closed during memory recovery.')
             current = self.read_state()
             if session_key(current) != key:
                 raise ExternalChange('Provider changed during memory recovery.')
@@ -4001,7 +4070,7 @@ class Optimizer:
         )
 
     def purge_before_load(self, target):
-        """Clear the macOS file cache before every switch Bloomkeeper sends.
+        """Clear the macOS file cache before every switch BloomGauge sends.
 
         Darkbloom admits a load only if free + inactive memory covers it, so the
         previous model's weight files left in the file cache can block the next
@@ -4037,7 +4106,7 @@ class Optimizer:
             return False
         for _ in range(10):
             if self.stop.wait(2):
-                raise ExternalChange('Bloomkeeper closed during file-cache cleanup.')
+                raise ExternalChange('BloomGauge closed during file-cache cleanup.')
             with self.lock:
                 measured = ((self.live or {}).get('hardware') or {}).get('at')
             fresh = finite(measured) and measured > purged_at
@@ -4272,6 +4341,27 @@ class Optimizer:
         fix = endpoint_fix(failure)
         return detail + ' ' + fix if fix else detail
 
+    def note_dropped_environment(self, passed, saved):
+        """Darkbloom rebuilds the launch agent on every start and keeps only its own allowlisted
+        variables (LaunchAgent.passthroughEnvKeys), exactly as a start from Terminal does. Any
+        other variable in the old agent is gone after the start. That used to happen silently;
+        remember which ones, so the model controls can say so."""
+        if not isinstance(passed, dict) or not isinstance(saved, dict):
+            return
+        # Darkbloom forwards only non-empty values (LaunchAgent.passthroughEnvironment).
+        dropped = sorted(
+            k for k, v in passed.items() if isinstance(k, str) and v and k not in saved
+        )
+        if not dropped:
+            with self.lock:
+                if self.state.pop('environmentDropped', None) is not None:
+                    self.save()
+            return
+        log.warning('Darkbloom did not keep launch-agent variables after start: %s', ', '.join(dropped))
+        with self.lock:
+            self.state['environmentDropped'] = {'keys': dropped[:8], 'at': time.time()}
+            self.save()
+
     def started_launch(self, requested, environment):
         """Our `darkbloom start` just returned: the launch it saved, as the baseline that
         verification then watches for outside changes.
@@ -4282,7 +4372,7 @@ class Optimizer:
         always written, `--idle-timeout` goes to provider.toml instead and the environment keeps
         only its passthrough variables. A digest of our argv never matched that, so every
         endpoint setup read as 'Provider settings changed' and was asked for again. What it saved
-        must still carry the `--local-endpoint` Bloomkeeper passed; verify_started checks the
+        must still carry the `--local-endpoint` BloomGauge passed; verify_started checks the
         selection on every reading. `start` holds Darkbloom's provider-lifecycle lease until the
         agent is written, so another `start` can't write in between. An unreadable agent keeps
         the requested launch as the baseline."""
@@ -4295,6 +4385,7 @@ class Optimizer:
                 continue
             if '--local-endpoint' in requested and '--local-endpoint' not in options:
                 raise ExternalChange('Provider settings changed during the switch.')
+            self.note_dropped_environment(environment, saved)
             return launch_signature(options, saved)
 
     def verify_started(
@@ -4325,6 +4416,7 @@ class Optimizer:
             expected_device = device_id(self.raw)
             account = (self.live or {}).get('account')
         rekeyed = False
+        trust, trust_at = None, None  # the new session's latest trust reading, for the text
         while not self.stop.is_set() and time.time() < deadline:
             try:
                 selection, options, environment = self.read_options()
@@ -4338,6 +4430,12 @@ class Optimizer:
                 ):
                     raise ExternalChange('Provider settings changed during the switch.')
                 d = self.read_state()
+                if (
+                    -5 < time.time() - d.get('written_at', 0) < 15
+                    and d.get('started_at') != previous_session
+                ):
+                    trust = d.get('trust') if isinstance(d.get('trust'), dict) else None
+                    trust_at = time.time()
                 device = device_id(d)
                 if device != expected_device:
                     # Darkbloom makes a new attestation key at a start when it can't use its
@@ -4455,12 +4553,40 @@ class Optimizer:
             except (OSError, ValueError, TypeError):
                 pass
             self.stop.wait(2)
+        if (
+            trust is not None
+            and trust.get('status') == 'untrusted'
+            and time.time() - trust_at < 30
+        ):
+            # Failing attestation challenges (e.g. "no response") up to the deadline: Darkbloom
+            # runs, but the network doesn't accept this session, so nothing could verify.
+            reason = trust.get('reason')
+            text = (
+                'Darkbloom started the selected model, but the Darkbloom network had not '
+                'accepted this Mac by the verification deadline'
+                + (' (Darkbloom: “%s”).' % reason if isinstance(reason, str) and reason else '.')
+            )
+        else:
+            text = 'The selected model did not become ready before the verification deadline.'
         self.verification_failure = WarmupError(
-            'The selected model did not become ready before the verification deadline.'
-            + (' ' + last_wait if last_wait else ''),
+            text + (' ' + last_wait if last_wait else ''),
             code='readiness-timeout',
         )
         return False
+
+    def clearance_note(self):
+        """After a start the network verifies the new session before it sends work (serving_trust
+        daemon_verifying); a pick completes on a local warm-up meanwhile. Say so."""
+        try:
+            waiting = daemon_verifying(self.read_state())
+        except (OSError, ValueError, TypeError):
+            waiting = False
+        return (
+            ' The Darkbloom network is still clearing this Mac to serve (it checks each new '
+            'session); work arrives after that.'
+            if waiting
+            else ''
+        )
 
     def target_serving_after_wait(self, target, previous_session, device, expected_launch):
         """Read-only late proof; never accept another session, stop or selection."""
@@ -4537,8 +4663,7 @@ class Optimizer:
             or not -5 < now - raw['written_at'] < 15
             or not finite(hardware_at)
             or not -5 < now - hardware_at < 15
-            or raw.get('trust', {}).get('status') != 'online'
-            or raw.get('trust', {}).get('trust_level') != 'hardware'
+            or not daemon_authorized(raw)
             or matching_process(process_identity(raw)) is not True
             or self.environment_reason(live, now, manual=True, move=move)
         ):
@@ -5018,6 +5143,7 @@ class Optimizer:
                 detail = (
                     selection_label(target)
                     + ' is warm and ready. Successful decode and loaded-model status verified.'
+                    + self.clearance_note()
                 )
             except WorkResumed:
                 with self.lock:
@@ -5056,7 +5182,7 @@ class Optimizer:
                 )
                 cause = taken or str(error).strip() or None
                 if taken:
-                    # Bloomkeeper's own command did not take: a failed switch, never a user change.
+                    # BloomGauge's own command did not take: a failed switch, never a user change.
                     failure_record = {
                         'model': target,
                         'stage': failure_stage,

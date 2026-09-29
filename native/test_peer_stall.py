@@ -188,7 +188,7 @@ class ControlTests(unittest.TestCase):
             lock=threading.RLock(),
             detail='',
             last_demand_decision=None,
-            tracking=lambda raw, now: {'counting': True},
+            tracking=lambda raw, now, cleared=True: {'counting': True},
             network_evidence=SimpleNamespace(
                 own_windows=lambda now: [w for w in self.windows if w['at'] <= now]
             ),

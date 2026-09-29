@@ -2,8 +2,8 @@ import { bloomWebsiteLinks } from '@/lib/website-links';
 
 export function WebsiteLinks() {
   return (
-    <nav className="website-links" aria-label="Bloomkeeper website links">
-      <h3>Bloomkeeper online</h3>
+    <nav className="website-links" aria-label="BloomGauge website links">
+      <h3>BloomGauge online</h3>
       <div className="support-actions">
         {bloomWebsiteLinks.map((link) => (
           <a

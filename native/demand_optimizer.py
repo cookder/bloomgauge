@@ -885,9 +885,9 @@ def decide(
         ):
             reason = 'No measured demand with warm provider capacity.'
         elif failure:
-            reason = 'Bloomkeeper is waiting 15 minutes after this model failed to load or switch. This is a local retry guard.'
+            reason = 'BloomGauge is waiting 15 minutes after this model failed to load or switch. This is a local retry guard.'
         elif cooldown:
-            reason = 'Bloomkeeper is briefly delaying a repeat of an unpaid trial; this is a local retry setting, not a network cooldown.'
+            reason = 'BloomGauge is briefly delaying a repeat of an unpaid trial; this is a local retry setting, not a network cooldown.'
         elif not budget or not all(number(budget.get(k)) for k in ('afterUnloadGB', 'requiredGB')):
             reason = 'Memory admission is not known.'
         elif (
@@ -913,7 +913,7 @@ def decide(
             if number(could_free) and could_free >= memory_shortfall:
                 reason += (
                     ' Turn on cache cleanup (Manual model controls → Enable cache cleanup) to let'
-                    ' Bloomkeeper clear %.1f GB of file cache before switching.' % could_free
+                    ' BloomGauge clear %.1f GB of file cache before switching.' % could_free
                 )
         elif trial_running and not (paid_review and kind == 'earnings'):
             reason = 'Measuring the current trial before trying another model.'

@@ -79,15 +79,15 @@ export function outageMessage(
 }
 
 /**
- * What Bloomkeeper does about it (native/network_health.py stall_wait): a network-wide or
+ * What BloomGauge does about it (native/network_health.py stall_wait): a network-wide or
  * hardware-type problem holds restarts and model switches; one model's problem holds only
  * a restart for that model, since moving to another model can still help.
  */
 export function outageEffect(outage: NetworkOutage): string {
   const reports = 'automatic problem reports wait until it’s over.';
   return outage.scope === 'model'
-    ? `Bloomkeeper won’t restart the provider for it; moving to another model is still allowed, and ${reports}`
-    : `Bloomkeeper won’t restart or switch models because of it, and ${reports}`;
+    ? `BloomGauge won’t restart the provider for it; moving to another model is still allowed, and ${reports}`
+    : `BloomGauge won’t restart or switch models because of it, and ${reports}`;
 }
 
 /** 'M5 Pro|48' -> 'M5 Pro 48 GB'. */

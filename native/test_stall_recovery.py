@@ -188,7 +188,7 @@ class ControlTests(unittest.TestCase):
             lock=__import__('threading').RLock(),
             detail='',
             last_demand_decision=None,
-            tracking=lambda raw, now: {'counting': True},
+            tracking=lambda raw, now, cleared=True: {'counting': True},
             dispatch_stall_restart=Mock(return_value=True),
         )
         for m in flow() + silent(minutes=20):

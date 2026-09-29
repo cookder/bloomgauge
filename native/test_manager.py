@@ -250,7 +250,7 @@ class DecisionTests(unittest.TestCase):
             d = managed(legacy_upgrade(), current='a', source='manual')
         self.assertIsNone(d['target'])
         self.assertEqual(
-            d['reason'], 'Holding your pick a. Bloomkeeper will not switch away from it.'
+            d['reason'], 'Holding your pick a. BloomGauge will not switch away from it.'
         )
         self.assertTrue(d['manager']['pinned'])
         proposal.assert_not_called()
@@ -405,7 +405,7 @@ class WatchdogTests(Harness):
         self.assertEqual((self.restores(), self.loads()), ([], []))
         self.assertIn('a has not been ready since', self.o.detail)
         self.assertIn('nothing is loaded and no work has arrived', self.o.detail)
-        self.assertIn('Bloomkeeper restores a', self.o.detail)
+        self.assertIn('BloomGauge restores a', self.o.detail)
         self.at(600)
         # The right model was selected but cold: load it through the local endpoint, no restart.
         self.assertEqual((self.restores(), self.loads()), ([], ['a']))
@@ -483,6 +483,65 @@ class WatchdogTests(Harness):
         self.at(720)
         self.assertEqual(self.restores(), [])
         self.assertIn('Not enough free memory to restore a', self.o.detail)
+
+    def test_sep28_idle_unloaded_home_short_only_on_file_cache_is_restored(self):
+        """Sep 28 21:20-22:10: gemma idle-unloaded, 'Not enough free memory to restore' for 50 min.
+
+        Darkbloom's idle unload leaves the weights in file cache; the same-model restore must
+        count what the purge frees (like a switch does) and let the reload clear it.
+        """
+        self.o.manual_selection.permission_status = Mock(return_value={'status': 'ready'})
+        self.dark()
+        self.o.live['provider']['memoryGB'] = 0
+        budget = self.o.selection_budget('a', self.o.live, self.o.raw)
+        short = budget['requiredGB'] - 1.1
+        self.o.live['hardware'].update(memoryAvailableGB=short, cachedFilesGB=9.6)
+        self.ticks(0, 660)
+        self.assertEqual(self.loads(), ['a'])
+        self.assertNotIn('Not enough free memory', self.o.detail)
+
+    def test_same_model_restart_purges_a_cold_model(self):
+        self.o.manual_selection.permission_status = Mock(return_value={'status': 'ready'})
+        self.o.purge_before_load = Mock(return_value=False)
+        self.o.perform_prewarm = Mock(side_effect=WarmupError('no', code='readiness-timeout'))
+        self.o.verify_started = Mock(return_value=False)
+        self.dark()
+        self.ticks(0, 780)
+        self.assertEqual((self.restores(), self.loads()), (['a'], ['a']))
+        self.assertEqual([c.args[0] for c in self.o.purge_before_load.call_args_list], ['a'])
+
+    def test_a_cleanup_that_frees_too_little_holds_the_credit_instead_of_repeating(self):
+        self.o.manual_selection.permission_status = Mock(return_value={'status': 'ready'})
+        self.o.purge_before_load = Mock(return_value=True)  # ran, but the cache stays
+        self.o.perform_prewarm = Mock(side_effect=WarmupError('no', code='readiness-timeout'))
+        self.dark()
+        self.o.live['provider']['memoryGB'] = 0
+        budget = self.o.selection_budget('a', self.o.live, self.o.raw)
+        self.o.live['hardware'].update(
+            memoryAvailableGB=budget['requiredGB'] - 1.1, cachedFilesGB=9.6
+        )
+        self.ticks(0, 3000)
+        self.assertEqual(self.restores(), [])
+        self.assertEqual(self.o.purge_before_load.call_count, 1)
+        self.assertEqual(self.o.state['purgeShortfall']['model'], 'a')
+        self.assertIn('Not enough free memory to restore a', self.o.detail)
+
+    def test_residual_mlx_memory_after_an_unload_is_not_a_load(self):
+        raw = {'warm_models': [], 'capacity': {'gpu_memory_active_gb': 5.088746547698975e-06}}
+        self.assertIsNone(manager.provider_busy(raw))
+        raw['capacity']['gpu_memory_active_gb'] = 3.2  # a load allocating its weights
+        self.assertEqual(manager.provider_busy(raw), 'loading')
+
+    def test_warm_current_model_gets_no_purge_credit(self):
+        self.o.manual_selection.permission_status = Mock(return_value={'status': 'ready'})
+        self.o.purge_credit = Mock(return_value=50)
+        self.o.raw['warm_models'] = ['a']
+        self.o.manager.dispatch(
+            self.now, 'a', 'watchdog', self.o.state, self.o.live, self.o.raw, 'a', 'x'
+        )
+        if self.o.worker:
+            self.o.worker.join(2)
+        self.o.purge_credit.assert_not_called()
 
     def test_sep9_manual_pick_that_loads_late_is_kept(self):
         """Pick at 13:00:59, 'failed' at 13:12, ready at 13:24: the pick must be kept."""
@@ -888,7 +947,7 @@ class StallTests(unittest.TestCase):
         c.send_pending('acct', 'mac', push, stall_fixtures.T0 + 1200)
         titles = [call.args[2] for call in push.enqueue_notice.call_args_list]
         self.assertEqual(
-            titles, ['Bloomkeeper · no work arriving', 'Bloomkeeper · model recovery']
+            titles, ['BloomGauge · no work arriving', 'BloomGauge · model recovery']
         )
 
 
@@ -1142,6 +1201,27 @@ class AndrewSep27Tests(Harness):
         self.assertEqual(self.o.state['lastSwitchResult']['outcome'], 'recovered')
         self.assertIn('Watchdog restored ' + GEMMA, self.events('manager-notice')[0])
 
+    def test_turning_on_on_battery_is_admitted_and_restores_gemma(self):
+        # Sep 28 22:50: On sat at "Model switching waits while the Mac is on battery power".
+        self.live_state()
+        self.o.on_ac_power = Mock(return_value=False)
+        saved = copy.deepcopy(self.o.state)
+        with self.assertRaisesRegex(ValueError, 'battery'):
+            self.o.identity_ok = True
+            self.o.demand_resume_context(
+                {**saved, 'demandPolicy': policy({'managerStrategy': 0})}, QWEN
+            )
+        self.o.identity_ok = False
+        self.o.demand_resume_context(saved, QWEN)
+        self.o.resume_demand(
+            {'action': 'resume-demand', 'expectedControl': self.o.control_version(), 'currentModel': QWEN},
+            'mac',
+            return_snapshot=False,
+        )
+        self.assertEqual(self.o.state['mode'], 'demand')
+        self.at(0)
+        self.assertEqual([c[0] for c in self.commands], [GEMMA])
+
     def test_manager_turns_on_with_only_the_serving_model_available(self):
         # Sep 27 18:17: 0.9.10 listed only the enabled model, so no alternative was available.
         self.live_state()
@@ -1162,7 +1242,7 @@ class AndrewSep27Tests(Harness):
         self.assertEqual(self.commands, [])
         view = self.o.manager.watchdog_view(self.o.state, self.o.raw, self.now)
         self.assertIn(QWEN + ' never loaded after the switch at', view['reason'])
-        self.assertIn('Bloomkeeper restores ' + GEMMA, view['reason'])
+        self.assertIn('BloomGauge restores ' + GEMMA, view['reason'])
         self.assertEqual(view['darkSince'], self.now - 5400)
 
     def test_1712_manual_pick_that_leaves_no_provider_running_is_started_again(self):

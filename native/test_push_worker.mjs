@@ -53,7 +53,7 @@ test('updated worker activates for existing subscriptions and preserves switch d
   await w.dispatch('push', {
     data: {
       json: () => ({
-        title: 'Bloomkeeper · model switched',
+        title: 'BloomGauge · model switched',
         body: 'Gemma → Qwen. Testing sustained demand.',
         tag,
       }),
@@ -72,7 +72,7 @@ test('every push produces a visible notification, even malformed payloads', asyn
     },
   });
   assert.equal(w.shown.length, 1);
-  assert.equal(w.shown[0][0], 'Bloomkeeper · model update');
+  assert.equal(w.shown[0][0], 'BloomGauge · model update');
   assert.equal(w.shown[0][1].data.path, '/?screen=test');
   assert.deepEqual(Object.keys(w.handlers).sort(), [
     'activate',
@@ -124,4 +124,28 @@ test('notification payload text is bounded and cannot select resources or destin
   assert.equal(w.shown[0][1].body.length, 240);
   assert.equal(w.shown[0][1].icon, '/bloom-icon-192.png');
   assert.equal(w.shown[0][1].tag, 'bloom-switch');
+});
+
+test('a notification opens only an allow-listed screen', async () => {
+  for (const [screen, expected] of [
+    ['overview', 'overview'],
+    ['demand', 'demand'],
+    ['https://evil.example/', 'test'],
+    ['../settings', 'test'],
+    [undefined, 'test'],
+  ]) {
+    const w = worker();
+    await w.dispatch('push', {
+      data: { json: () => ({ title: 'T', body: 'B', screen }) },
+    });
+    const data = w.shown[0][1].data;
+    assert.equal(data.path, '/?screen=' + expected);
+    await w.dispatch('notificationclick', {
+      notification: { close() {}, data },
+    });
+    assert.equal(
+      w.opened[0],
+      'https://bloom.example.ts.net:8443/?screen=' + expected,
+    );
+  }
 });

@@ -26,11 +26,11 @@ def earnings_connection(earnings, login_present, now):
     if updated is not None:
         return {
             'status': 'stale',
-            'detail': 'The last earnings reading is out of date. Bloomkeeper is reconnecting automatically; check your internet connection if this continues.',
+            'detail': 'The last earnings reading is out of date. BloomGauge is reconnecting automatically; check your internet connection if this continues.',
         }
     return {
         'status': 'unavailable',
-        'detail': 'The earnings connection is not confirmed yet. Bloomkeeper is retrying automatically; check your internet connection if this continues.',
+        'detail': 'The earnings connection is not confirmed yet. BloomGauge is retrying automatically; check your internet connection if this continues.',
     }
 
 

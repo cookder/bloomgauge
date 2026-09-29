@@ -106,15 +106,21 @@ export function UpdateSettings({
   if (onboarding && (!native || state?.available === false)) return null;
   const usable = native && state?.available === true;
   const text =
-    state?.status === 'update-available'
-      ? 'An update is available. Review the Mac update window to install it.'
-      : state?.status === 'up-to-date'
-        ? 'You’re up to date.'
-        : state?.checking
-          ? 'Checking for updates…'
-          : state?.lastCheck
-            ? `Last checked ${new Date(state.lastCheck * 1000).toLocaleString()}`
-            : 'No completed update check yet.';
+    state?.status === 'ready-to-install'
+      ? state.automaticUpdates
+        ? 'An update is ready. BloomGauge installs it and reopens when you’re away or not using it, never during a model change. To install it now, choose Install Update Now in the BloomGauge menu.'
+        : 'An update is ready. It installs when you quit BloomGauge, or choose Install Update Now in the BloomGauge menu.'
+      : state?.status === 'installing'
+        ? 'Installing the update. BloomGauge reopens in a moment.'
+        : state?.status === 'update-available'
+          ? 'An update is available. Review the Mac update window to install it.'
+          : state?.status === 'up-to-date'
+            ? 'You’re up to date.'
+            : state?.checking
+              ? 'Checking for updates…'
+              : state?.lastCheck
+                ? `Last checked ${new Date(state.lastCheck * 1000).toLocaleString()}`
+                : 'No completed update check yet.';
   return (
     <section
       className={`update-settings ${onboarding ? 'update-settings-inline' : 'panel'}`}
@@ -123,23 +129,24 @@ export function UpdateSettings({
       <div className="update-heading">
         <RefreshCw size={18} aria-hidden="true" />
         <h3>{onboarding ? 'Stay up to date.' : 'App updates'}</h3>
-        {state && <span>Bloomkeeper {state.installedVersion}</span>}
+        {state && <span>BloomGauge {state.installedVersion}</span>}
       </div>
       {usable ? (
         <>
           <label className="update-option">
             <input
               type="checkbox"
-              checked={state.automaticChecks}
+              checked={state.automaticUpdates}
               disabled={busy}
               onChange={(e) => send('set-automatic', e.target.checked)}
             />
             <span>
-              Notify me about app updates
+              Update BloomGauge automatically
               <small>
-                Checks about every six hours while Bloomkeeper is running. You approve
-                downloading and installing. Your optional usage-sharing choice
-                stays separate.
+                Checks about every six hours and installs new versions by itself
+                when you’re away or not using BloomGauge, never during a model
+                switch or warm-up. Darkbloom keeps serving while BloomGauge
+                reopens. Your optional usage-sharing choice stays separate.
               </small>
             </span>
           </label>
@@ -156,10 +163,11 @@ export function UpdateSettings({
               <p role="status">{text}</p>
             </div>
           )}
-          {!onboarding && !state.automaticChecks && (
+          {!onboarding && !state.automaticUpdates && (
             <p className="footnote">
-              Automatic checks are off. Use the button above whenever you want
-              to check.
+              {state.automaticChecks
+                ? 'BloomGauge checks for updates and tells you about them, but doesn’t install them by itself. Turn on Update BloomGauge automatically to have it install them for you.'
+                : 'Automatic updates are off. Use the button above whenever you want to check.'}
             </p>
           )}
         </>
@@ -167,7 +175,7 @@ export function UpdateSettings({
         <p role="status">Reading update settings…</p>
       ) : (
         <p>
-          Install updates in Bloomkeeper on your Mac. Choose{' '}
+          Install updates in BloomGauge on your Mac. Choose{' '}
           <strong>Check for Updates…</strong> in the app menu. If that option is
           missing, download the latest beta and replace the app in Applications.
         </p>

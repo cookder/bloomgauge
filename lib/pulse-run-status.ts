@@ -92,7 +92,7 @@ export function pulseRunStatus(
       progress: 'Managed by Darkbloom',
       detail: report.detail,
       reason:
-        'Darkbloom manages this model set; Bloomkeeper reports on it and never changes it. The Manager runs one model, or a pair without Gemma. To use it, pick one model in Model controls, then turn the Manager on.',
+        'Darkbloom manages this model set; BloomGauge reports on it and never changes it. The Manager runs one model, or a pair without Gemma. To use it, pick one model in Model controls, then turn the Manager on.',
     };
   }
   if (!finite(d.at) || now - d.at > 45 || now - d.at < -5) return unknown;
@@ -250,7 +250,7 @@ export function pulseRunStatus(
       label: 'Automatic control off',
       tone: 'notice',
       detail:
-        'Bloomkeeper isn’t choosing models. This model keeps serving while Bloomkeeper records passive history.',
+        'BloomGauge isn’t choosing models. This model keeps serving while BloomGauge records passive history.',
     };
   return {
     label: 'Normal run',

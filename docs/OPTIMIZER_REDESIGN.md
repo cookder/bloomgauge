@@ -4,18 +4,18 @@ Status: Phase 1 shipped in personal builds on September 25, 2026. 1.36.26 (pass 
 
 ## The goal
 
-Keep the best model running, and keep enough fresh evidence on the others that when the current model fades, Bloomkeeper already knows where to go. Today gemma-4-26b earns 92% of this Mac's inference credits over the last 7 days. That is fine while it lasts, but Bloomkeeper has almost no usable evidence on anything else.
+Keep the best model running, and keep enough fresh evidence on the others that when the current model fades, BloomGauge already knows where to go. Today gemma-4-26b earns 92% of this Mac's inference credits over the last 7 days. That is fine while it lasts, but BloomGauge has almost no usable evidence on anything else.
 
 ## How it works today, in plain terms
 
 **Earnings target ($0.12/h default).** Not a target. It is a trigger band:
-- If the paid pace stays below 75% of it ($0.09) for about 30 covered minutes, Bloomkeeper may start a trial of another model.
+- If the paid pace stays below 75% of it ($0.09) for about 30 covered minutes, BloomGauge may start a trial of another model.
 - Between $0.09 and $0.20 it only protects the current model from those shortfall trials.
 - It does not rank models, forecast earnings, or block paid upgrades or spike trials.
 
 **High-earnings hold ($0.20/h, hard-coded).** While the last three 5-minute windows each paid at least $0.20/h, no exploratory trial of any kind runs. Confident paid upgrades still can. Not configurable.
 
-**What Bloomkeeper learns from.** Only this Mac's own paid, warm minutes for each model, matched to past minutes with similar network demand for that model (each of pressure, warm providers, active and load within 0.5× to 2× of now). A model's estimate counts only after 4 matched hours across 8 half-hour periods on 3 dates with 200 paid jobs, within 7 days.
+**What BloomGauge learns from.** Only this Mac's own paid, warm minutes for each model, matched to past minutes with similar network demand for that model (each of pressure, warm providers, active and load within 0.5× to 2× of now). A model's estimate counts only after 4 matched hours across 8 half-hour periods on 3 dates with 200 paid jobs, within 7 days.
 
 **How trials work.**
 - Ordinary and learning trials start only when the current model is idle for 20 minutes or earning below $0.09; a spike trial needs 3× normal demand.
@@ -35,10 +35,10 @@ Keep the best model running, and keep enough fresh evidence on the others that w
 
 | Control | Replaces | What it does |
 |---|---|---|
-| **Protect earnings above** ($/h, default $0.20) | The hidden $0.20 hold, and the target's trigger role | While the current model pays at least this, Bloomkeeper never interrupts it to learn. |
-| **Learning time** (Off, 30 min, 1 h, 3 h a day, or custom; optionally "for the next N days") | The fixed 120-minute budget, and the 24 h / 3 d / 7 d data-gathering presets | How much time per day Bloomkeeper may spend measuring other models, and only while the current model pays less than the protect level. |
+| **Protect earnings above** ($/h, default $0.20) | The hidden $0.20 hold, and the target's trigger role | While the current model pays at least this, BloomGauge never interrupts it to learn. |
+| **Learning time** (Off, 30 min, 1 h, 3 h a day, or custom; optionally "for the next N days") | The fixed 120-minute budget, and the 24 h / 3 d / 7 d data-gathering presets | How much time per day BloomGauge may spend measuring other models, and only while the current model pays less than the protect level. |
 | **Switching style** (existing slider) | — | How sure and how much better a model must be before a confident switch. |
-| **Models Bloomkeeper can use** (existing) | — | Unchanged. |
+| **Models BloomGauge can use** (existing) | — | Unchanged. |
 
 The earnings target leaves the optimizer. It stays on Earnings → Target as a personal goal for the hours-met report only.
 
@@ -58,7 +58,7 @@ Cost of learning, for scale: learning only runs below the protect level, so an h
   - Count this Mac as one more warm provider when predicting a model it is not serving.
   - A run at moderate demand then informs a prediction at high demand, with a wider range when extrapolating. This is the answer to "data gathered when it's quiet is bad data": the model learns the slope, and measurement runs are steered toward the demand levels it has not seen.
 - **Start with a reasonable guess for every model.**
-  - Build a prior from what Bloomkeeper already fetches but never uses: per-token prices, this Mac's tokens per second for each model, and each model's share of network demand.
+  - Build a prior from what BloomGauge already fetches but never uses: per-token prices, this Mac's tokens per second for each model, and each model's share of network demand.
   - Measurements then correct the prior.
   - A never-served model gets a ranked, uncertain estimate instead of no estimate.
 - **Judge a run fairly.**
@@ -74,7 +74,7 @@ Every few minutes, each model gets a predicted $/h for right now, with a range.
 
 This removes the special cases: the hard-coded gemma return, GPT-OSS as permanent last resort, alphabetical tie-breaks, and "any tiny payment counts as productive".
 
-### 4. Show what Bloomkeeper knows
+### 4. Show what BloomGauge knows
 
 A table on the optimizer page, with a row per model:
 - predicted $/h now, with its range
@@ -83,11 +83,11 @@ A table on the optimizer page, with a row per model:
 - when it was last measured
 - whether it is ready to be switched to confidently
 
-This is how you can see whether Bloomkeeper has the data to switch reliably.
+This is how you can see whether BloomGauge has the data to switch reliably.
 
 ### 5. Later: learn from other Macs (opt-in)
 
-Share each model's demand-to-pay curve by chip and memory size across Bloomkeeper users who opt in, and use it as the starting prior. This is the biggest possible data multiplier, but it needs a server-side collection step and a privacy review. It is the existing backlog item "seed optimizer decisions on other Macs".
+Share each model's demand-to-pay curve by chip and memory size across BloomGauge users who opt in, and use it as the starting prior. This is the biggest possible data multiplier, but it needs a server-side collection step and a privacy review. It is the existing backlog item "seed optimizer decisions on other Macs".
 
 ## Plan
 
@@ -165,7 +165,7 @@ Shipped in personal build 1.36.28 (September 25, 2026). Switching is unchanged.
    - Providers on the Darkbloom Slack report the self-route version "sometimes" restarts routing. A `model_not_loaded` reply means the coordinator's record of this Mac is out of date.
 2. **Same-model restart at 8 minutes.** It uses the guarded switch path with no purge (demand kind `stall-restart`) and a `recovery` run that counts toward the daily switch and downtime budgets. Limits: 3 a day, an hour apart.
 3. **Escape.** 5 minutes after the restarted session starts, `decide(stall_escape=True)` opens the idle escape at once and compares against zero current pay, not the lagged averages.
-4. **Hold.** Bloomkeeper stops and sends a push notice 5 minutes after the escape led to a switch, or after 20 minutes if no switch followed (the optimizer confirms an opportunity for 5 minutes before switching; with a 5-minute hold, the escape closed just as a move could qualify, as on Sep 26).
+4. **Hold.** BloomGauge stops and sends a push notice 5 minutes after the escape led to a switch, or after 20 minutes if no switch followed (the optimizer confirms an opportunity for 5 minutes before switching; with a 5-minute hold, the escape closed just as a move could qualify, as on Sep 26).
 
 **Behavior.**
 - If the model's own network demand fell below half its level before the silence, the ladder skips straight to step 3.
@@ -180,7 +180,7 @@ Shipped in personal build 1.36.37 (September 25, 2026). Still shadow only; switc
 - **Bundled curves.** `native/shared-priors.json` (loaded by `native/shared_priors.py`) holds a per-model curve (`level`, `exponent`, `range`, hours, periods, Mac count) built by `native/build_priors.py` from Andrew's history (M5 Pro; 7 models with 2+ steady hours on Sep 25). Rebuild it before each release.
 - **How they're used** (`demand_curves.build(..., shared)`): a model with a shared curve is pulled toward it instead of the pooled curve (level worth 2 warm hours, `SHARED_HOURS`; exponent via the usual `PRIOR_SLOPE`). A model never run here gets basis `shared` and a range widened 0.7x/1.3x. A Mac with no paid history at all still gets predictions (previously none).
 - **Backtest** (`backtest_curves.py --priors ... --new-mac-since ...`). Simulated new Mac from Sep 23 with priors built from Sep 8–22: MAE $0.0448 → $0.0437 per warm hour over 96 windows, range coverage 36% → 41%; per model Qwen3.8 $0.065 → $0.037, gpt-oss $0.0083 → $0.0065. Mature history (Sep 17–25, 296 windows): unchanged at $0.0330. Same hardware and a small sample, so directional only. Other chips will differ; no hardware scaling yet.
-- **Opt-in pay summaries** (`native/pay_sharing.py`, More → About Bloomkeeper → Improve starting estimates, off by default). Weekly POST to `bloomformac.com/api/pay-summaries/v1` of `demand_curves.summary` (curve numbers, hours, periods per model) plus chip family, memory band, version and a random ID/secret; turning it off DELETEs first. Site table `pay_summaries` (45-day retention, 5,000 cap). `/owner` → Shared pay summaries shows coverage and a Download JSON button; merge with `build_priors.py --summaries pay-summaries.json` (warm-hour-weighted).
+- **Opt-in pay summaries** (`native/pay_sharing.py`, More → About BloomGauge → Improve starting estimates, off by default). Weekly POST to `bloomformac.com/api/pay-summaries/v1` of `demand_curves.summary` (curve numbers, hours, periods per model) plus chip family, memory band, version and a random ID/secret; turning it off DELETEs first. Site table `pay_summaries` (45-day retention, 5,000 cap). `/owner` → Shared pay summaries shows coverage and a Download JSON button; merge with `build_priors.py --summaries pay-summaries.json` (warm-hour-weighted).
 
 ### Hardware classes (1.36.40)
 

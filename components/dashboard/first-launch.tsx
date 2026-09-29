@@ -47,7 +47,7 @@ export function FirstLaunch({ children }: { children: ReactNode }) {
           signal: request.signal,
           cache: 'no-store',
         });
-        if (!response.ok) throw Error('Setup could not connect to Bloomkeeper.');
+        if (!response.ok) throw Error('Setup could not connect to BloomGauge.');
         const result = (await response.json()) as Setup;
         if (
           !result ||
@@ -146,19 +146,19 @@ export function FirstLaunch({ children }: { children: ReactNode }) {
   return (
     <main className="setup-shell">
       <div className="setup-brand">
-        <Leaf size={25} /> Bloomkeeper <span>FOR MAC · PRIVATE BETA</span>
+        <Leaf size={25} /> BloomGauge <span>FOR MAC · PRIVATE BETA</span>
       </div>
-      <section className="setup-card" aria-label="Set up Bloomkeeper">
+      <section className="setup-card" aria-label="Set up BloomGauge">
         {!data ? (
           <>
-            <h1>Getting Bloomkeeper ready.</h1>
+            <h1>Getting BloomGauge ready.</h1>
             <p>Checking the local service on your Mac…</p>
           </>
         ) : data.localOnly ? (
           <>
             <h1>Start on your Mac.</h1>
             <p>
-              Open Bloomkeeper on the Mac to finish setup. Your account connection
+              Open BloomGauge on the Mac to finish setup. Your account connection
               stays on that device.
             </p>
           </>
@@ -197,7 +197,7 @@ export function FirstLaunch({ children }: { children: ReactNode }) {
                     detail={
                       data.providerInstalled
                         ? data.providerOnline
-                          ? 'Installed and running. Bloomkeeper will observe the current model.'
+                          ? 'Installed and running. BloomGauge will observe the current model.'
                           : 'Installed. After setup, use the manual model controls in Optimizer → Overview to choose and start a model.'
                         : 'Install and sign in to Darkbloom first. Then use the manual model controls in Optimizer → Overview for everyday start, stop and model changes.'
                     }
@@ -234,7 +234,7 @@ export function FirstLaunch({ children }: { children: ReactNode }) {
                 <div className="eyebrow">A LITTLE PERSONALIZATION</div>
                 <h1>Your data. Your Mac.</h1>
                 <p>
-                  Bloomkeeper keeps history locally. New installs begin with empty
+                  BloomGauge keeps history locally. New installs begin with empty
                   model evidence, so forecasts improve as paid work is recorded.
                 </p>
                 <div className="setup-note">
@@ -299,8 +299,8 @@ export function FirstLaunch({ children }: { children: ReactNode }) {
                   <div>
                     <strong>Close the window. Keep the work going.</strong>
                     <p>
-                      Bloomkeeper stays in the menu bar to collect data and run any
-                      optimizer you enable. Quit Bloomkeeper stops its monitoring and
+                      BloomGauge stays in the menu bar to collect data and run any
+                      optimizer you enable. Quit BloomGauge stops its monitoring and
                       automation; your Darkbloom provider keeps its own state.
                     </p>
                   </div>
@@ -323,7 +323,7 @@ export function FirstLaunch({ children }: { children: ReactNode }) {
                     onChange={(e) => setUnderstood(e.target.checked)}
                   />
                   <span>
-                    I understand Bloomkeeper begins in observation mode. Earnings
+                    I understand BloomGauge begins in observation mode. Earnings
                     vary; forecasts are estimates, not guaranteed income.
                   </span>
                 </label>

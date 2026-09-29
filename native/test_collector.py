@@ -174,7 +174,7 @@ class SessionSnapshotTests(unittest.TestCase):
             'current_model': 'a',
             'inference_active': False,
             'warm_models': ['a', 'b'],
-            'trust': {'status': 'online'},
+            'trust': {'status': 'online', 'trust_level': 'hardware'},
             'stats': {'requests_served': 10, 'tokens_generated': 100},
         }
 

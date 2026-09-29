@@ -283,7 +283,7 @@ export function EarningsOutlookPanel({ paused }: { paused: boolean }) {
             </p>
           ) : !models.length ? (
             <p className="notice">
-              No model observations yet. Leave Bloomkeeper running to build
+              No model observations yet. Leave BloomGauge running to build
               history; this is not a $0 forecast.
             </p>
           ) : (

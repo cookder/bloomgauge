@@ -197,7 +197,7 @@ class CombinationPolicyTests(unittest.TestCase):
 
 
 class ReserveControllerTests(unittest.TestCase):
-    """provider.toml memory_reserve_gb is Darkbloom's load reserve; Bloomkeeper budgets with it."""
+    """provider.toml memory_reserve_gb is Darkbloom's load reserve; BloomGauge budgets with it."""
 
     setUp = controller_fixture.ControllerTests.setUp
     tearDown = controller_fixture.ControllerTests.tearDown

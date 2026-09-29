@@ -110,6 +110,7 @@ class SupportError(Exception):
 
 
 STALE_FAILURE_SECONDS = 86400
+STRATEGIES = {'manager', 'legacy'}
 
 
 def loads(body):
@@ -218,6 +219,7 @@ def summary(value, available=True):
         'providerOnline': provider.get('online') if type(provider.get('online')) is bool else None,
         'providerVersion': _version(provider.get('version')),
         'optimizerMode': _enum(optimizer.get('mode'), diagnostics.MODES),
+        'optimizerStrategy': _enum(optimizer.get('strategy'), STRATEGIES),
         'optimizerStatus': _enum(optimizer.get('status'), diagnostics.STATUSES),
         'failureCode': _enum(failure.get('code'), diagnostics.SWITCH_FAILURE_CODES)
         if failure
@@ -437,10 +439,18 @@ class SupportReports:
             ).encode('utf-8')
             if len(body) > MAX_BYTES:
                 raise ValueError('Support report is too large.')
+            # The same report without optimizerStrategy, for a site that doesn't accept it
+            # yet (its schema check is exact): sent only after a 400 for the full body.
+            legacy = copy.deepcopy(report)
+            legacy['diagnostics'].pop('optimizerStrategy', None)
+            legacy_body = json.dumps(
+                legacy, ensure_ascii=False, allow_nan=False, separators=(',', ':')
+            ).encode('utf-8')
             self.previews[report_id] = {
                 'token': review_token,
                 'secret': secrets.token_hex(32),
                 'body': body,
+                'legacyBody': legacy_body,
                 'remote': bool(remote),
                 'expires': self.clock() + PREVIEW_SECONDS,
                 'attempted': False,
@@ -511,15 +521,17 @@ class SupportReports:
             def attempt():
                 accepted = False
                 try:
-                    status, ack = self.transport(
-                        ENDPOINT,
-                        entry['body'],
-                        {
-                            'Authorization': 'Bearer ' + entry['secret'],
-                            'Content-Type': 'application/json',
-                        },
-                        TIMEOUT,
-                    )
+                    headers = {
+                        'Authorization': 'Bearer ' + entry['secret'],
+                        'Content-Type': 'application/json',
+                    }
+                    status, ack = self.transport(ENDPOINT, entry['body'], headers, TIMEOUT)
+                    if status == 400 and entry.get('legacyBody'):
+                        # The site's schema predates optimizerStrategy: send what it knows.
+                        # From now on this report is that body, so a retry after a lost
+                        # acknowledgement resends exactly what the site may have stored.
+                        entry['body'], entry['legacyBody'] = entry['legacyBody'], None
+                        status, ack = self.transport(ENDPOINT, entry['body'], headers, TIMEOUT)
                     accepted = (
                         type(status) is int
                         and status == 200
@@ -543,13 +555,14 @@ class SupportReports:
             # At most one worker exists, only after explicit confirmation. The
             # wait cap includes DNS/connect/body stalls. An unresolved attempt is
             # not replaced or queued; a late matching acknowledgement is retained.
-            worker = threading.Thread(target=attempt, name='Bloomkeeper support send', daemon=True)
+            worker = threading.Thread(target=attempt, name='BloomGauge support send', daemon=True)
             try:
                 worker.start()
             except Exception:
                 self.inflight = None
                 raise SupportError('unavailable', report_id) from None
-        if not finished.wait(TIMEOUT):
+        # Up to two sends (the older-site fallback), each with its own timeout.
+        if not finished.wait(2 * TIMEOUT + 1):
             raise SupportError('unconfirmed', report_id)
         with self.lock:
             if entry['sent']:

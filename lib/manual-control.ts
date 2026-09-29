@@ -329,7 +329,7 @@ export function manualBlocker(
   if (!manualControlFresh(state, now))
     return 'Waiting for fresh model status. Retrying automatically.';
   if (!state!.providerControl.selectionActionSupported)
-    return 'These model controls need the updated Bloomkeeper app on this Mac.';
+    return 'These model controls need the updated BloomGauge app on this Mac.';
   const p = state!.providerControl,
     target = state!.models.find((m) => m.id === model);
   if (

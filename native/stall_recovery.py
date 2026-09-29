@@ -2,7 +2,7 @@
 
 A steady flow of jobs that suddenly drops to zero is rarely a gradual demand
 decline. It can be the network routing elsewhere, a stale coordinator session,
-or the local engine. Bloomkeeper escalates one step at a time, waiting after each:
+or the local engine. BloomGauge escalates one step at a time, waiting after each:
 
   1. probe    a tiny test request routed back to this Mac through Darkbloom
               (or to the local engine when no API key is stored); no downtime
@@ -13,7 +13,7 @@ or the local engine. Bloomkeeper escalates one step at a time, waiting after eac
   4. hold     stop trying and tell the user; nothing more is automatic
 
 When the model's own network demand collapsed as well, the flow stopping is
-explained by demand, so Bloomkeeper goes straight to the escape.
+explained by demand, so BloomGauge goes straight to the escape.
 
 Two triggers start the ladder. The first is this Mac's own history: steady work
 that suddenly stops. The second is Macs like this one (same chip and memory,
@@ -40,7 +40,7 @@ SILENCE_SECONDS = 5 * 60  # first step
 RESTART_SILENCE_SECONDS = 8 * 60
 STEP_WAIT_SECONDS = {'probe': 3 * 60, 'restart': 5 * 60, 'escape': 5 * 60}
 # The optimizer confirms an opportunity for 5 minutes before it switches, so an
-# escape that hasn't led to a switch yet gets longer before Bloomkeeper gives up.
+# escape that hasn't led to a switch yet gets longer before BloomGauge gives up.
 ESCAPE_UNMOVED_SECONDS = 20 * 60
 DEMAND_HELD = 0.5  # recent load and pressure vs the baseline window
 # A restart also needs this much absolute pressure (active + queued per warm provider over the
@@ -109,7 +109,7 @@ def peer_stall(windows, model, now, probes=()):
             w.get('model') not in names
             or not finite(w.get('requests'))
             or w['requests'] > allowed
-            or w.get('trusted') is False  # 'hardware' trust; None: the field is missing
+            or w.get('trusted') is False  # not authorized to serve; None: the field is missing
             or (run and abs(run[-1]['start'] - w['at']) > 1)  # a gap: the run ends there
         ):
             break
@@ -155,7 +155,7 @@ def assess(
     minutes: this Mac's warm minutes [{'at', 'model', 'seconds', 'jobs'}], any model.
     network: {model: [{'at', 'active', 'queued', 'warm'}]} network capacity samples.
     attempts: recovery steps already taken [{'at', 'step', 'model'}].
-    switches: times Bloomkeeper started a model switch (any reason).
+    switches: times BloomGauge started a model switch (any reason).
     peers: this Mac's recent public-counter windows with its peers' rates (see peer_stall),
     or None (no evidence, or a network-wide outage: the peer trigger stays quiet).
     """
@@ -188,7 +188,7 @@ def assess(
     last = max(m['at'] for m in worked) + 60
     model = next(m['model'] for m in worked if m['at'] + 60 == last)
     # Silence is observed warm time since the last job, not wall time: a Mac that
-    # slept, or a Bloomkeeper that was closed, saw nothing and must not count it.
+    # slept, or a BloomGauge that was closed, saw nothing and must not count it.
     silence = sum(
         max(0, m.get('seconds', 0)) for m in minutes if m['at'] >= last and m['at'] + 60 <= now
     )
@@ -256,12 +256,12 @@ def assess(
     if any(last <= t < handover - HANDOVER_MARGIN_SECONDS for t in switches):
         result.update(
             status='switching',
-            reason='Bloomkeeper switched models after work stopped; that run handles its own quiet time.',
+            reason='BloomGauge switched models after work stopped; that run handles its own quiet time.',
         )
         return result
     if 'hold' in taken:
         result.update(
-            reason='Bloomkeeper stopped trying for this stall; waiting for work to resume.'
+            reason='BloomGauge stopped trying for this stall; waiting for work to resume.'
         )
         return result
     # Each step gets time to work. A restart or switch waits from the moment
@@ -327,12 +327,12 @@ def assess(
             (
                 'No work after a test request, a restart and '
                 + ('a switch to another model' if moved else 'a chance to switch models')
-                + '. Bloomkeeper has stopped trying; '
+                + '. BloomGauge has stopped trying; '
                 'check Darkbloom (darkbloom doctor, Slack) for a routing or verification problem.'
                 if 'restart' in taken
                 else 'No work after '
                 + ' and '.join(taken)
-                + '. Bloomkeeper has stopped trying; check Darkbloom for a routing problem.'
+                + '. BloomGauge has stopped trying; check Darkbloom for a routing problem.'
             ),
         )
     restart_silence = RESTART_SILENCE_SECONDS if steady else PEER_RESTART_SILENCE_SECONDS

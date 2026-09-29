@@ -121,7 +121,7 @@ export function ManagerStatusCard({
   return (
     <section
       className={`manager-status tone-${headline.tone}`}
-      aria-label="What Bloomkeeper is doing"
+      aria-label="What BloomGauge is doing"
       role="status"
       aria-live="polite"
     >
@@ -148,7 +148,7 @@ export function ManagerStatusCard({
           <p>{homeNoticeText(notice, label)}</p>
           <small>
             {notice.until > now
-              ? `Keep ${label(notice.from)} to stay on it: it becomes your pick and Bloomkeeper won’t switch away from it.`
+              ? `Keep ${label(notice.from)} to stay on it: it becomes your pick and BloomGauge won’t switch away from it.`
               : 'Switching on the next check if the evidence still holds.'}
           </small>
           {onKeepCurrent && (
@@ -243,8 +243,8 @@ export function ManagerStatusCard({
               </strong>
               <small>
                 {recovery.previous
-                  ? `Bloomkeeper restores ${label(recovery.previous)} if it doesn’t load`
-                  : 'Bloomkeeper restores the last working model'}
+                  ? `BloomGauge restores ${label(recovery.previous)} if it doesn’t load`
+                  : 'BloomGauge restores the last working model'}
                 {recovery.attempts
                   ? ` · ${recovery.attempts} of 2 restores tried`
                   : ''}
@@ -360,7 +360,7 @@ export function NetworkEvidencePanel({
       </summary>
       {!evidence ? (
         <p className="footnote">
-          Bloomkeeper hasn’t received network evidence for this Mac’s hardware
+          BloomGauge hasn’t received network evidence for this Mac’s hardware
           class yet. It is built from public network counters every few minutes;
           until then the manager holds the home model.
         </p>

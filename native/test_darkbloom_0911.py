@@ -6,7 +6,7 @@ the legacy provider.toml locations: `ConfigManager.defaultConfigPath` is now onl
 0.9.9 and 0.9.10 keep the fallback.
 """
 
-import copy, json, pathlib, tempfile, unittest
+import copy, json, pathlib, tempfile, time, unittest
 import manager
 from model_combinations import (
     combination_config_error,
@@ -105,6 +105,32 @@ class ConfigPathTests(HomeCase):
         self.assertTrue(manager.idle_unload_chosen(self.home, ['--idle-timeout', '20']))
         self.assertEqual(configured_reserve_gb(self.home, []), 4)
         self.assertIsNone(combination_config_error(self.home, [], {}))
+
+    def test_the_path_the_daemon_reports_wins(self):
+        # 0.9.11+ writes the provider.toml it loaded into daemon-state.json.
+        custom = self.home / 'Configs/darkbloom.toml'
+        self.write(custom, toml_0911([QWEN], idle=30))
+        self.write(self.canonical, toml_0911([QWEN], idle=0))
+        state = daemon_state('0.9.11')
+        state.update(config_path=str(custom), written_at=time.time())
+        self.write(self.home / '.darkbloom/daemon-state.json', json.dumps(state))
+        self.assertEqual(default_config_path(self.home), custom)
+        self.assertEqual(manager.config_path(self.home, []), custom)
+        # An explicit --config still comes first.
+        self.assertEqual(manager.config_path(self.home, ['--config', str(self.canonical)]), self.canonical)
+        # daemon-state outlives the daemon: a stale one is not trusted.
+        state['written_at'] = time.time() - 600
+        self.write(self.home / '.darkbloom/daemon-state.json', json.dumps(state))
+        self.assertEqual(default_config_path(self.home), self.canonical)
+
+    def test_an_odd_or_missing_reported_path_is_ignored(self):
+        self.write(self.canonical, toml_0911([QWEN], idle=0))
+        for reported in ('relative/provider.toml', '/nonexistent/provider.toml', '/etc/hosts', 7, None):
+            with self.subTest(reported=reported):
+                state = daemon_state('0.9.11')
+                state.update(config_path=reported, written_at=time.time())
+                self.write(self.home / '.darkbloom/daemon-state.json', json.dumps(state))
+                self.assertEqual(default_config_path(self.home), self.canonical)
 
     def test_0911_canonical_file_is_read_as_before(self):
         self.write(self.app, toml_0911([QWEN], idle=30))

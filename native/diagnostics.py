@@ -158,6 +158,16 @@ def event_reason(kind, detail):
     return reason_code(detail if isinstance(detail, str) else '')
 
 
+def optimizer_strategy(rules):
+    """'manager' or 'legacy' for the saved automatic plan; 'unknown' if it can't be read."""
+    try:
+        import manager  # late: manager imports much of the optimizer
+
+        return manager.strategy(rules)
+    except Exception:
+        return 'unknown'
+
+
 def switch_failure(value, models, now):
     if not isinstance(value, dict) or not value:
         return None
@@ -196,7 +206,7 @@ def cache_recovery(value, raw, now):
         current = value['session'] == session_key(raw)
     return {
         'ageSeconds': age(value.get('at'), now),
-        'status': enum(value.get('status'), {'running', 'cleared', 'failed'}),
+        'status': enum(value.get('status'), {'running', 'cleared', 'loaded', 'failed'}),
         'currentSession': current,
     }
 
@@ -391,6 +401,7 @@ def build_report(collector, include_earnings=False, remote=False, now=None):
         },
         'optimizer': {
             'mode': mode(state.get('mode')),
+            'strategy': optimizer_strategy(state.get('demandPolicy')),
             'status': enum(optimizer_status, STATUSES),
             'identityVerified': identity_ok,
             'scopeMatched': matched,

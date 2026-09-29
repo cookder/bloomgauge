@@ -37,6 +37,14 @@ export type NetworkContributions = {
   };
   notes: string[];
   networkMoney: { available: false; reason: string };
+  /** Earnings only (not validated here; `series`/`summary` never include it):
+   * account-wide base rewards in USD per elapsed hour, one value per point. The
+   * Pulse's 5-minute bars read it through `baseRewardValues`. */
+  baseRewards?: {
+    attribution: 'account';
+    values: (number | null)[];
+    total: number | null;
+  };
 };
 const obj = (v: unknown): v is Record<string, any> =>
   v !== null && typeof v === 'object' && !Array.isArray(v);

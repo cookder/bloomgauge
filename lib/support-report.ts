@@ -92,6 +92,7 @@ export type SupportReport = SupportIssue & {
     providerOnline: boolean | null;
     providerVersion: string;
     optimizerMode: string;
+    optimizerStrategy?: string;
     optimizerStatus: string;
     failureCode: string;
     recoveryCode: string;
@@ -168,20 +169,25 @@ export function validSupportPreview(
   )
     return false;
   const d = r.diagnostics;
+  const keys = [
+    'available',
+    'osMajor',
+    'chipFamily',
+    'memoryBand',
+    'providerOnline',
+    'providerVersion',
+    'optimizerMode',
+    'optimizerStatus',
+    'failureCode',
+    'recoveryCode',
+    'sources',
+  ];
+  // optimizerStrategy is newer (beta 43); older Macs' previews don't carry it.
+  if (!exact(d, keys) && !exact(d, [...keys, 'optimizerStrategy']))
+    return false;
   if (
-    !exact(d, [
-      'available',
-      'osMajor',
-      'chipFamily',
-      'memoryBand',
-      'providerOnline',
-      'providerVersion',
-      'optimizerMode',
-      'optimizerStatus',
-      'failureCode',
-      'recoveryCode',
-      'sources',
-    ])
+    'optimizerStrategy' in d &&
+    !oneOf(d.optimizerStrategy, ['manager', 'legacy', 'unknown'])
   )
     return false;
   if (
@@ -261,6 +267,9 @@ export class SupportRequestError extends Error {
     super('unconfirmed');
   }
 }
+/** A send can take two attempts on the Mac (older-site fallback: 2 x 15 s + 1). */
+export const SEND_TIMEOUT_MS = 35000;
+
 /** Both response headers and body parsing share one deadline. Only fixed routes. */
 export async function supportRequest(
   action: 'preview' | 'send' | 'auto',
@@ -349,6 +358,7 @@ export async function quickSupportReport(
       confirmed: true,
     },
     signal,
+    SEND_TIMEOUT_MS,
   );
   if (!validSupportReceipt(result, preview.report.id))
     throw new SupportRequestError('unconfirmed');

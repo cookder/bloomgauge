@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Explicit one-time storage migration. Not imported or run by the dashboard.
 
-Quit Bloomkeeper before installing an update and invoking this tool. The SQLite backup
+Quit BloomGauge before installing an update and invoking this tool. The SQLite backup
 API includes committed WAL records; a pinned read transaction verifies every
 table against the same snapshot. The source is retained and an existing
 destination is never replaced. No privacy settings or privileges are changed.

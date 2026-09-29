@@ -35,7 +35,7 @@ const release = (id = 'beta23', version = '1.36.19') => ({
     highlights: [
       {
         title: 'On or Manual',
-        detail: 'One place to choose how Bloomkeeper manages models.',
+        detail: 'One place to choose how BloomGauge manages models.',
       },
       {
         title: 'Explore your credits',
@@ -185,7 +185,7 @@ for (const engine of options.engine
         return route.continue();
       });
       const panel = page.locator('.credits-panel'),
-        notice = page.getByRole('region', { name: "What's new in Bloomkeeper" });
+        notice = page.getByRole('region', { name: "What's new in BloomGauge" });
       const choose = async (label, option) => {
         await page.getByRole('combobox', { name: label, exact: true }).click();
         await page.getByRole('option', { name: option, exact: true }).click();

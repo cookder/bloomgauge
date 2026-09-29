@@ -316,13 +316,40 @@ def earnings(db, account, device, start, end, deadline):
             raise ContributionsUnavailable(
                 'Too many credited model identities. Choose a shorter range.'
             )
+    # Base rewards: account-wide, as the hourly Monitor and daily totals count them
+    # (not tied to a provider identity). Kept out of `series` and `summary` so the
+    # model report stays inference-only; the Pulse's 5-minute bars add them.
+    base_bins = [0] * len(points)
+    base_invalid = [False] * len(points)
+    base_total, base_count, base_bad = 0, 0, False
+    rows = db.execute(
+        """SELECT at,micro_usd FROM opt_credits
+        WHERE account=? AND at>=? AND at<? AND model='base_reward'
+        ORDER BY at""",
+        (account, start, end),
+    )
+    for index, row in enumerate(rows):
+        if index % 1024 == 0:
+            check(deadline)
+        if not finite(row['at']):
+            continue
+        i = int((row['at'] - low) // step)
+        if not finite(row['micro_usd']):
+            base_invalid[i] = base_bad = True
+            continue
+        base_bins[i] += row['micro_usd']
+        base_total += row['micro_usd']
+        base_count += 1
     intervals = poll_coverage(db, account, start, end)
     observed = sum(b - a for a, b in intervals)
     if not ranks:
         ranks[None] = 0
     series, groups = model_groups(ranks)
     interval_index = 0
-    for point, values, invalid in zip(points, bins, invalid_bins):
+    base_values = []
+    for point, values, invalid, base, base_unknown in zip(
+        points, bins, invalid_bins, base_bins, base_invalid
+    ):
         while interval_index < len(intervals) and intervals[interval_index][1] <= point['from']:
             interval_index += 1
         seconds = 0
@@ -341,6 +368,11 @@ def earnings(db, account, device, start, end, deadline):
             else None
             for group in groups
         ]
+        base_values.append(
+            base / 1e6 * 3600 / elapsed
+            if seconds and point['coverageFraction'] + 1e-9 >= MIN_COVERAGE and not base_unknown
+            else None
+        )
     known = bool(count or observed or invalid_totals)
     values = [
         sum(totals[m] for m in group) / 1e6
@@ -354,7 +386,12 @@ def earnings(db, account, device, start, end, deadline):
         'Base rewards are excluded; signed corrections are retained. Period totals include recorded credits even where poll coverage is incomplete.',
         'Chart rates divide recorded dollars by elapsed interval hours, not warm hours. Intervals below 80% poll coverage remain gaps.',
     ]
-    return step, series, points, total, values, observed, notes
+    base_rewards = {
+        'attribution': 'account',
+        'values': base_values,
+        'total': base_total / 1e6 if (base_count or observed) and not base_bad else None,
+    }
+    return step, series, points, total, values, observed, notes, base_rewards
 
 
 def unavailable(metric, start, end, now, reason):
@@ -411,7 +448,7 @@ def report(history, metric, start, end, now, account='', device='', deadline=Non
         finally:
             if deadline is not None:
                 db.set_progress_handler(None, 0)
-    step, series, points, total, values, observed, notes = data
+    step, series, points, total, values, observed, notes, *extra = data
     # Malformed source arithmetic must remain unknown, never JSON NaN/Infinity.
     for point in points:
         point['values'] = [v if finite(v) else None for v in point['values']]
@@ -444,6 +481,15 @@ def report(history, metric, start, end, now, account='', device='', deadline=Non
         'notes': notes,
         'networkMoney': dict(NETWORK_MONEY),
     }
+    if extra:
+        # Earnings only: base-reward USD per elapsed hour aligned with `points`.
+        # An additive field; readers of `series`/`summary` are unaffected.
+        base = extra[0]
+        result['baseRewards'] = {
+            'attribution': base['attribution'],
+            'values': [v if finite(v) else None for v in base['values']],
+            'total': base['total'] if finite(base['total']) else None,
+        }
     check(deadline)
     json.dumps(result, allow_nan=False)
     return result

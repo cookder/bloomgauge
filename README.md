@@ -1,12 +1,12 @@
-# Bloomkeeper
+# BloomGauge
 
-An independent companion for [Darkbloom](https://www.darkbloom.ai/) providers on Apple Silicon Macs: a local dashboard and model optimizer. Formerly called Bloom.
+An independent companion for [Darkbloom](https://www.darkbloom.ai/) providers on Apple Silicon Macs: a local dashboard and model optimizer. Formerly called Bloomkeeper.
 
-Darkbloom pays Mac owners to serve AI inference on idle hardware. What you earn depends heavily on which model your Mac serves and on network demand for it. Bloomkeeper shows your Mac's confirmed earnings, network demand and hardware health in one place, and can switch models for you based on evidence from your own paid work.
+Darkbloom pays Mac owners to serve AI inference on idle hardware. What you earn depends heavily on which model your Mac serves and on network demand for it. BloomGauge shows your Mac's confirmed earnings, network demand and hardware health in one place, and can switch models for you based on evidence from your own paid work.
 
-> Bloomkeeper is an independent project. It is not affiliated with or endorsed by Darkbloom or Eigen Labs.
+> BloomGauge is an independent project. It is not affiliated with or endorsed by Darkbloom or Eigen Labs.
 
-All features are free. Earnings vary with hardware and demand, and Bloomkeeper does not promise any improvement.
+All features are free. Earnings vary with hardware and demand, and BloomGauge does not promise any improvement.
 
 ![The Pulse meter: this Mac's live pay rate against its usual rate for the model it serves, with the last hour of pay](docs/images/pulse.jpg)
 
@@ -32,11 +32,11 @@ All features are free. Earnings vary with hardware and demand, and Bloomkeeper d
 
 ## Install
 
-Download the signed, notarized build from [bloomkeeper.io](https://bloomkeeper.io), drag it into Applications, and open it. Setup takes three steps, and Bloomkeeper starts in observe mode, so it changes nothing until you turn the optimizer on.
+Download the signed, notarized build from [bloomgauge.io](https://bloomgauge.io), drag it into Applications, and open it. Setup takes three steps, and BloomGauge starts in observe mode, so it changes nothing until you turn the optimizer on.
 
 ## How it works
 
-Bloomkeeper is a native macOS app (`native/App.swift`) that shows a local web dashboard. The native app starts a bundled Python backend (`native/collector.py`), which:
+BloomGauge is a native macOS app (`native/App.swift`) that shows a local web dashboard. The native app starts a bundled Python backend (`native/collector.py`), which:
 
 - reads provider state from `~/.darkbloom/daemon-state.json`
 - reads confirmed earnings from the Darkbloom account API, using the provider's existing login
@@ -47,7 +47,7 @@ Bloomkeeper is a native macOS app (`native/App.swift`) that shows a local web da
 
 The dashboard itself is a React app (`app/`, `components/`, `lib/`) built with Vite.
 
-Model changes go through Darkbloom's own CLI (`~/.darkbloom/bin/darkbloom`). Bloomkeeper never touches payouts, withdrawals, fans or power settings, and never uploads your credentials.
+Model changes go through Darkbloom's own CLI (`~/.darkbloom/bin/darkbloom`). BloomGauge never touches payouts, withdrawals, fans or power settings, and never uploads your credentials.
 
 How the pieces fit together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -82,17 +82,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## Support
 
-[Darkbloom help for Mac providers](https://bloomkeeper.io/help): no jobs while online, stuck draining, which model to run.
+[Darkbloom help for Mac providers](https://bloomgauge.io/help): no jobs while online, stuck draining, which model to run.
 
-In the app, use More → Help & feedback to send a problem report. You can also email [support@bloomkeeper.io](mailto:support@bloomkeeper.io), join the [Bloomkeeper Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN) on the Darkbloom Slack, or open an issue on [GitHub](https://github.com/cookder/bloomkeeper/issues). Report security problems privately, as described in [SECURITY.md](SECURITY.md).
+In the app, use More → Help & feedback to send a problem report. You can also email [support@bloomgauge.io](mailto:support@bloomgauge.io), join the [BloomGauge Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN) on the Darkbloom Slack, or open an issue on [GitHub](https://github.com/cookder/bloomgauge/issues). Report security problems privately, as described in [SECURITY.md](SECURITY.md).
 
 ## Privacy
 
-Bloomkeeper runs locally. Usage sharing is optional and off by default. If you turn it on, Bloomkeeper sends only coarse daily flags, never earnings, credentials, prompts or identifiers. Problem reports are sent only when you tap Send or turn on automatic sending, and never include earnings, account IDs or logs. Diagnostics reports are saved only where you choose. See [bloomkeeper.io/privacy](https://bloomkeeper.io/privacy).
+BloomGauge runs locally. Usage sharing is optional and off by default. If you turn it on, BloomGauge sends only coarse daily flags, never earnings, credentials, prompts or identifiers. Problem reports are sent only when you tap Send or turn on automatic sending, and never include earnings, account IDs or logs. Diagnostics reports are saved only where you choose. See [bloomgauge.io/privacy](https://bloomgauge.io/privacy).
 
 ## Name and official builds
 
-Official builds of Bloomkeeper come only from [bloomkeeper.io](https://bloomkeeper.io), signed, notarized and updated by the maintainer. If you publish a fork, please give it a different name and icon, and change its bundle identifier and the update feed and key in `native/update-public.json`, so its users don't receive official updates.
+Official builds of BloomGauge come only from [bloomgauge.io](https://bloomgauge.io), signed, notarized and updated by the maintainer. If you publish a fork, please give it a different name and icon, and change its bundle identifier and the update feed and key in `native/update-public.json`, so its users don't receive official updates.
 
 ## License
 

@@ -263,7 +263,7 @@ export function stallView(
     const rate = finite(s!.baselineJobsPerMinute)
       ? ` after about ${Math.round(s!.baselineJobsPerMinute)} jobs a minute`
       : '';
-    // Bloomkeeper's reason often says this already; don't repeat it.
+    // BloomGauge's reason often says this already; don't repeat it.
     const demand = /demand/i.test(s!.reason ?? '')
       ? ''
       : s!.demandHeld === true
@@ -312,8 +312,8 @@ export function stallView(
     steps,
     headline: gaveUp
       ? manager
-        ? 'Bloomkeeper held the home model after these steps.'
-        : 'Bloomkeeper stopped trying after these steps.'
+        ? 'BloomGauge held the home model after these steps.'
+        : 'BloomGauge stopped trying after these steps.'
       : 'No steady work right now.',
     detail: null,
   };

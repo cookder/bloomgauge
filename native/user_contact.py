@@ -1,4 +1,4 @@
-"""Optional contact details the user chooses to give Bloomkeeper's developer.
+"""Optional contact details the user chooses to give BloomGauge's developer.
 
 Nothing is sent unless the user types an email or Slack handle and ticks consent.
 Saving waits for the website to confirm; nothing is queued or retried in the
@@ -29,8 +29,8 @@ class ContactError(Exception):
     """Only fixed public messages reach the API, never transport errors."""
 
     MESSAGES = {
-        'phone': (403, 'Change your contact details in Bloomkeeper on your Mac.'),
-        'unavailable': (503, 'Contact details can’t be sent from this copy of Bloomkeeper.'),
+        'phone': (403, 'Change your contact details in BloomGauge on your Mac.'),
+        'unavailable': (503, 'Contact details can’t be sent from this copy of BloomGauge.'),
         'unconfirmed': (
             503,
             'bloomformac.com didn’t confirm the change. Nothing changed; try again in a moment.',

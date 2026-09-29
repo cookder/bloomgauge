@@ -37,6 +37,7 @@ import {
   SupportRequestError,
   type SupportPreview,
   type SupportReport,
+  SEND_TIMEOUT_MS,
 } from '@/lib/support-report';
 
 export function SupportReporting({ children }: { children: ReactNode }) {
@@ -85,7 +86,7 @@ class ReportingBoundary extends Component<
           target="_blank"
           rel="noreferrer"
         >
-          Reporting unavailable · Contact Bloomkeeper support ↗
+          Reporting unavailable · Contact BloomGauge support ↗
         </a>
       </aside>
     ) : (
@@ -141,7 +142,7 @@ function ReportSummary({ report }: { report: SupportReport }) {
       <div>
         <dt>App & Mac</dt>
         <dd>
-          Bloomkeeper {report.appVersion} ·{' '}
+          BloomGauge {report.appVersion} ·{' '}
           {report.surface === 'phone' ? 'Phone page' : 'Mac dashboard'}
           <br />
           {d.chipFamily === 'Other' ? 'Chip unknown' : d.chipFamily} ·{' '}
@@ -170,7 +171,13 @@ function ReportSummary({ report }: { report: SupportReport }) {
       <div>
         <dt>Optimizer</dt>
         <dd>
-          {modeNames[d.optimizerMode]} · {readable(d.optimizerStatus)}
+          {modeNames[d.optimizerMode]}
+          {d.optimizerStrategy === 'manager'
+            ? ' (Manager)'
+            : d.optimizerStrategy === 'legacy'
+              ? ' (older optimizer)'
+              : ''}{' '}
+          · {readable(d.optimizerStatus)}
           <span>
             Failure: {readable(d.failureCode)} · Recovery:{' '}
             {readable(d.recoveryCode)}
@@ -232,7 +239,7 @@ function SupportReportHost() {
     void autoSendSupportPrompt(issue, (fields) =>
       quickSupportReport(
         { ...fields, description: '', contact: '' },
-        AbortSignal.timeout(30000),
+        AbortSignal.timeout(20000 + SEND_TIMEOUT_MS),
         true,
       ),
     ).then((sent) => {
@@ -316,7 +323,7 @@ function SupportReportHost() {
           error instanceof SupportRequestError &&
             error.status === 'preview_limit'
             ? 'There are too many recent previews. Wait up to ten minutes for them to expire, then review again. Nothing was sent.'
-            : 'Could not prepare a private preview. Keep Bloomkeeper open on your Mac and check the connection, then try again. You can also use the support link below. Nothing was sent.',
+            : 'Could not prepare a private preview. Keep BloomGauge open on your Mac and check the connection, then try again. You can also use the support link below. Nothing was sent.',
         );
       }
     } finally {
@@ -340,6 +347,7 @@ function SupportReportHost() {
           confirmed: true,
         },
         control.signal,
+        SEND_TIMEOUT_MS,
       );
       if (own !== generation.current) return;
       if (!validSupportReceipt(result, preview.report.id))
@@ -429,9 +437,9 @@ function SupportReportHost() {
           </DialogTitle>
           <DialogDescription>
             {phase === 'sent'
-              ? 'Your report reached Andrew’s private Bloomkeeper support dashboard.'
+              ? 'Your report reached Andrew’s private BloomGauge support dashboard.'
               : preview
-                ? 'This is the report that will be sent to Andrew’s private Bloomkeeper support dashboard.'
+                ? 'This is the report that will be sent to Andrew’s private BloomGauge support dashboard.'
                 : 'Reporting is optional. Nothing is sent until you review the report and choose Send.'}
           </DialogDescription>
           {phase === 'sent' && preview ? (
@@ -542,7 +550,7 @@ function SupportReportHost() {
                         ? 'Sending…'
                         : phase === 'unconfirmed'
                           ? 'Retry same report'
-                          : 'Send to Bloomkeeper support'}
+                          : 'Send to BloomGauge support'}
                     </button>
                     <button
                       type="button"

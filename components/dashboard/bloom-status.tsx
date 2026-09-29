@@ -61,14 +61,14 @@ export function BloomStatus({
         }
       }}
     >
-      <summary aria-label={`Bloomkeeper status: ${label}. Show details`}>
+      <summary aria-label={`BloomGauge status: ${label}. Show details`}>
         <i aria-hidden="true" />
         <span role="status" aria-live="polite">
           {label}
         </span>
       </summary>
       <div className="bloom-status-details">
-        <strong>Bloomkeeper status · {label}</strong>
+        <strong>BloomGauge status · {label}</strong>
         <p>
           {recovering
             ? 'Readings have resumed. Checking that the connection stays steady before returning to green.'

@@ -1,28 +1,41 @@
-# Beta42 tester guide: the manager on more Macs
+# Beta43 tester guide: BloomGauge, self-updating
 
-**1.36.61 beta42/build13661 · candidate tester guide · Apple Silicon/macOS 14+**
+**1.36.62 beta43/build13662 · candidate tester guide · Apple Silicon/macOS 14+**
 
-This guide targets beta42 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
+This guide targets beta43 and does not certify implementation, signing, notarization or a physical installation. Install only after the organizer confirms the release and final checksum. Use the confirmed build and an approved isolated fixture for technical cases; leave all results **not_run** until actually observed. The separate kit introduction identifies the current public release and preparation status.
 
-## New in beta42
+## New in beta43
 
-- **Manager keeps running.** After updating, the manager should still be on if it was on. With a custom endpoint set up, Bloomkeeper should not loop on "provider settings changed". On Darkbloom 0.9.10 or 0.9.11 it should reach Warm and ready.
+- **New name.** After updating, the window, menu bar, About and notifications should say BloomGauge. History, settings, the phone link and the manager's state should carry over. The app file may keep its old name after a Sparkle update; that's expected.
+- **Automatic updates.** More → Help & feedback should show **Update BloomGauge automatically**, turned on unless you had turned update checks off before. When the next version comes out, BloomGauge should download it and install it on its own while you're away from the Mac (about 10 minutes without mouse or keyboard). It should reopen on the new version with the window as it was (closed stays closed), without taking focus, and the manager should keep its home model. It must not install during a model switch or warm-up, or while the manager is trying a bigger model. Help should say "An update is ready…" while one is waiting, and **Install Update Now** in the BloomGauge menu should install it right away. Beta43 itself installs the old way: approve it once.
+- **Reload after an idle unload.** When Darkbloom unloads an idle model, BloomGauge should load a model again within a few minutes, without "Darkbloom is loading" or "Not enough free memory" lingering. With cache cleanup allowed this should work every time, not just once.
+- **Manager on battery.** Turning the manager On while unplugged should work; the manager's own demand switches still wait for power.
+- **macOS 27 / App Attest without MDM.** On a Mac Darkbloom verifies through App Attest only, a failed switch should come back to the previous model within a few minutes, Qwen3.8 (M5 Macs) should be pickable, and the Reputation card should show "Self-signed trust".
+- **Pair fallback.** With two models chosen and not enough memory for both, BloomGauge should serve one and say so, then return to the pair when memory frees up.
+- **Pulse.** One earnings graph with 1 h to 7 d views and "earned in the last …"; a Today tile with the end-of-day estimate.
+- **Notifications.** Optimizer → Overview → Notifications should list each alert kind for Mac and phone. Mac notifications should ask for permission once and open the right screen when clicked. Phone notifications should show amounts unless you turn that off. Quiet hours should hold everything except problems.
+- **Network clearance.** Right after a restart, the status should say the network hasn't cleared this Mac yet, and statistics shouldn't count those minutes.
+- **Problem reports.** The review sheet's Optimizer line should say "(Manager)" or "(older optimizer)".
+
+## Carried forward from beta42
+
+- **Manager keeps running.** After updating, the manager should still be on if it was on. With a custom endpoint set up, BloomGauge should not loop on "provider settings changed". On Darkbloom 0.9.10 or 0.9.11 it should reach Warm and ready.
 - **Macs like yours.** The Overview should compare your pace with similar Macs, and flag it if they are earning while yours stalls.
-- **It's not you.** During a network-wide outage a banner should say so, and Bloomkeeper should hold restarts and automatic reports.
+- **It's not you.** During a network-wide outage a banner should say so, and BloomGauge should hold restarts and automatic reports.
 - **Network news.** Note whether news items appear and are accurate.
 
 ## Carried forward from beta41
 
 - **Manager.** With the optimizer on, it should name a home model and keep it running. After a failed switch or about 10 minutes with no model ready, it should bring the home model back rather than switching itself off. Note any move it makes and the reason it gives.
 - **What's changed card.** After updating, the Optimizer tab should show a one-time card; closing it on the Mac should hide it on the phone too.
-- **No false alarm.** "Run status unavailable" should not appear while Bloomkeeper is running normally.
+- **No false alarm.** "Run status unavailable" should not appear while BloomGauge is running normally.
 - **Hourly bars and light mode.** The Overview should show hourly $/hour bars beside the Pulse; More → Appearance should switch between System, Light and Dark.
 - **My Macs.** It should list every model with its pace and show whether the Manager is on.
 
 ## Carried forward from beta40
 
 - **Many models offered.** With three or more models offered in Darkbloom and only some loaded, the optimizer notice should say statistics are on and name the loaded models. When Darkbloom loads or unloads a model, statistics should pause briefly and then resume.
-- **Model list.** Models Bloomkeeper can use should list every model your Mac offers; one that Darkbloom's catalog no longer lists appears dimmed.
+- **Model list.** Models BloomGauge can use should list every model your Mac offers; one that Darkbloom's catalog no longer lists appears dimmed.
 - **Held-back reports.** If an automatic problem report is held back, the prompt should stay so you can send it yourself.
 
 ## Carried forward from beta39
@@ -31,16 +44,16 @@ This guide targets beta42 and does not certify implementation, signing, notariza
 
 ## Carried forward from beta38
 
-- **New name.** After updating, the window, menu bar and About should say Bloomkeeper Beta. History, settings, the optimizer plan and the phone link should carry over. The app file in Applications may keep its old name; that is expected.
+- **New name.** After updating, the window, menu bar and About should say BloomGauge Beta. History, settings, the optimizer plan and the phone link should carry over. The app file in Applications may keep its old name; that is expected.
 - **Pace units.** The Pulse meter should show cents per hour. Tap the number to switch to dollars; the choice should survive a restart.
 - **Phone view.** With phone access on, your phone link should keep working after the update.
-- **Help & feedback.** It should offer the support page, the Bloomkeeper Slack channel and Email support (support@bloomkeeper.io).
+- **Help & feedback.** It should offer the support page, the BloomGauge Slack channel and Email support (support@bloomgauge.io).
 
 ## Carried forward from beta37
 
-- **Settings that stick.** Change the dashboard layout or dismiss the What’s new banner, quit Bloomkeeper and reopen it: the change should still be there.
+- **Settings that stick.** Change the dashboard layout or dismiss the What’s new banner, quit BloomGauge and reopen it: the change should still be there.
 - **Model names.** With more than one Gemma 4 26B variant downloaded, model lists should show which is which (8-bit, QAT 4-bit).
-- **Stall recovery.** If work stops and Bloomkeeper lets the optimizer try another model, note whether it switched and how long it took.
+- **Stall recovery.** If work stops and BloomGauge lets the optimizer try another model, note whether it switched and how long it took.
 
 ## Carried forward from beta36
 
@@ -69,24 +82,24 @@ This guide targets beta42 and does not certify implementation, signing, notariza
 
 - **Overview sentence.** Earnings → Overview should open with one line like "Earning $0.06/hr on Gemma 4 26B · $1.90 today · optimizer watching demand". It should match the Pulse dial and the optimizer card.
 - **One pace, in dollars.** The Pulse dial, My Macs and the optimizer should show the same pace (last five warm minutes, in dollars). My Macs should not show $0.0000 while a Mac is serving.
-- **Only Bloomkeeper's window can change settings.** Open http://127.0.0.1:8765 in Safari on the same Mac: numbers should load, but saving any setting should say "Open Bloomkeeper on this Mac to change settings". The same change in Bloomkeeper's window should work. Phone access should work as before.
+- **Only BloomGauge's window can change settings.** Open http://127.0.0.1:8765 in Safari on the same Mac: numbers should load, but saving any setting should say "Open BloomGauge on this Mac to change settings". The same change in BloomGauge's window should work. Phone access should work as before.
 - **Phone data.** Leave the phone view open on Overview for 5 minutes and note whether it feels lighter; screens other than Overview refresh every 5 seconds.
 - **Names and polish.** Each model should have one name everywhere (for example GPT-OSS 20B). The What's new banner should appear only on Overview. Pair tests that ended show their date.
 - **Automatic problem reports.** On the phone you should be able to turn them off but not on.
 - **Optimizer explainer.** On a Mac with no saved optimizer plan, choose Optimizer on. A "What the optimizer does" window should appear with Turn on with 3-day boost, Turn on without boost and Not now. With the boost, check Learning boost shows about 3 days left once the optimizer is fully on. "What it does" on the optimizer card reopens the window without turning anything on.
 - **Serving model on Pulse.** Earnings → Overview should show "Serving" and the current model (both for a pair) above the gauge, and the demand arc should describe the same model.
 - **My Macs.** With two or more Macs connected, check the combined live pace, the Models across your Macs table and each Mac's demand label. A sleeping Mac should show Unreachable and drop out of the combined pace.
-- **Stay in touch (optional).** More → About Bloomkeeper: Save needs an email or @handle and the consent tick; Remove should delete it. Only use your own contact details.
+- **Stay in touch (optional).** More → About BloomGauge: Save needs an email or @handle and the consent tick; Remove should delete it. Only use your own contact details.
 - **Improve starting estimates (optional, off by default).** Turning it on should report how many models were shared; turning it off should say the summary was deleted.
 - **Stall recovery and shadow estimates.** If a stall panel appears on the optimizer page, record the steps it lists and whether work resumed.
 
 ## Carried forward from beta29
 
-- **Protect level and learning time.** On the optimizer card, set Protect earnings above and Learning time. With the optimizer on, confirm Bloomkeeper does not start a learning run while the current model pays above your protect level, and that learning runs stay within the daily time you chose.
-- **What Bloomkeeper knows about each model.** On the optimizer page, check that each model shows expected pay, measured time and when it was last measured, and that barely-used models are not picked for learning.
+- **Protect level and learning time.** On the optimizer card, set Protect earnings above and Learning time. With the optimizer on, confirm BloomGauge does not start a learning run while the current model pays above your protect level, and that learning runs stay within the daily time you chose.
+- **What BloomGauge knows about each model.** On the optimizer page, check that each model shows expected pay, measured time and when it was last measured, and that barely-used models are not picked for learning.
 - **Optimizer style.** Move the slider from Very passive to Very aggressive and open Fine-tune to see the values change together. Type one value; the slider should show Custom. Out-of-range values should be refused with the allowed range shown.
 - **Learning boost.** Start a 24-hour boost, save a plan change while it runs, then stop it. Your own limits should be unchanged afterwards.
-- **Stall recovery.** If paid work stops for several minutes while network demand holds, note whether Bloomkeeper sent a test request, restarted or tried another model, and whether work resumed. Record the times in your result file. Do not try to cause a stall.
+- **Stall recovery.** If paid work stops for several minutes while network demand holds, note whether BloomGauge sent a test request, restarted or tried another model, and whether work resumed. Record the times in your result file. Do not try to cause a stall.
 - **Live readings.** Leave the dashboard open for 10 minutes. The optimizer status should not flip to "Waiting for fresh local readings" every half minute.
 
 ## Dashboard layout
@@ -111,7 +124,7 @@ Choose a model different from the saved selection while stopped. The primary act
 
 In an isolated fixture with insufficient memory and eligible cleanup permission, test both Manual Start and Optimizer on. Each explicit operation may attempt one cleanup, respects the shared cooldown, then requires a newer measured memory reading with enough space before loading. Duplicate clicks, lost/5xx replies, reopen, changed account/session/config and choosing Manual must not create another cleanup or stale Start. On should keep its preparation state visible rather than briefly appearing to revert to Manual. Failed recovery must explain the remaining shortage.
 
-Inspect the optional permission controls in the installed Mac app and the Mac-only explanation on the phone. Setup/removal must use the native macOS approval flow, accept only Bloomkeeper's fixed no-argument purge permission, and never start a model. Cancel must preserve the model selection. Use mocked commands for technical cases; leave actual administrator grant/revoke, live purge and physical model-start results **not_run** unless deliberately observed by the tester during normal use.
+Inspect the optional permission controls in the installed Mac app and the Mac-only explanation on the phone. Setup/removal must use the native macOS approval flow, accept only BloomGauge's fixed no-argument purge permission, and never start a model. Cancel must preserve the model selection. Use mocked commands for technical cases; leave actual administrator grant/revoke, live purge and physical model-start results **not_run** unless deliberately observed by the tester during normal use.
 
 ## Retained controls and report behavior
 
@@ -175,11 +188,11 @@ Green starts at $2.50/day, purple at $3/day and gold at $4/day. Calendar cells r
 
 ## Qwen runtime verification
 
-On a supported M5 Mac with a verified ready model, a downloaded capability-dependent model may show **Verify on switch**. The action names the selected target; choosing the offered verification action explicitly requests a manual attempt. Bloomkeeper checks Darkbloom network eligibility and warm readiness after startup. If verification fails, it attempts safe restoration of the previous ready model. This does not mark an unverified model eligible for automatic selection. Keep unsupported hardware, stale identity, missing files/template and insufficient-memory cases blocked. Verify Mac and authenticated-phone behavior only when deliberately testing your own provider; leave physical cases not_run until observed. No Terminal command or routine purge is required.
+On a supported M5 Mac with a verified ready model, a downloaded capability-dependent model may show **Verify on switch**. The action names the selected target; choosing the offered verification action explicitly requests a manual attempt. BloomGauge checks Darkbloom network eligibility and warm readiness after startup. If verification fails, it attempts safe restoration of the previous ready model. This does not mark an unverified model eligible for automatic selection. Keep unsupported hardware, stale identity, missing files/template and insufficient-memory cases blocked. Verify Mac and authenticated-phone behavior only when deliberately testing your own provider; leave physical cases not_run until observed. No Terminal command or routine purge is required.
 
 ## Customer flow and privacy
 
-Use **Review and report**, or **More → Help & feedback → Report a problem**. Description (up to 2,000 characters) and contact (up to 254) are optional and blank by default. **Review report** shows the exact payload; **Send to Bloomkeeper support** is a separate deliberate step. Opening, detecting, previewing, canceling and dismissing do not upload. Changing text requires a new review. Suggestions are deduplicated locally; dismiss snoozes prompts for 24 hours while manual reporting remains available.
+Use **Review and report**, or **More → Help & feedback → Report a problem**. Description (up to 2,000 characters) and contact (up to 254) are optional and blank by default. **Review report** shows the exact payload; **Send to BloomGauge support** is a separate deliberate step. Opening, detecting, previewing, canceling and dismissing do not upload. Changing text requires a new review. Suggestions are deduplicated locally; dismiss snoozes prompts for 24 hours while manual reporting remains available.
 
 The automatic summary excludes earnings, raw errors/stacks/logs, credentials, account/device/license/analytics identifiers, local paths and private URLs. Text you deliberately type in notes/contact is included as entered: review it and omit secrets or personal account details. Contact is optional and never filled in automatically.
 
@@ -245,11 +258,11 @@ The prior 109 baseline check keys remain in RESULT_TEMPLATE.json with fresh not_
 
 Before updating an older beta, let any model switch or warm-up finish. Beta5/6/7 need a manual current-version installation to gain the updater; beta9/10 first upgrade uses their old quit behavior. Beta11 and later retain optional checks and explicit download/install approval. Let the organizer confirm the actual release before installing this target.
 
-Use the [support page](https://bloomformac.com/support), the [Bloomkeeper Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN), or [email support](mailto:support@bloomkeeper.io). Opening a contact sends nothing automatically. Read the [privacy notice](https://bloomformac.com/privacy) for the organizer-confirmed release. Local diagnostic export, optional earnings and optional usage sharing remain separate choices.
+Use the [support page](https://bloomgauge.io/support), the [BloomGauge Slack channel](https://darkbloom.slack.com/archives/C0C4HC8HZLN), or [email support](mailto:support@bloomgauge.io). Opening a contact sends nothing automatically. Read the [privacy notice](https://bloomgauge.io/privacy) for the organizer-confirmed release. Local diagnostic export, optional earnings and optional usage sharing remain separate choices.
 
-## Baseline guide carried forward for beta42 verification
+## Baseline guide carried forward for beta43 verification
 
-# Bloomkeeper beta checklist
+# BloomGauge beta checklist
 
 **1.36.20 beta24 · Apple Silicon · target macOS 14+**  
 Use the first-session steps below to install and start in Free/Observe. Provider/model requirements can be higher; independent hardware and OS support are still being tested.
@@ -264,7 +277,7 @@ Use **passed**, **failed**, **not_run** or **not_applicable** in RESULT_TEMPLATE
 
 Use an ordinary setup or operation you would perform anyway. For expired Darkbloom login, verify that setup asks for sign-in; an API/network gap should remain unconfirmed and retry. No raw error, token or private URL should be exposed. Confirm **Optimizer → Overview → Manual model controls** and **Optimizer → History** reach the intended controls and comparisons.
 
-If a phone setup action naturally times out after 30 seconds, the UI should retain the last confirmed state, explain that the operation may still be finishing, and offer refreshed status. A new change stays unavailable until fresh operation status confirms completion, including after Bloomkeeper relaunch. Do not repeatedly press an uncertain action or run real Tailscale/provider commands to manufacture a failure. Late-response, pending-operation and relaunch fixtures are separate technical evidence; unobserved physical cases remain **not_run**.
+If a phone setup action naturally times out after 30 seconds, the UI should retain the last confirmed state, explain that the operation may still be finishing, and offer refreshed status. A new change stays unavailable until fresh operation status confirms completion, including after BloomGauge relaunch. Do not repeatedly press an uncertain action or run real Tailscale/provider commands to manufacture a failure. Late-response, pending-operation and relaunch fixtures are separate technical evidence; unobserved physical cases remain **not_run**.
 
 Verify an approved update defers install/relaunch when a switch or warmup is active and gives a useful retry message. Do not start or interrupt paid work to create this test. Busy, unavailable, canceled or expired admission must leave provider and optimizer settings unchanged; retries occur by user choice after it is safe. Verify normal approved replacement/relaunch and preservation of preferences/history independently. Beta11 changes native updater/lifecycle behavior, so earlier beta8 evidence alone cannot mark these checks passed. The organizer's fresh isolated Sparkle exercise is separate from an independent customer-Mac update or rollback.
 
@@ -272,7 +285,7 @@ Verify an approved update defers install/relaunch when a switch or warmup is act
 
 Beta10 improves a reproduced race where new paid work or temporary capacity changes could make synthetic warmup report a failed switch. Verification keeps its original deadline and follows the new provider session; synthetic attempts are bounded. Paid serving work can verify readiness without a synthetic request. This is a tested fix, not proof of what caused a particular earlier tester failure.
 
-For an intentional switch you would make anyway, record the requested model, time/timezone, Bloomkeeper version, Darkbloom version and whether paid work began. Check the last-switch timestamp and distinguish a retained failure from current readiness. A failure should describe the primary problem and any recovery result separately; it should not classify every failure as a memory or purge problem. Review optional diagnostics for safe switch-failure, cache and readiness details before saving or sharing.
+For an intentional switch you would make anyway, record the requested model, time/timezone, BloomGauge version, Darkbloom version and whether paid work began. Check the last-switch timestamp and distinguish a retained failure from current readiness. A failure should describe the primary problem and any recovery result separately; it should not classify every failure as a memory or purge problem. Review optional diagnostics for safe switch-failure, cache and readiness details before saving or sharing.
 
 Keep unobserved busy/capacity/deadline/stop/session-race checks **not_run**; engineering fixtures are separate evidence. Do not stop a productive provider, change the Mac clock, alter privileges or run purge just to manufacture a result. Purge admission and once-per-session/ten-minute limits are unchanged. A failed switch does not itself establish that a purge was required, permitted or executed. Explicitly stopped providers must remain stopped.
 
@@ -281,29 +294,29 @@ Keep unobserved busy/capacity/deadline/stop/session-race checks **not_run**; eng
 | Check | Expected result |
 |---|---|
 | Browser download and install | The supplied signed/notarized DMG opens under normal macOS protections; drag to Applications and launch without developer tools. Record artifact version/checksum from the invitation and any installation error. |
-| Account connection | Sign in through Darkbloom on this Mac. Bloomkeeper reports fresh confirmed earnings; “Login found” or a running provider alone is insufficient. Do not send credentials or use a support account. |
+| Account connection | Sign in through Darkbloom on this Mac. BloomGauge reports fresh confirmed earnings; “Login found” or a running provider alone is insufficient. Do not send credentials or use a support account. |
 | Setup | Your Mac → Make it yours → Ready to observe → Open dashboard. Optional electricity price stays unknown when omitted. Observe starts without model changes. |
-| Free access | Reports, manual-control screens and optional private phone access remain available without usage sharing. More → About Bloomkeeper explains free optimizer access. Viewing controls must not issue a command. |
+| Free access | Reports, manual-control screens and optional private phone access remain available without usage sharing. More → About BloomGauge explains free optimizer access. Viewing controls must not issue a command. |
 | Reports | Compare settled credits with the official account view and source timestamps. Keep inference credits, base rewards and forecasts distinct. Try short/long ranges and model filters; history gaps remain visible. |
 | Diagnostics | More → Help & feedback → Review diagnostics. Earnings are excluded by default. Review View exact report, save to a chosen location, and verify canceling Save leaves the app usable. Share only if you choose. |
 
-Never run personal and beta collectors against the same provider together. Beta history is separate; a new installation does not import another Bloomkeeper app's history.
+Never run personal and beta collectors against the same provider together. Beta history is separate; a new installation does not import another BloomGauge app's history.
 
 ## Start in Free/Observe: check reliability at your own pace
 
-- Close the dashboard window and reopen from the menu bar. Collection continues while Bloomkeeper and the Mac remain running.
-- Quit and reopen Bloomkeeper. Saved history, setup and tariff remain; Observe remains selected during this phase. Quitting Bloomkeeper stops its collection/automation and leaves Darkbloom's existing provider state alone.
+- Close the dashboard window and reopen from the menu bar. Collection continues while BloomGauge and the Mac remain running.
+- Quit and reopen BloomGauge. Saved history, setup and tariff remain; Observe remains selected during this phase. Quitting BloomGauge stops its collection/automation and leaves Darkbloom's existing provider state alone.
 - Let your Mac sleep and wake normally. Record any gap; no collection during sleep is expected. After waking, wait for fresh source timestamps before calling it recovered.
 - During an ordinary disconnection or wake-up, cached values must be marked stale/reconnecting or unavailable. They must not appear as newly confirmed money. Record an unobserved outage as not_run; do not interrupt earning work solely to create one.
 - Optional Open at Login: enable it only if wanted and verify on a normal later login. Record not_run if no login occurred.
 
-If you see an unexpected model command, account mix-up, exposed credentials or lost history, pause automation and DM the person who sent your Bloomkeeper beta invitation before continuing.
+If you see an unexpected model command, account mix-up, exposed credentials or lost history, pause automation and DM the person who sent your BloomGauge beta invitation before continuing.
 
 ## Optional usage sharing
 
-Sharing starts **off**. It requires an explicit choice on this Mac and can be changed later in **More → About Bloomkeeper**. Declining or turning it off does not reduce any Bloomkeeper feature. Read the [usage privacy notice](https://bloomformac.com/privacy) before choosing.
+Sharing starts **off**. It requires an explicit choice on this Mac and can be changed later in **More → About BloomGauge**. Declining or turning it off does not reduce any BloomGauge feature. Read the [usage privacy notice](https://bloomgauge.io/privacy) before choosing.
 
-If you opt in, Bloomkeeper sends a separate random analytics ID, UTC day, app and macOS versions, chip family, memory band, setup status and daily dashboard, phone and optimizer activity flags. Older versions may include historical access flags. These are not purchases or a count of all users. Reports update at most every six hours apart from consent and relevant setup changes.
+If you opt in, BloomGauge sends a separate random analytics ID, UTC day, app and macOS versions, chip family, memory band, setup status and daily dashboard, phone and optimizer activity flags. Older versions may include historical access flags. These are not purchases or a count of all users. Reports update at most every six hours apart from consent and relevant setup changes.
 
 After deletion, the service keeps a one-way deletion receipt for 30 days to reject a delayed upload. The receipt contains no raw analytics ID, credential or usage report. New consent creates a new analytics identity. See the privacy notice for details.
 
@@ -311,20 +324,20 @@ The analytics ID is separate from the installation ID. Keep identifiers and cred
 
 | Check | Expected result |
 |---|---|
-| Consent and access | Sharing is off on a new install. No upload occurs before explicit Mac consent; declining preserves Bloomkeeper features and phone access. |
+| Consent and access | Sharing is off on a new install. No upload occurs before explicit Mac consent; declining preserves BloomGauge features and phone access. |
 | Allowed fields and identities | Reports contain only the coarse fields above. Analytics identity is separate from licensing; do not share either identifier or the write/delete credential as evidence. |
-| Actual use | Closing the dashboard while Bloomkeeper continues running must not count a new dashboard opening. Daily flags persist across restart and repeated updates do not create more installations. |
+| Actual use | Closing the dashboard while BloomGauge continues running must not count a new dashboard opening. Daily flags persist across restart and repeated updates do not create more installations. |
 | Disable and delete | Turning sharing off stops new uploads immediately and requests deletion of that analytics ID's hosted records. Completion is shown only after the server confirms deletion. |
 | Offline deletion and retry | If offline, the app shows deletion pending and keeps only what is needed to retry deletion, with no new measurements queued. Reconnect and retry from the usage controls; pending clears only after success. An upload already in progress must settle before deletion so it cannot restore deleted records. |
-| Service failure | A usage-service failure does not stop Bloomkeeper’s local reports, the provider or optimizer. Do not interrupt earning work just to manufacture a failure. |
+| Service failure | A usage-service failure does not stop BloomGauge’s local reports, the provider or optimizer. Do not interrupt earning work just to manufacture a failure. |
 
-If Bloomkeeper says it could not save your opt-out, sharing has stopped only for that running session. Keep Bloomkeeper open and retry before quitting; do not assume the choice will survive a restart until it is saved.
+If BloomGauge says it could not save your opt-out, sharing has stopped only for that running session. Keep BloomGauge open and retry before quitting; do not assume the choice will survive a restart until it is saved.
 
 Payload, timing and in-flight checks need an observed result or reviewed technical evidence; reading this guide is not a pass. Leave them **not_run** if you cannot verify them. Never put network authorization headers or identifiers in feedback.
 
 ## Free optimizer access
 
-Bloomkeeper, including the optimizer, is free while we evaluate whether it improves earnings over Darkbloom alone. Optimizer access has no scheduled expiration. Updating never turns automation on or resumes an explicitly paused plan. Choose Optimizer on separately when ready. Existing settings, history, access records and privacy choices are preserved.
+BloomGauge, including the optimizer, is free while we evaluate whether it improves earnings over Darkbloom alone. Optimizer access has no scheduled expiration. Updating never turns automation on or resumes an explicitly paused plan. Choose Optimizer on separately when ready. Existing settings, history, access records and privacy choices are preserved.
 
 - Verify new, previously expired and existing installations offer optimizer access without activation.
 - Verify Mac and authenticated phone controls retain the same access, with private setup still on the Mac.
@@ -350,39 +363,39 @@ DM your inviter with the reviewed result file and reproducible steps. Diagnostic
 
 Optional earnings comparisons use EARNINGS_TEMPLATE.csv and agreed same-Mac baseline/optimizer periods. Count intended clock hours, including idle/switching/recovery; separate base rewards, electricity and missing coverage. No earnings or improvement is guaranteed.
 
-To leave, turn off optional usage sharing first if enabled. If deletion is pending, keep or reopen Bloomkeeper with internet access and retry until completion; removing the app while pending prevents it from completing that retry. Then pause automation, turn off Phone access and Open at Login if enabled, quit and remove the beta app. Removing the app preserves its history. Any optional cache-recovery authorization has a separate removal procedure; DM your inviter for help.
+To leave, turn off optional usage sharing first if enabled. If deletion is pending, keep or reopen BloomGauge with internet access and retry until completion; removing the app while pending prevents it from completing that retry. Then pause automation, turn off Phone access and Open at Login if enabled, quit and remove the beta app. Removing the app preserves its history. Any optional cache-recovery authorization has a separate removal procedure; DM your inviter for help.
 
 ## Optional suggestions after a couple of hours
 
-After setup and about two accumulated hours of fresh, connected monitoring, a compact card below the live Pulse may introduce private phone access and the optimizer. Healthy readings with zero earnings still count. Time with Bloomkeeper closed, asleep, in setup preview or unable to read fresh provider/earnings data does not count. The card waits quietly during connection errors.
+After setup and about two accumulated hours of fresh, connected monitoring, a compact card below the live Pulse may introduce private phone access and the optimizer. Healthy readings with zero earnings still count. Time with BloomGauge closed, asleep, in setup preview or unable to read fresh provider/earnings data does not count. The card waits quietly during connection errors.
 
 **Set up phone access** opens Mac setup; **Review optimizer setup** opens optimizer controls. Neither starts automation. Account and phone setup stay on the Mac.
 
 Each suggestion has **Later · 24 hours** and **Don’t show again**. These choices and the measured monitoring time are stored locally on this Mac, survive relaunches and app updates, and do not depend on optional usage sharing. The phone suggestion stops once phone access has been configured or used. The optimizer suggestion stops once an optimizer plan has been started, including a subsequently paused plan. Opening a setup screen snoozes its suggestion; it is not treated as enabling the feature. No analytics fields, notification permission prompt or Slack message is added by discovery.
 
-For independent checks, confirm an incomplete or stale setup stays quiet, normal use eventually reveals the card, both direct actions open the intended screen without changing the model, and “Don’t show again”/snooze choices survive closing and reopening Bloomkeeper. Leave checks not_run until actually observed; never change the system clock to simulate elapsed time .
+For independent checks, confirm an incomplete or stale setup stays quiet, normal use eventually reveals the card, both direct actions open the intended screen without changing the model, and “Don’t show again”/snooze choices survive closing and reopening BloomGauge. Leave checks not_run until actually observed; never change the system clock to simulate elapsed time .
 
 
 ## Updates and help
 
 Before updating an older beta, let any model switch or warm-up finish. The installation guard is part of beta11. Beta9/10 use their previous quit behavior for the first update to beta11; the new guard protects later installations after beta11 is running.
 
-Beta5/6/7 need one manual current-version installation; beta9/10 already have optional checks. In beta11, **Notify me about app updates** appears on the final native setup screen and in **More → Help & feedback**. Help shows the installed version, check status and **Check for updates**. Existing preferences must be preserved, and viewing the screen must not enable checks. Opted-in checks run about every six hours while Bloomkeeper is running. Declining leaves manual checks available; the native menu remains usable. Every download/install/relaunch still requires approval. Phone/browser Help directs you to the Mac. Usage-sharing consent remains separate.
+Beta5/6/7 need one manual current-version installation; beta9/10 already have optional checks. In beta11, **Notify me about app updates** appears on the final native setup screen and in **More → Help & feedback**. Help shows the installed version, check status and **Check for updates**. Existing preferences must be preserved, and viewing the screen must not enable checks. Opted-in checks run about every six hours while BloomGauge is running. Declining leaves manual checks available; the native menu remains usable. Every download/install/relaunch still requires approval. Phone/browser Help directs you to the Mac. Usage-sharing consent remains separate.
 
-Check the permission-declined, permission-accepted, **Skip This Version**, **Remind Me Later**, cancel, and network-failure states. Verify an approved signed update preserves setup, local history, historical access records, usage-sharing choice and discovery dismissals. Quit/update must save Bloomkeeper state and leave the provider running. Keep these independent checks `not_run` until observed. Local isolated tests do not establish an independent downloaded update or rollback.
+Check the permission-declined, permission-accepted, **Skip This Version**, **Remind Me Later**, cancel, and network-failure states. Verify an approved signed update preserves setup, local history, historical access records, usage-sharing choice and discovery dismissals. Quit/update must save BloomGauge state and leave the provider running. Keep these independent checks `not_run` until observed. Local isolated tests do not establish an independent downloaded update or rollback.
 
 Updates use the separate HTTPS appcast at https://bloomformac.com/updates/beta.xml and signed versioned installers. No account/license/analytics identifier or system profile is added. Preview launches make no update checks or permission prompts. Update checks and optional usage sharing have independent settings.
 
-**Help → Help & Feedback…** in the Mac menu and **More → Help & feedback** on Mac/phone offer the support page, **Join the Bloomkeeper Slack channel** and **Email support**. Open a contact without preparing diagnostics; verify nothing is sent automatically. Diagnostics remain optional, previewed, and saved/shared only by your action.
+**Help → Help & Feedback…** in the Mac menu and **More → Help & feedback** on Mac/phone offer the support page, **Join the BloomGauge Slack channel** and **Email support**. Open a contact without preparing diagnostics; verify nothing is sent automatically. Diagnostics remain optional, previewed, and saved/shared only by your action.
 
 MANUAL MODEL CONTROLS
 Open Optimizer > Overview and expand the manual model controls. Choose a downloaded available model, then Start if stopped or Switch to change models. Stop Darkbloom asks for confirmation, interrupts requests and pauses automatic switching. Manual controls work on the Mac and authenticated phone; unavailable selections explain why. Manual model actions pause automation. A queued manual change waits for 12 seconds idle, then can interrupt active requests after five minutes if still busy.
 Pre-warming setup is part of the selected-model action on the Mac: use Prepare for the current running model, or Start or Switch for your selected model. This adds an authenticated loopback endpoint alongside the coordinator; there is no separate Enable pre-warming button or Controller tab. Endpoint configuration stays Mac-only; once prepared, model controls work from your authenticated phone. No Terminal window needs to remain open. Follow any authentication/bind or readiness message in Model & service details, or open Help & feedback. Do not use --local, which runs without the coordinator. Routine switches do not require a cache purge.
-Standard Mac shortcuts: Command-H hides Bloomkeeper; Command-W closes its window while monitoring continues. Reopen from the Dock or menu bar. Command-V pastes into text fields.
+Standard Mac shortcuts: Command-H hides BloomGauge; Command-W closes its window while monitoring continues. Reopen from the Dock or menu bar. Command-V pastes into text fields.
 
 OPTIONAL USAGE INVITATION (beta24)
 
-After setup has been complete for ten minutes, Bloomkeeper may show one small invitation on the Mac's Pulse page. It asks to share limited setup/feature reports; nothing is enabled by displaying it. Share optional usage is affirmative consent. No thanks stays local. A saved prior opt-out, active sharing or deletion suppresses the invitation. The invitation is recorded locally before display, so relaunches/updates do not repeat it. Manage the choice any time in More → About Bloomkeeper. Phone users and setup previews do not receive the invitation. Features and trial access are identical either way.
+After setup has been complete for ten minutes, BloomGauge may show one small invitation on the Mac's Pulse page. It asks to share limited setup/feature reports; nothing is enabled by displaying it. Share optional usage is affirmative consent. No thanks stays local. A saved prior opt-out, active sharing or deletion suppresses the invitation. The invitation is recorded locally before display, so relaunches/updates do not repeat it. Manage the choice any time in More → About BloomGauge. Phone users and setup previews do not receive the invitation. Features and trial access are identical either way.
 
 Independent checks: decline/relaunch stays quiet; prior opt-out stays quiet; no report before consent; explicit consent reports only disclosed fields; phone cannot offer or accept; a failed local save does not display the invitation. Record actual observations, not assumptions.
 
@@ -392,7 +405,7 @@ Open Optimizer → Overview to review the current model and settings, then choos
 
 ## Three-plus-model reporting regression
 
-On an independent Mac already serving three or more models, update Bloomkeeper without changing Darkbloom. With every selected model warm and current traffic, confirm the earnings and traffic pulses appear after fresh matching/output and enough covered time. Darkbloom Monitor is not required. Confirm a Managed by Darkbloom label and the separate solo/pair optimization limitation. Compare confirmed model-specific credits with the account ledger; do not equate account-wide income with a single fleet Mac. Stale, stopped or partially cold runs must show a paused/unknown pace. Do not change a productive setup just for this check. Record actual observations; fixture tests do not fill this result.
+On an independent Mac already serving three or more models, update BloomGauge without changing Darkbloom. With every selected model warm and current traffic, confirm the earnings and traffic pulses appear after fresh matching/output and enough covered time. Darkbloom Monitor is not required. Confirm a Managed by Darkbloom label and the separate solo/pair optimization limitation. Compare confirmed model-specific credits with the account ledger; do not equate account-wide income with a single fleet Mac. Stale, stopped or partially cold runs must show a paused/unknown pace. Do not change a productive setup just for this check. Record actual observations; fixture tests do not fill this result.
 
 
 ## Beta24 reporting-delivery checks

@@ -1,11 +1,11 @@
 """Exact serving-set identities and conservative two-model trial screening."""
 
-import itertools, json, math, pathlib, re
+import itertools, json, math, pathlib, re, time
 
 PREFIX = '@combo:'
 # Darkbloom's `[provider] memory_reserve_gb` default (ProviderSettings.memoryReserveGB).
 DEFAULT_RESERVE_GB = 4
-# Launch-agent variables that change Darkbloom's load admission in a way Bloomkeeper doesn't
+# Launch-agent variables that change Darkbloom's load admission in a way BloomGauge doesn't
 # model: the memory cap fraction and a raised activation reserve (UnifiedMemoryCap
 # resolvedCapFraction / resolvedActivationReserveBytes). The installer's other pass-throughs
 # (drain, prefix cache, MLX cache and memory guard, KV backend, MTP, prefill) and MLX_/METAL_
@@ -161,10 +161,34 @@ def provider_version(home):
     return tuple(int(v) for v in match.groups()) if match else None
 
 
+def daemon_config_path(home):
+    """The provider.toml the running daemon loaded, as Darkbloom 0.9.11+ writes it into
+    daemon-state.json (`config_path`); None when absent, odd or no longer there."""
+    try:
+        state = json.loads((pathlib.Path(home) / '.darkbloom/daemon-state.json').read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    # daemon-state outlives the daemon; a foreground `serve --config X` also rewrites it.
+    # Trust the path only from a daemon writing now.
+    written = state.get('written_at')
+    if not isinstance(written, (int, float)) or not -5 < time.time() - written < 120:
+        return None
+    path = state.get('config_path')
+    if not isinstance(path, str) or not path.startswith('/') or not path.endswith('.toml'):
+        return None
+    path = pathlib.Path(path)
+    return path if path.is_file() else None
+
+
 def default_config_path(home):
-    """The provider.toml Darkbloom reads without `--config`: see CONFIG_PATHS. Only when the
-    canonical file is missing does the version matter; an unknown version keeps the older
-    fallback."""
+    """The provider.toml Darkbloom reads without `--config`: the one the running daemon says
+    it loaded, else see CONFIG_PATHS. Only when the canonical file is missing does the
+    version matter; an unknown version keeps the older fallback."""
+    reported = daemon_config_path(home)
+    if reported is not None:
+        return reported
     candidates = [pathlib.Path(home) / suffix for suffix in CONFIG_PATHS]
     if candidates[0].exists():
         return candidates[0]
@@ -178,7 +202,7 @@ def provider_settings(home, options):
     """What the load gate uses from provider.toml, never rewriting it: (settings, error).
 
     settings: {'reserveGB': `[provider] memory_reserve_gb` (Darkbloom's default 4 when
-    absent or unreadable), 'memoryError': a memory setting Bloomkeeper can't model,
+    absent or unreadable), 'memoryError': a memory setting BloomGauge can't model,
     'slotsError': why a pair can't be served}, each None when fine. error: why the file
     can't be read reliably.
     """
@@ -225,7 +249,7 @@ def provider_settings(home, options):
                 reserve = int(value)
                 continue
             settings['memoryError'] = settings['memoryError'] or (
-                'provider.toml sets %s, which Bloomkeeper can’t account for. It won’t '
+                'provider.toml sets %s, which BloomGauge can’t account for. It won’t '
                 'move models on its own; restores and your own picks still work.' % key
             )
         if key == 'max_model_slots' and (
@@ -240,22 +264,22 @@ def provider_settings(home, options):
 
 
 def configured_reserve_gb(home, options):
-    """`memory_reserve_gb` for Bloomkeeper's load budgets (Darkbloom's default when unreadable)."""
+    """`memory_reserve_gb` for BloomGauge's load budgets (Darkbloom's default when unreadable)."""
     return provider_settings(home, options)[0]['reserveGB']
 
 
 def combination_config_error(home, options, environment, require_pair=True, voluntary=True):
-    """Why Bloomkeeper's load arithmetic can't be trusted here, or None; never rewrites it.
+    """Why BloomGauge's load arithmetic can't be trusted here, or None; never rewrites it.
 
     `memory_reserve_gb` is read into the reserve rather than refused. With `voluntary` (the
-    default), knobs that change Darkbloom's load admission and that Bloomkeeper can't model
+    default), knobs that change Darkbloom's load admission and that BloomGauge can't model
     also count; they stop automatic moves only, never restores or the user's own picks.
     """
     if voluntary:
         knobs = sorted(k for k in environment if k in ADMISSION_ENV and environment[k] != '')
         if knobs:
             return (
-                '%s is set for Darkbloom. Bloomkeeper can’t predict memory with it, so it '
+                '%s is set for Darkbloom. BloomGauge can’t predict memory with it, so it '
                 'won’t move models on its own; restores and your own picks still work.'
                 % ' and '.join(knobs)
             )

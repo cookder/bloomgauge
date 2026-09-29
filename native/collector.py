@@ -2,7 +2,7 @@
 """Loopback dashboard with owner-authenticated manual model control and opt-in experiments."""
 
 from pulse_history import model_history as pulse_model_history
-import argparse, collections, copy, gzip, hmac, http.cookies, json, math, os, pathlib, signal, subprocess, threading, time
+import argparse, collections, copy, gzip, hmac, http.cookies, json, math, os, pathlib, re, signal, subprocess, threading, time
 import urllib.error, urllib.request
 import logging
 import bloom_log
@@ -46,6 +46,8 @@ from live_earnings import EarningsPulse, POLL_SECONDS, CACHE_SECONDS, credit_row
 from traffic_pulse import TrafficPulse
 from pulse_demand import PulseDemand
 from web_push import WebPush
+from notify_settings import NotificationSettings
+from alerts import Alerts
 from community_insights import CommunityInsights
 from usage_integration import UsageIntegration
 from feature_discovery import FeatureDiscovery
@@ -243,8 +245,8 @@ class Collector:
             self.history,
             self.network_evidence,
             self.optimizer,
-            notify=lambda key, title, body: self.web_push.enqueue_notice(
-                self.account, key, title, body
+            notify=lambda key, title, body: self.alerts.channel('networkNews').enqueue_notice(
+                self.account, key, title, body, screen='demand'
             ),
         )
         self.network.listeners.append(self.catalog_watch.on_network)
@@ -273,6 +275,9 @@ class Collector:
             pathlib.Path(data_path).parent if data_path and str(data_path) != ':memory:' else None,
             self.stop,
         )
+        # Which alerts go to this Mac and the phones (notify_settings.py, alerts.py).
+        self.notify_settings = NotificationSettings(self.history, self.catalog_watch)
+        self.alerts = Alerts(self.history, self.notify_settings, self.web_push)
         self.community_insights = CommunityInsights(
             pathlib.Path(data_path).parent if data_path and str(data_path) != ':memory:' else None
         )
@@ -517,8 +522,19 @@ class Collector:
                     tracking = self.optimizer.tracking(raw, now)
                 if account and device and device_id(raw) == device:
                     self.optimizer.switch_alerts.observe(account, device, raw, tracking, busy, now)
-                    self.optimizer.switch_alerts.send_pending(account, device, self.web_push, now)
-                    self.optimizer.stall.send_pending(account, device, self.web_push, now)
+                    self.optimizer.switch_alerts.send_pending(
+                        account, device, self.alerts.channel('modelSwitched'), now
+                    )
+                    self.optimizer.stall.send_pending(
+                        account, device, self.alerts.channel('problems'), now
+                    )
+                    self.alerts.tick(
+                        account,
+                        device,
+                        now,
+                        self.optimizer,
+                        selection_key(raw.get('advertised_models')) if tracking.get('counting') else None,
+                    )
             except Exception:
                 log.exception('Notification loop failed')
                 # Independent of telemetry, the demand scanner and control loop.
@@ -1044,7 +1060,7 @@ class Handler(BaseHTTPRequestHandler):
     # Per-launch secret the app window sends as an HttpOnly cookie (BLOOM_SESSION_TOKEN).
     # Empty (development, tests) means not enforced.
     session_token = ''
-    NATIVE_ROUTES = ('/api/reputation/native', '/api/update/native')
+    NATIVE_ROUTES = ('/api/reputation/native', '/api/update/native', '/api/notifications/native')
 
     def session_ok(self):
         """Changes on the Mac listener need the app window's cookie, so other local
@@ -1073,7 +1089,7 @@ class Handler(BaseHTTPRequestHandler):
             urlsplit(self.path).path,
         )
         self.respond_json(
-            {'status': 'session', 'error': 'Open Bloomkeeper on this Mac to change settings.'}, 403
+            {'status': 'session', 'error': 'Open BloomGauge on this Mac to change settings.'}, 403
         )
 
     remote_view = False
@@ -1127,6 +1143,23 @@ class Handler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    def small_json(self, limit):
+        """A JSON object body of at most `limit` bytes (one Content-Length, no chunking)."""
+        lengths = self.headers.get_all('Content-Length', [])
+        if len(lengths) != 1:
+            raise ValueError('Invalid request.')
+        size = int(lengths[0])
+        if (
+            not 0 < size <= limit
+            or self.headers.get_all('Content-Type', []) != ['application/json']
+            or self.headers.get_all('Transfer-Encoding', [])
+        ):
+            raise ValueError('Invalid request.')
+        data = json.loads(self.rfile.read(size))
+        if not isinstance(data, dict):
+            raise ValueError('Invalid request.')
+        return data
+
     def respond_json(self, data, status=200):
         body = json.dumps(data, allow_nan=False).encode()
         self.send_response(status)
@@ -1173,7 +1206,7 @@ class Handler(BaseHTTPRequestHandler):
                     and data.get('autoSend') is not False
                 ):
                     self.respond_json(
-                        {'status': 'mac_only', 'error': 'Turn this on in Bloomkeeper on your Mac.'},
+                        {'status': 'mac_only', 'error': 'Turn this on in BloomGauge on your Mac.'},
                         403,
                     )
                     return
@@ -1266,6 +1299,45 @@ class Handler(BaseHTTPRequestHandler):
                     },
                     503,
                 )
+            return
+        if urlsplit(self.path).path == '/api/notifications/native':
+            # The Swift app's notification relay: fetch queued Mac alerts, confirm posted ones.
+            token = self.collector.reputation.native_token
+            supplied = self.headers.get_all('X-Bloom-Native', [])
+            if (
+                self.remote_view
+                or not self.permitted()
+                or not token
+                or len(supplied) != 1
+                or not hmac.compare_digest(supplied[0].encode(), token.encode())
+                or self.headers.get_all('X-Bloom-Action', []) != ['notifications']
+            ):
+                self.send_error(403)
+                return
+            try:
+                data = self.small_json(4096)
+                if data.get('action') == 'poll' and set(data) <= {'action', 'permission'}:
+                    result = self.collector.alerts.poll(
+                        self.collector.account, data.get('permission')
+                    )
+                elif (
+                    data.get('action') == 'ack'
+                    and set(data) == {'action', 'ids'}
+                    and isinstance(data['ids'], list)
+                    and len(data['ids']) <= 20
+                    and all(
+                        isinstance(i, str) and re.fullmatch(r'[a-f0-9]{32}', i) for i in data['ids']
+                    )
+                ):
+                    result = self.collector.alerts.ack(data['ids'])
+                else:
+                    raise ValueError('Invalid request.')
+                self.respond_json(result)
+            except (ValueError, TypeError):
+                self.respond_json({'error': 'Invalid notification request.'}, 400)
+            except Exception:
+                log.exception('Request failed: %s', urlsplit(self.path).path)
+                self.respond_json({'error': 'Notifications are unavailable.'}, 503)
             return
         if self.setup_preview and urlsplit(self.path).path not in (
             '/api/setup',
@@ -1376,7 +1448,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 log.exception('Request failed: %s', urlsplit(self.path).path)
                 self.respond_json(
-                    {'error': 'Could not save this choice. Try again before closing Bloomkeeper.'},
+                    {'error': 'Could not save this choice. Try again before closing BloomGauge.'},
                     503,
                 )
             return
@@ -1412,7 +1484,7 @@ class Handler(BaseHTTPRequestHandler):
                 log.exception('Request failed: %s', urlsplit(self.path).path)
                 self.respond_json(
                     {
-                        'error': 'Usage sharing is unavailable. Your Bloomkeeper features are unchanged.'
+                        'error': 'Usage sharing is unavailable. Your BloomGauge features are unchanged.'
                     },
                     503,
                 )
@@ -1452,7 +1524,7 @@ class Handler(BaseHTTPRequestHandler):
                 log.exception('Request failed: %s', urlsplit(self.path).path)
                 self.respond_json(
                     {
-                        'error': 'Pay summary sharing is unavailable. Your Bloomkeeper features are unchanged.'
+                        'error': 'Pay summary sharing is unavailable. Your BloomGauge features are unchanged.'
                     },
                     503,
                 )
@@ -1499,7 +1571,7 @@ class Handler(BaseHTTPRequestHandler):
                 log.exception('Request failed: %s', urlsplit(self.path).path)
                 self.respond_json(
                     {
-                        'error': 'Contact details are unavailable. Your Bloomkeeper features are unchanged.'
+                        'error': 'Contact details are unavailable. Your BloomGauge features are unchanged.'
                     },
                     503,
                 )
@@ -1637,6 +1709,42 @@ class Handler(BaseHTTPRequestHandler):
                     {'error': 'Could not save the electricity rate. Refresh before trying again.'},
                     503,
                 )
+            return
+        if urlsplit(self.path).path == '/api/notifications':
+            if not self.permitted() or self.headers.get_all('X-Bloom-Action', []) != [
+                'notifications'
+            ]:
+                self.send_error(403)
+                return
+            if self.remote_view and self.headers.get_all('Origin', []) != [
+                'https://' + self.headers.get('Host', '')
+            ]:
+                self.send_error(403)
+                return
+            try:
+                data = self.small_json(4096)
+                account = self.collector.account
+                if data.get('action') == 'save' and set(data) == {'action', 'settings'}:
+                    # Opting in to amounts on the phone happens on the Mac; the phone may turn it off.
+                    if (
+                        self.remote_view
+                        and isinstance(data['settings'], dict)
+                        and data['settings'].get('phoneAmounts') is True
+                    ):
+                        raise ValueError('Turn this on from BloomGauge on the Mac.')
+                    self.collector.notify_settings.save(data['settings'])
+                elif data.get('action') == 'test' and data == {'action': 'test', 'channel': 'mac'}:
+                    if self.remote_view:
+                        raise ValueError('Send the Mac test from BloomGauge on the Mac.')
+                    self.collector.alerts.test_mac(account)
+                else:
+                    raise ValueError('Unknown notification action.')
+                self.respond_json({**self.collector.alerts.view(account), 'remote': self.remote_view})
+            except (ValueError, TypeError) as error:
+                self.respond_json({'error': str(error) or 'Invalid request.'}, 400)
+            except Exception:
+                log.exception('Request failed: %s', urlsplit(self.path).path)
+                self.respond_json({'error': 'Could not save this setting. Try again.'}, 503)
             return
         if urlsplit(self.path).path == '/api/demand-alerts/notifications':
             if not self.permitted() or self.headers.get_all('X-Bloom-Action', []) != [
@@ -1987,6 +2095,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/demand-alerts/notifications':
             self.respond_json(self.collector.web_push.status(self.collector.account))
+            return
+        if path == '/api/notifications':
+            self.respond_json(
+                {**self.collector.alerts.view(self.collector.account), 'remote': self.remote_view}
+            )
             return
         if path == '/api/traffic-history':
             try:

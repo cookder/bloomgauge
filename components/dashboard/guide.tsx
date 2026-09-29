@@ -10,11 +10,11 @@ export function Guide() {
       .getElementById('guide-' + id)
       ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   return (
-    <section className="panel guide" aria-label="Bloomkeeper guide">
+    <section className="panel guide" aria-label="BloomGauge guide">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">GUIDE</p>
-          <h2>How to use Bloomkeeper.</h2>
+          <h2>How to use BloomGauge.</h2>
         </div>
         <BookOpen size={23} aria-hidden="true" />
       </div>

@@ -1,6 +1,6 @@
 """Operator-only Developer ID preflight and resumable DMG notarization.
 
-Credentials stay in Keychain. This tool does not install or publish Bloomkeeper.
+Credentials stay in Keychain. This tool does not install or publish BloomGauge.
 Submission receipts bind Apple's job to exact bytes; a pending job is never
 silently resubmitted. Run finish again after Apple has processed the upload.
 """

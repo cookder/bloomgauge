@@ -1,4 +1,4 @@
-"""Read-only aggregate reporting for model sets Bloomkeeper does not control.
+"""Read-only aggregate reporting for model sets BloomGauge does not control.
 
 Never grants optimizer eligibility, runs a decode, or changes the provider.
 Counter deltas belong to the whole set; only paid credits identify a model.

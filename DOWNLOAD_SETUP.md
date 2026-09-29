@@ -1,10 +1,10 @@
-# Bloomkeeper beta42 download setup
+# BloomGauge beta43 download setup
 
-Current candidate: **1.36.61 beta42/build13661**. Publication requires the exact release acceptance and hosted verification receipt. Earlier releases remain immutable.
+Current candidate: **1.36.62 beta43/build13662**. Publication requires the exact release acceptance and hosted verification receipt. Earlier releases remain immutable.
 
-Bloomkeeper, including the optimizer, is free while we evaluate whether it improves earnings over Darkbloom alone. Optimizer access has no scheduled expiration. Updating never turns automation on or resumes an explicitly paused plan. Choose Optimizer on separately when ready. Existing settings, history, access records and privacy choices are preserved.
+BloomGauge, including the optimizer, is free while we evaluate whether it improves earnings over Darkbloom alone. Optimizer access has no scheduled expiration. Updating never turns automation on or resumes an explicitly paused plan. Choose Optimizer on separately when ready. Existing settings, history, access records and privacy choices are preserved.
 
-Download the signed Apple Silicon DMG, drag Bloomkeeper into Applications and connect Darkbloom. Existing users can choose Check for Updates and approve installation. Let any model switch or warm-up finish first. Update the Mac, then reload its private phone dashboard.
+Download the signed Apple Silicon DMG, drag BloomGauge into Applications and connect Darkbloom. Existing users get new versions automatically: BloomGauge installs them while you're away from the Mac, never during a model switch or warm-up (turn this off in More → Help & feedback). To update right away, choose Check for Updates, or Install Update Now when one is waiting. Update the Mac, then reload its private phone dashboard.
 
 Reporting and Manual controls remain available. Automatic model selection still requires current identity, resource and readiness checks. Optional cache cleanup keeps its existing narrow permission and frequency limits. Optional usage sharing starts off; problem reports are sent only with Send or opt-in automatic sending.
 
@@ -12,7 +12,7 @@ Reporting and Manual controls remain available. Automatic model selection still 
 
 Use an existing paid Apple Developer membership, or [enroll with Apple](https://developer.apple.com/programs/enroll/). Standard membership is US$99 per year; local pricing may vary. The account owner completes Apple's identity, agreement and payment steps. Direct download uses Developer ID and notarization; no Mac App Store listing is needed.
 
-**Recommended for this side-project beta: enroll as an Individual.** Apple also directs sole proprietors/single-person businesses to this route. Use your own legal name and an Apple Account with two-factor authentication. Individual enrollment does **not** require a D-U-N-S number or forming a company. Those are organization-enrollment requirements. Bloomkeeper remains the app's product name; do not put it in the personal first/last-name fields. If the current flow asks for organization documents, return to the entity-type choice and choose Individual. If an already-submitted enrollment cannot be edited, use Apple's enrollment support to resolve the account type rather than creating a company just for this step. [Apple's enrollment requirements](https://developer.apple.com/help/account/membership/program-enrollment), [explicit individual D-U-N-S exemption](https://developer.apple.com/support/D-U-N-S/).
+**Recommended for this side-project beta: enroll as an Individual.** Apple also directs sole proprietors/single-person businesses to this route. Use your own legal name and an Apple Account with two-factor authentication. Individual enrollment does **not** require a D-U-N-S number or forming a company. Those are organization-enrollment requirements. BloomGauge remains the app's product name; do not put it in the personal first/last-name fields. If the current flow asks for organization documents, return to the entity-type choice and choose Individual. If an already-submitted enrollment cannot be edited, use Apple's enrollment support to resolve the account type rather than creating a company just for this step. [Apple's enrollment requirements](https://developer.apple.com/help/account/membership/program-enrollment), [explicit individual D-U-N-S exemption](https://developer.apple.com/support/D-U-N-S/).
 
 An individual program member can use Developer ID and notarization for direct Mac distribution. If a separate legal organization is established later, Apple provides an individual-to-organization conversion request; it is not a prerequisite for this beta. [Developer ID](https://developer.apple.com/developer-id/), [membership conversion](https://developer.apple.com/help/account/membership/updating-your-account-information).
 
@@ -30,7 +30,7 @@ Configure notarization once in your own Terminal:
 xcrun notarytool store-credentials bloom-notary
 ```
 
-Follow the interactive Apple ID / Team ID / app-specific-password prompts. This stores the credentials in Keychain and validates them. Do not paste passwords or export private keys into chat, the repository or a release bundle. No account credentials are collected by Bloomkeeper.
+Follow the interactive Apple ID / Team ID / app-specific-password prompts. This stores the credentials in Keychain and validates them. Do not paste passwords or export private keys into chat, the repository or a release bundle. No account credentials are collected by BloomGauge.
 
 ## 2. Build and verify the isolated candidate
 

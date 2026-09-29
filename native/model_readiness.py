@@ -7,6 +7,10 @@ from provider_reporting import observed_models, preloading, state_fresh
 
 
 STARTING = 'Statistics paused · Darkbloom is starting and loading its models.'
+UNAUTHORIZED = (
+    'Statistics paused · the Darkbloom network hasn’t cleared this Mac to serve yet '
+    '(it checks each new session). Counting starts when it does.'
+)
 
 
 def finite(value):
@@ -22,7 +26,9 @@ def session_key(raw):
     ).hexdigest()
 
 
-def readiness(raw, proof, now, identity_verified=False, pending=False):
+def readiness(raw, proof, now, identity_verified=False, pending=False, authorized=None):
+    """`authorized`: whether the network lets this session serve (serving_trust); False
+    pauses counting, since warm time earns nothing before that. None skips the check."""
     selected = members(selection_key(raw.get('advertised_models')))
     result = {
         'counting': False,
@@ -59,6 +65,8 @@ def readiness(raw, proof, now, identity_verified=False, pending=False):
         result['detail'] = 'Statistics paused · model switching, loading or pre-warming.'
     elif raw.get('trust', {}).get('status') != 'online':
         result['detail'] = 'Statistics paused · provider is not ready to serve.'
+    elif authorized is False:
+        result['detail'] = UNAUTHORIZED
     elif (
         proof.get('session') != session_key(raw)
         or members(proof.get('model')) != selected

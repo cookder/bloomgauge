@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
-app_dir="${BLOOM_APP_OUTPUT:-$project_dir/.build/Bloomkeeper.app}"
+app_dir="${BLOOM_APP_OUTPUT:-$project_dir/.build/BloomGauge.app}"
 channel="${BLOOM_RELEASE_CHANNEL:-local}"
 identity="${BLOOM_SIGN_IDENTITY:--}"
 executable=BloomDashboard
@@ -27,13 +27,13 @@ rm -rf "$app_dir"
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources/web" "$project_dir/.build/module-cache"
 mkdir -p "$app_dir/Contents/Frameworks"
 /usr/bin/ditto "$sparkle_framework" "$app_dir/Contents/Frameworks/Sparkle.framework"
-# Bloomkeeper is not sandboxed. Official Sparkle guidance permits omitting these
+# BloomGauge is not sandboxed. Official Sparkle guidance permits omitting these
 # optional XPC services; keep its non-sandboxed Autoupdate and Updater helpers.
 rm -rf "$app_dir/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices"
 rm -f "$app_dir/Contents/Frameworks/Sparkle.framework/XPCServices"
 resources="$app_dir/Contents/Resources"
 /usr/bin/clang -O2 -mmacosx-version-min=14.0 -fobjc-arc -framework Foundation -framework IOKit "$project_dir/native/telemetry.m" -o "$project_dir/.build/telemetry"
-/usr/bin/swiftc -O -target arm64-apple-macos14 -module-cache-path "$project_dir/.build/module-cache" -F "$app_dir/Contents/Frameworks" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -framework AppKit -framework WebKit -framework ServiceManagement "$project_dir/native/App.swift" "$project_dir/native/Updates.swift" "$project_dir/native/CachePermission.swift" -o "$app_dir/Contents/MacOS/$executable"
+/usr/bin/swiftc -O -target arm64-apple-macos14 -module-cache-path "$project_dir/.build/module-cache" -F "$app_dir/Contents/Frameworks" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks -framework AppKit -framework WebKit -framework ServiceManagement -framework UserNotifications "$project_dir/native/App.swift" "$project_dir/native/Updates.swift" "$project_dir/native/CachePermission.swift" "$project_dir/native/NotificationRelay.swift" -o "$app_dir/Contents/MacOS/$executable"
 /usr/bin/swiftc -O -target arm64-apple-macos14 -module-cache-path "$project_dir/.build/module-cache" -framework AppKit -framework CoreImage "$project_dir/native/qr.swift" -o "$project_dir/.build/qr"
 while IFS= read -r resource; do
     case "$resource" in

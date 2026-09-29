@@ -146,7 +146,7 @@ export function WhatsChanged() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              Bloomkeeper Slack ↗
+              BloomGauge Slack ↗
             </a>
           </div>
         </div>

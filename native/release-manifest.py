@@ -42,7 +42,7 @@ for metadata in sorted(
     'Web dependency notices (includes build tools)\n\n'
     + '\n\n---\n\n'.join(dict.fromkeys(sections))
 )
-name = 'Bloomkeeper Beta' if beta else 'Bloomkeeper'
+name = 'BloomGauge Beta' if beta else 'BloomGauge'
 # Personal builds share the current release version so the installed app never looks older.
 # Both come from release-notes.json, the one place a release's version is set.
 version = json.loads((Path(__file__).parent / 'release-notes.json').read_text())['version']
@@ -64,7 +64,7 @@ plist = {
     'LSMinimumSystemVersion': '14.0',
     'NSHighResolutionCapable': True,
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
-    'NSHumanReadableCopyright': 'Bloomkeeper. Includes third-party software; see Third Party Notices.',
+    'NSHumanReadableCopyright': 'BloomGauge. Includes third-party software; see Third Party Notices.',
     # The data folder keeps the pre-rename name so history and settings carry over.
     'BloomDataDirectory': 'Bloom Dashboard Beta' if beta else 'Bloom Dashboard',
     'BloomReleaseChannel': channel,
@@ -73,13 +73,16 @@ if beta:
     updates = json.loads((Path(__file__).resolve().parent / 'update-public.json').read_text())
     assert updates['feedURL'] == 'https://bloomformac.com/updates/beta.xml'
     assert len(base64.b64decode(updates['publicEDKey'], validate=True)) == 32
-    # Omitting SUEnableAutomaticChecks preserves Sparkle's standard permission
-    # prompt. Checking is optional; every installation requires user approval.
+    # Updates are automatic by default (Andrew, Sep 28): Sparkle checks, downloads
+    # and installs without a permission prompt, and Updates.swift installs at a
+    # quiet moment. A saved choice in the app's user defaults (the off switch in
+    # More -> Help & feedback, or an earlier "Don't check") still wins over these.
     plist.update(
         SUFeedURL=updates['feedURL'],
         SUPublicEDKey=updates['publicEDKey'],
-        SUAllowsAutomaticUpdates=False,
-        SUAutomaticallyUpdate=False,
+        SUEnableAutomaticChecks=True,
+        SUAllowsAutomaticUpdates=True,
+        SUAutomaticallyUpdate=True,
         SUEnableSystemProfiling=False,
         SUVerifyUpdateBeforeExtraction=True,
         SUEnableJavaScript=False,

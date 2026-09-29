@@ -1,10 +1,10 @@
 # Security
 
-Bloomkeeper reads your Darkbloom login token, can change which model your provider serves, and can optionally be granted permission to run `purge`. Please report security problems privately.
+BloomGauge reads your Darkbloom login token, can change which model your provider serves, and can optionally be granted permission to run `purge`. Please report security problems privately.
 
 ## Reporting a vulnerability
 
-Use GitHub's **Report a vulnerability** button on this repository's Security tab, or email support@bloomkeeper.io. Please don't open a public issue.
+Use GitHub's **Report a vulnerability** button on this repository's Security tab, or email support@bloomgauge.io. Please don't open a public issue.
 
 Include the affected version, the impact, and the steps to reproduce. Leave out any real credentials or account details.
 

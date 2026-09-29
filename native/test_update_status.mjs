@@ -19,6 +19,7 @@ const state = () => ({
   available: true,
   installedVersion: '1.36.7',
   automaticChecks: false,
+  automaticUpdates: false,
   canCheck: true,
   checking: false,
   lastCheck: null,
@@ -33,6 +34,8 @@ test('native settings and asynchronous update outcomes validate without implying
     'up-to-date',
     'error',
     'blocked',
+    'ready-to-install',
+    'installing',
   ]) {
     assert.equal(validUpdateStatus({ ...state(), status }), true);
   }
@@ -46,6 +49,8 @@ test('malformed native messages cannot render invalid dates or controls', () => 
     { lastCheck: 1e15 },
     { available: 'true' },
     { automaticChecks: 'yes' },
+    { automaticUpdates: 1 },
+    { automaticUpdates: undefined },
     { canCheck: 1 },
     { checking: null },
     { installedVersion: null },

@@ -6,7 +6,7 @@ export const bloomWebsite = {
 } as const;
 
 export const bloomWebsiteLinks = [
-  { label: 'Bloomkeeper website', href: bloomWebsite.home },
+  { label: 'BloomGauge website', href: bloomWebsite.home },
   { label: 'Changelog', href: bloomWebsite.changelog },
   { label: 'Setup guide', href: bloomWebsite.setup },
   { label: 'Support website', href: bloomWebsite.support },
