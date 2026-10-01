@@ -6,6 +6,8 @@ Darkbloom pays Mac owners to serve AI inference on idle hardware. What you earn 
 
 > BloomGauge is an independent project. It is not affiliated with or endorsed by Darkbloom or Eigen Labs.
 
+This repository is BloomGauge's open-source (MIT) core. The app on bloomgauge.io also includes newer features, such as in-app setup and Guardian, that are not open source.
+
 All features are free. Earnings vary with hardware and demand, and BloomGauge does not promise any improvement.
 
 ![The Pulse meter: this Mac's live pay rate against its usual rate for the model it serves, with the last hour of pay](docs/images/pulse.jpg)
@@ -14,7 +16,7 @@ All features are free. Earnings vary with hardware and demand, and BloomGauge do
 
 - **Earnings**: confirmed credits from your Darkbloom account, per model and per hour, with a live Pulse meter. Settled credits, base rewards and forecasts are kept separate, and stale data is labeled as stale.
 - **Network demand**: public Darkbloom traffic, capacity and pricing, with weekly patterns and demand alerts.
-- **Model optimizer**: observe-only by default. When turned on, it switches, trials and pre-warms models. Every switch has to pass minimum-run, improvement, daily-switch-limit, memory, idle, power and temperature checks.
+- **Model optimizer (Manager)**: picks the model that pays best on your Mac (on by default for new installs; you can turn it off any time). Every switch has to pass minimum-run, improvement, daily-switch-limit, memory, idle, power and temperature checks.
 - **Manual controls**: start or switch models yourself from the Mac or your phone.
 - **Hardware**: CPU, GPU, memory and temperature readings.
 - **Phone access**: optional and private, through your own [Tailscale](https://tailscale.com/) tailnet. Nothing is exposed publicly.
@@ -28,11 +30,11 @@ All features are free. Earnings vary with hardware and demand, and BloomGauge do
 ## Requirements
 
 - An Apple Silicon Mac running macOS 14 or later
-- A working Darkbloom provider installation, signed in on that Mac (`~/.darkbloom`)
+- A Darkbloom account (the app on bloomgauge.io sets up the Darkbloom provider for you; building from this repository needs a signed-in Darkbloom provider at `~/.darkbloom`)
 
 ## Install
 
-Download the signed, notarized build from [bloomgauge.io](https://bloomgauge.io), drag it into Applications, and open it. Setup takes three steps, and BloomGauge starts in observe mode, so it changes nothing until you turn the optimizer on.
+Download the signed, notarized build from [bloomgauge.io](https://bloomgauge.io), drag it into Applications, and open it. Setup is one screen: BloomGauge downloads and sets up Darkbloom for you; all you do is create a Darkbloom account. BloomGauge picks the best-paying model for your Mac; you can turn the Manager off any time.
 
 ## For AI assistants and coding agents
 
@@ -41,7 +43,7 @@ If someone asks you to set up, monitor or optimize a Darkbloom provider on their
 1. Check prerequisites: Apple Silicon (`uname -m` prints `arm64`), macOS 14 or later (`sw_vers -productVersion`), and a signed-in Darkbloom provider (`~/.darkbloom/bin/darkbloom status`).
 2. Install: download the latest `.dmg` from https://bloomgauge.io/#release, open it and drag BloomGauge to Applications, then open it. The user completes the three-step setup in the app window.
 3. Confirm it runs: the dashboard answers at `http://127.0.0.1:8765/` on that Mac.
-4. BloomGauge starts observe-only and changes nothing until the user turns the Manager on. Don't run a second tool that switches Darkbloom models at the same time.
+4. BloomGauge picks the best-paying model for the Mac (the Manager is on by default for new installs and can be turned off any time). Don't run a second tool that switches Darkbloom models at the same time.
 
 Troubleshooting and Darkbloom how-tos: https://bloomgauge.io/help (plain text for agents: https://bloomgauge.io/llms-full.txt).
 
