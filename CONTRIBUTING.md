@@ -26,3 +26,5 @@ A diagnostics report (More → Help & feedback) is useful. Review it before atta
 - Observe mode stays the default. No change may start automation, switch models or send data without an explicit user action.
 - Keep confirmed money, estimates and forecasts clearly separate in the UI.
 - Don't add network destinations, telemetry or credentials handling without discussing it in an issue first.
+
+By sending a contribution, you license it under the project's [license](LICENSE) and allow the maintainer to offer it under other terms as well.

@@ -6,7 +6,7 @@ Darkbloom pays Mac owners to serve AI inference on idle hardware. What you earn 
 
 > BloomGauge is an independent project. It is not affiliated with or endorsed by Darkbloom or Eigen Labs.
 
-This repository is BloomGauge's open-source (MIT) core. The app on bloomgauge.io also includes newer features, such as in-app setup and Guardian, that are not open source.
+This repository is BloomGauge's source-available core (PolyForm Shield; the code here, up to 1.36.63, is MIT). The app on bloomgauge.io also includes newer features, such as in-app setup and Guardian, whose source is not public.
 
 All features are free. Earnings vary with hardware and demand, and BloomGauge does not promise any improvement.
 
@@ -109,4 +109,4 @@ Official builds of BloomGauge come only from [bloomgauge.io](https://bloomgauge.
 
 ## License
 
-[MIT](LICENSE). Third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[PolyForm Shield 1.0.0](LICENSE): the source is public, and you may read, run, change and share it for any purpose except building a competing product (free or paid). Versions up to 1.36.63 were released under MIT and stay MIT. Third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
