@@ -249,6 +249,6 @@ class Energy:
             'bucketSeconds': step,
             'totals': totals,
             'comparison': comparison,
-            'source': 'Apple SMC PSTR · uncalibrated internal system power',
+            'source': 'Apple SMC PSTR / PDTR / PD0R · uncalibrated internal power (DC-input fallback)',
             'method': 'All Mac activity, not just Darkbloom. Trapezoidal integration of readings no more than five seconds apart. Costs apply only on AC; battery/UPS and missing readings have no cost estimate. Whole minutes inside this range only. No wall-power efficiency assumption.',
         }

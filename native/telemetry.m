@@ -29,6 +29,18 @@ static double sensor(const char *key){
  if(type==keycode("ui16"))return (out.bytes[0]<<8)|out.bytes[1];
  return NAN;
 }
+// BEGIN systemPower
+static double systemPower(void){
+ // Some desktops expose PSTR but return zero. Try total DC input, then
+ // the DC input rail; these are internal readings, not calibrated wall draw.
+ const char *keys[]={"PSTR","PDTR","PD0R"};
+ for(int i=0;i<3;i++){
+  double watts=sensor(keys[i]);
+  if(isfinite(watts)&&watts>0&&watts<=1000)return watts;
+ }
+ return NAN;
+}
+// END systemPower
 static double average(const char **keys,int count){double total=0;int found=0;for(int i=0;i<count;i++){double v=sensor(keys[i]);if(isfinite(v)&&v>0&&v<130){total+=v;found++;}}return found?total/found:NAN;}
 static id number(double n){return isfinite(n)?@(n):(id)[NSNull null];}
 static NSString *powerSource(){
@@ -76,9 +88,8 @@ int main(int argc,const char **argv){
    struct xsw_usage swap;size=sizeof(swap);double swapGB=NAN;if(!sysctlbyname("vm.swapusage",&swap,&size,NULL,0))swapGB=swap.xsu_used/1073741824.0;
    NSArray *thermal=@[@"Nominal",@"Fair",@"Serious",@"Critical"];NSInteger state=[NSProcessInfo processInfo].thermalState;
    NSDictionary *data=@{@"gpuProcesses":gpuProcesses(),@"chip":@(chip),@"cpuPercent":number(cpu),@"gpuPercent":number(gpuUsage()),@"memoryUsedGB":number(used),@"memoryAvailableGB":number(available),@"cachedFilesGB":number(cached),@"purgeableGB":number(purgeable),@"memoryTotalGB":number(memory/1073741824.0),@"compressedGB":number(compressed),@"swapGB":number(swapGB),@"cpuTemp":number(average(cpuKeys,18)),@"gpuTemp":number(average(gpuKeys,8)),@"fanRPM":@[number(sensor("F0Ac")),number(sensor("F1Ac"))],@"thermal":state<4?thermal[state]:@"Unknown",@"at":@([[NSDate date] timeIntervalSince1970])};
-   // PSTR is an internal system-power reading, not calibrated wall draw.
-   double watts=sensor("PSTR");NSMutableDictionary *withPower=[data mutableCopy];
-   withPower[@"systemWatts"]=number(watts>0&&watts<=1000?watts:NAN);
+   NSMutableDictionary *withPower=[data mutableCopy];
+   withPower[@"systemWatts"]=number(systemPower());
    withPower[@"powerSource"]=powerSource();
    NSData *json=[NSJSONSerialization dataWithJSONObject:withPower options:0 error:NULL];fwrite(json.bytes,1,json.length,stdout);fputc('\n',stdout);fflush(stdout);
   }if(argc>1)break;sleep(1);}while(getppid()!=1);
