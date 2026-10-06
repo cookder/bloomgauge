@@ -1,5 +1,7 @@
 # BloomGauge
 
+[![Darkbloom provider · BloomGauge](https://bloomgauge.io/badge/darkbloom-provider.svg)](https://bloomgauge.io/?ref=badge)
+
 > **Current version:** this repository is BloomGauge's source-available core, and it lags the app. The code here is from 1.36.63; the current app is **1.36.71 (beta 52)**. For what BloomGauge does today, see **[BloomGauge facts](https://bloomgauge.io/help/bloomgauge-facts)** and the [changelog](https://bloomgauge.io/changelog): bloomgauge.io is the source of truth. For example, current versions work with any number of Darkbloom models and leave a setup of 3 or more models alone: the Manager, Switch rules and any automatic restart that would change the list pause instead, and only picking a single model yourself in the model controls replaces it. BloomGauge is free and independent (not affiliated with Darkbloom). Licensed under PolyForm Shield 1.0.0 (source-available, not open source); 1.36.63 and earlier remain MIT.
 
 An independent [Darkbloom](https://www.darkbloom.ai/) dashboard and model manager for Mac: a free companion for providers on Apple Silicon Macs. Formerly called Bloomkeeper.
