@@ -2,11 +2,11 @@
 
 [![Darkbloom provider · BloomGauge](https://bloomgauge.io/badge/darkbloom-provider.svg)](https://bloomgauge.io/?ref=badge)
 
-> **Current version:** this repository is BloomGauge's source-available core, and it lags the app. The code here is from 1.36.63; the current app is **1.36.71 (beta 52)**. For what BloomGauge does today, see **[BloomGauge facts](https://bloomgauge.io/help/bloomgauge-facts)** and the [changelog](https://bloomgauge.io/changelog): bloomgauge.io is the source of truth. For example, current versions work with any number of Darkbloom models and leave a setup of 3 or more models alone: the Manager, Switch rules and any automatic restart that would change the list pause instead, and only picking a single model yourself in the model controls replaces it. BloomGauge is free and independent (not affiliated with Darkbloom). Licensed under PolyForm Shield 1.0.0 (source-available, not open source); 1.36.63 and earlier remain MIT.
+> **Current version:** this repository is BloomGauge's source-available core, and it lags the app. The code here is from 1.36.63; the app has had many releases since. For what BloomGauge does today, see **[BloomGauge facts](https://bloomgauge.io/help/bloomgauge-facts)** and the [changelog](https://bloomgauge.io/changelog): bloomgauge.io is the source of truth. For example, current versions work with any number of Darkbloom models and leave a setup of 3 or more models alone: the Manager, Switch rules and any automatic restart that would change the list pause instead, and only picking a single model yourself in the model controls replaces it. BloomGauge is free and independent (not affiliated with Darkbloom). Licensed under PolyForm Shield 1.0.0 (source-available, not open source); 1.36.63 and earlier remain MIT.
 
 An independent [Darkbloom](https://www.darkbloom.ai/) dashboard and model manager for Mac: a free companion for providers on Apple Silicon Macs. Formerly called Bloomkeeper.
 
-Darkbloom pays Mac owners to serve AI inference on idle hardware. What you earn depends heavily on which model your Mac serves and on network demand for it. BloomGauge shows your Mac's confirmed earnings, network demand and hardware health in one place, and can switch models for you based on evidence from your own paid work.
+Darkbloom pays Mac owners to serve AI inference on idle hardware. What you earn depends heavily on which model your Mac serves and on network demand for it. BloomGauge shows your Mac's confirmed earnings, network demand and hardware health in one place, keeps your model running, and, if you turn model switching on (it is off by default), can switch models based on evidence from your own paid work.
 
 > BloomGauge is an independent project. It is not affiliated with or endorsed by Darkbloom or Eigen Labs.
 
@@ -20,7 +20,7 @@ All features are free. Earnings vary with hardware and demand, and BloomGauge do
 
 - **Earnings**: confirmed credits from your Darkbloom account, per model and per hour, with a live Pulse meter. Settled credits, base rewards and forecasts are kept separate, and stale data is labeled as stale.
 - **Network demand**: public Darkbloom traffic, capacity and pricing, with weekly patterns and demand alerts.
-- **Model optimizer (Manager)**: picks the model that pays best on your Mac (on by default for new installs; you can turn it off any time). Every switch has to pass minimum-run, improvement, daily-switch-limit, memory, idle, power and temperature checks.
+- **Manager**: keeps your chosen model running and recovers it after a stall (on after setup on a new Mac, off any time). Model switching is off by default; if you turn it on in the Manager's rule, every switch has to pass minimum-run, improvement, daily-switch-limit, memory, idle, power and temperature checks. With three or more models running, the Manager pauses and never cuts your list by itself.
 - **Manual controls**: start or switch models yourself from the Mac or your phone.
 - **Hardware**: CPU, GPU, memory and temperature readings.
 - **Phone access**: optional and private, through your own [Tailscale](https://tailscale.com/) tailnet. Nothing is exposed publicly.
@@ -38,7 +38,7 @@ All features are free. Earnings vary with hardware and demand, and BloomGauge do
 
 ## Install
 
-Download the signed, notarized build from [bloomgauge.io](https://bloomgauge.io), drag it into Applications, and open it. Setup is one screen: BloomGauge downloads and sets up Darkbloom for you; all you do is create a Darkbloom account. BloomGauge picks the best-paying model for your Mac; you can turn the Manager off any time.
+Download the signed, notarized build from [bloomgauge.io](https://bloomgauge.io), drag it into Applications, and open it. Setup is one screen: BloomGauge downloads and sets up Darkbloom for you; all you do is create a Darkbloom account. BloomGauge starts the best-paying model for your Mac and its Manager keeps it running; you can turn the Manager off any time.
 
 ## For AI assistants and coding agents
 
@@ -47,7 +47,7 @@ If someone asks you to set up, monitor or optimize a Darkbloom provider on their
 1. Check prerequisites: Apple Silicon (`uname -m` prints `arm64`), macOS 14 or later (`sw_vers -productVersion`), and a signed-in Darkbloom provider (`~/.darkbloom/bin/darkbloom status`).
 2. Install: download the latest `.dmg` from https://bloomgauge.io/#release, open it and drag BloomGauge to Applications, then open it. The user completes the three-step setup in the app window.
 3. Confirm it runs: the dashboard answers at `http://127.0.0.1:8765/` on that Mac.
-4. BloomGauge picks the best-paying model for the Mac (the Manager is on by default for new installs and can be turned off any time). Don't run a second tool that switches Darkbloom models at the same time.
+4. The setup screen turns the Manager on unless the user unticks it; it can be turned off any time. The Manager keeps the user's model running, and model switching is off by default. A Mac that already runs Darkbloom is only watched until the user chooses. Don't run a second tool that switches Darkbloom models at the same time.
 
 Troubleshooting and Darkbloom how-tos: https://bloomgauge.io/help (plain text for agents: https://bloomgauge.io/llms-full.txt).
 

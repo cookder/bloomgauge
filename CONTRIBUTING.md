@@ -23,7 +23,7 @@ A diagnostics report (More → Help & feedback) is useful. Review it before atta
 
 ## Ground rules
 
-- Observe mode stays the default. No change may start automation, switch models or send data without an explicit user action.
+- No change may start automation, switch models or send data without an explicit user action. On a new install, setup's ticked "Manager on" line is that action only because it is visible when the person presses Agree; existing installs keep their mode.
 - Keep confirmed money, estimates and forecasts clearly separate in the UI.
 - Don't add network destinations, telemetry or credentials handling without discussing it in an issue first.
 
