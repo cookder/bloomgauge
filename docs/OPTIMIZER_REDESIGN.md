@@ -1,3 +1,5 @@
+> **Historical design note (September 2026).** This describes the trial-based optimizer, which the Manager replaced in 1.36.60. The Manager now keeps one home model running, and model switching has been off by default since 1.36.76 (beta 57). For what BloomGauge does today, see [BloomGauge facts](https://bloomgauge.io/help/bloomgauge-facts).
+
 # Optimizer redesign: learn every model, switch with confidence
 
 Status: Phase 1 shipped in personal builds on September 25, 2026. 1.36.26 (pass A): protect level, learning time, learning boost, least-recently-measured selection, evidence table, report-only target. 1.36.27 (pass B): trials judged against the incumbent's demand-matched pay and on pay after first work (ramp recorded as rampSeconds), 35-second reading continuity (fewer 'waiting for fresh earnings' stalls), stuck-return escape for every trial type, and a learning-run demand floor (10+ requests, ~0.3 per warm provider). Phase 2 (pressure-curve estimator) is running in shadow from 1.36.28: see [Phase 2 in shadow](#phase-2-in-shadow).
