@@ -177,7 +177,15 @@ class History:
                         (account, *chunk),
                     )
                 )
-            self.db.executemany('INSERT OR REPLACE INTO credits VALUES(?,?,?,?,?,?)', rows)
+            # Each poll repeats up to 1000 stored credits: rewrite a row only when it changed.
+            self.db.executemany(
+                """INSERT INTO credits VALUES(?,?,?,?,?,?) ON CONFLICT(account,id) DO UPDATE SET
+              at=excluded.at,model=excluded.model,micro_usd=excluded.micro_usd,
+              output_tokens=excluded.output_tokens
+              WHERE (at,model,micro_usd,output_tokens) IS NOT
+              (excluded.at,excluded.model,excluded.micro_usd,excluded.output_tokens)""",
+                rows,
+            )
             self.db.commit()
             if observed_at is not None:
                 # A latest-N poll covers its oldest result through the successful poll time.
