@@ -101,13 +101,23 @@ class OptimizerStore:
             for x in entries
         ]
         with self.h.lock:
-            self.h.db.executemany('INSERT OR REPLACE INTO opt_credits VALUES(?,?,?,?,?,?,?)', rows)
+            # Latest-N polls repeat stored credits: write only new or changed rows.
+            self.h.db.executemany(
+                """INSERT INTO opt_credits VALUES(?,?,?,?,?,?,?) ON CONFLICT(account,id) DO UPDATE SET
+              provider=excluded.provider,at=excluded.at,model=excluded.model,
+              micro_usd=excluded.micro_usd,tokens=excluded.tokens
+              WHERE (provider,at,model,micro_usd,tokens) IS NOT
+              (excluded.provider,excluded.at,excluded.model,excluded.micro_usd,excluded.tokens)""",
+                rows,
+            )
             from workload import token_count
 
             self.h.db.executemany(
                 """INSERT INTO workload_tokens VALUES(?,?,?,?) ON CONFLICT(account,id) DO UPDATE SET
               prompt_tokens=COALESCE(excluded.prompt_tokens,workload_tokens.prompt_tokens),
-              output_tokens=COALESCE(excluded.output_tokens,workload_tokens.output_tokens)""",
+              output_tokens=COALESCE(excluded.output_tokens,workload_tokens.output_tokens)
+              WHERE COALESCE(excluded.prompt_tokens,prompt_tokens) IS NOT prompt_tokens
+              OR COALESCE(excluded.output_tokens,output_tokens) IS NOT output_tokens""",
                 [
                     (
                         account,

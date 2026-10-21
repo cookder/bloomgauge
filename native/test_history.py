@@ -55,6 +55,18 @@ class HistoryTests(unittest.TestCase):
         self.assertFalse({x['id'] for x in a['entries']} & {x['id'] for x in b['entries']})
         self.assertEqual(self.h.credits('b', 0, 9999999999, 1, 100)['count'], 10)
 
+    def test_repeated_credits_are_not_rewritten(self):
+        rows = [
+            {'id': i, 'created_at': '2026-09-06T04:05:58Z', 'amount_micro_usd': i} for i in range(5)
+        ]
+        self.h.save_credits('a', rows)
+        before = self.h.db.total_changes
+        self.h.save_credits('a', rows)
+        self.assertEqual(self.h.db.total_changes, before)
+        self.h.save_credits('a', [{**rows[0], 'amount_micro_usd': 99}])
+        self.assertEqual(self.h.db.total_changes, before + 1)
+        self.assertEqual(self.h.credits('a', 0, 9999999999, 1, 10)['count'], 5)
+
     def test_reopen(self):
         with tempfile.TemporaryDirectory() as folder:
             p = pathlib.Path(folder) / 'db'
