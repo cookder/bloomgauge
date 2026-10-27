@@ -1,6 +1,6 @@
 """Device-scoped evidence for model selection. Never backfills invented run time."""
 
-import hashlib, math, sqlite3, statistics
+import hashlib, math, sqlite3, statistics, threading
 from datetime import datetime
 from history import epoch
 from model_combinations import members
@@ -22,6 +22,118 @@ def context(at):
 CONTINUITY_SECONDS = 35
 
 
+# Every write to opt_credits stamps the SQL minute it touched (CAST(at/60 AS INT)*60, the
+# minute evidence() groups by) with a rising sequence number, so PaidMinutes re-reads only
+# changed minutes. Triggers see every writer. A REPLACE deletes the old row without firing
+# delete triggers, so the BEFORE INSERT trigger marks the minute of the row it will replace.
+MARK = """INSERT INTO opt_credit_marks SELECT {row}.account,CAST({row}.at/60 AS INT)*60,
+    (SELECT COALESCE(MAX(seq),0)+1 FROM opt_credit_marks) {source}
+    ON CONFLICT(account,minute) DO UPDATE SET seq=excluded.seq;"""
+CREDIT_MARKS = f"""
+CREATE TABLE IF NOT EXISTS opt_credit_marks(account TEXT,minute INTEGER,seq INTEGER,
+    PRIMARY KEY(account,minute)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS opt_credit_mark_seq ON opt_credit_marks(seq);
+CREATE TRIGGER IF NOT EXISTS opt_credit_mark_replaced BEFORE INSERT ON opt_credits BEGIN
+    {MARK.format(row='o', source='FROM opt_credits o WHERE o.account=new.account AND o.id=new.id')}
+END;
+CREATE TRIGGER IF NOT EXISTS opt_credit_mark_insert AFTER INSERT ON opt_credits BEGIN
+    {MARK.format(row='new', source='WHERE true')}
+END;
+CREATE TRIGGER IF NOT EXISTS opt_credit_mark_update AFTER UPDATE ON opt_credits BEGIN
+    {MARK.format(row='old', source='WHERE true')}
+    {MARK.format(row='new', source='WHERE true')}
+END;
+CREATE TRIGGER IF NOT EXISTS opt_credit_mark_delete AFTER DELETE ON opt_credits BEGIN
+    {MARK.format(row='old', source='WHERE true')}
+END;
+"""
+
+# A provider list built once, not a JOIN or EXISTS: with stale statistics those loop
+# every known provider per credit or per window (~13 s / 30 days).
+PAID_MINUTES = """SELECT CAST(c.at/60 AS INT)*60 AS minute,c.model,SUM(c.micro_usd)/1000000.0 AS usd,
+    COUNT(*) AS paidJobs FROM opt_credits c WHERE c.account=? AND c.at>=? AND c.at<? AND c.model!='base_reward'
+    AND c.provider IN (SELECT provider FROM opt_identity WHERE device=?)
+    GROUP BY CAST(c.at/60 AS INT),c.model"""
+
+
+class PaidMinutes:
+    """evidence()'s paid credits per (SQL minute, model), kept between calls.
+
+    A 30-day window otherwise sorts every credit in it on each call (a ~30 MB temp file
+    on a busy Mac). Kept minutes are re-read only when opt_credit_marks says they changed.
+    The result equals the GROUP BY over [start, end) exactly: minutes with every credit
+    at least 1 s inside the window come from memory (a SQL minute holds credits from just
+    under its start to just under its end); the few minutes at the edges are read directly.
+    """
+
+    KEEP = 32 * 86400  # covers the 30-day lookbacks; longer windows read directly
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.scope = self.seq = self.low = self.high = None
+        self.rows = {}
+
+    def get(self, db, account, device, start, end):
+        low = math.ceil((start + 1) / 60) * 60
+        high = math.floor((end - 1) / 60) * 60
+        if high <= low or low < high - self.KEEP:
+            return self.read(db, account, device, start, end)
+        providers = tuple(
+            r[0] for r in db.execute('SELECT provider FROM opt_identity WHERE device=? ORDER BY provider', (device,))
+        )
+        scope = (account, device, providers)
+        seq = db.execute('SELECT COALESCE(MAX(seq),0) FROM opt_credit_marks').fetchone()[0]
+        with self.lock:
+            if scope != self.scope or self.seq is None:
+                self.scope, self.seq, self.low, self.high, self.rows = scope, seq, None, None, {}
+            if seq < self.seq:  # an older read snapshot than the kept minutes
+                return self.read(db, account, device, start, end)
+            if seq > self.seq and self.low is not None:
+                for first, last in self.changed(db, account, self.seq):
+                    first, last = max(first, self.low), min(last, self.high)
+                    if first < last:
+                        self.rows = {k: v for k, v in self.rows.items() if not first <= k[0] < last}
+                        self.rows.update(self.read(db, account, device, first - 1, last + 1, first, last))
+            self.seq = seq
+            if self.low is None or self.high < high - self.KEEP:
+                self.low = self.high = high - self.KEEP
+                self.rows = {}
+            if low < self.low:
+                return self.read(db, account, device, start, end)
+            if high > self.high:
+                self.rows.update(self.read(db, account, device, self.high - 1, high + 1, self.high, high))
+                self.high = high
+            if self.low < self.high - self.KEEP:
+                self.low = self.high - self.KEEP
+                self.rows = {k: v for k, v in self.rows.items() if k[0] >= self.low}
+            kept = {k: v for k, v in self.rows.items() if low <= k[0] < high}
+        # Edge minutes, exactly as the full query reads them.
+        kept.update(self.read(db, account, device, start, min(end, low + 1), high=low))
+        kept.update(self.read(db, account, device, max(start, high - 1), end, low=high))
+        return kept
+
+    def changed(self, db, account, seq):
+        """Runs of consecutive changed minutes since `seq`, as [first, end) pairs."""
+        runs = []
+        for (minute,) in db.execute(
+            'SELECT minute FROM opt_credit_marks WHERE seq>? AND account=? ORDER BY minute', (seq, account)
+        ):
+            if runs and minute <= runs[-1][1]:
+                runs[-1][1] = minute + 60
+            else:
+                runs.append([minute, minute + 60])
+        return runs
+
+    def read(self, db, account, device, start, end, low=None, high=None):
+        """{(minute, model): totals} of credits at in [start, end), for SQL minutes in [low, high)."""
+        bounds = [(sql, v) for sql, v in (('minute>=?', low), ('minute<?', high)) if v is not None]
+        having = ' HAVING ' + ' AND '.join(sql for sql, _ in bounds) if bounds else ''
+        rows = db.execute(
+            PAID_MINUTES + having, (account, start, end, device, *(v for _, v in bounds))
+        ).fetchall()
+        return {(r[0], r[1]): {'usd': r[2], 'paidJobs': r[3]} for r in rows}
+
+
 class OptimizerStore:
     def __init__(self, history):
         self.h = history
@@ -39,7 +151,8 @@ class OptimizerStore:
             CREATE INDEX IF NOT EXISTS opt_network_time ON opt_network(at);
             CREATE TABLE IF NOT EXISTS opt_events(id INTEGER PRIMARY KEY,account TEXT,device TEXT,at REAL,kind TEXT,model TEXT,detail TEXT,downtime REAL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS opt_event_scope ON opt_events(account,device,at);
-            """)
+            """ + CREDIT_MARKS)
+        self.paid_minutes = PaidMinutes()
         self.refresh_statistics()
 
     def refresh_statistics(self):
@@ -239,15 +352,7 @@ class OptimizerStore:
               AND EXISTS(SELECT 1 FROM opt_coverage c WHERE c.account=m.account AND c.start<=m.at AND c.end>=m.at+60) ORDER BY at""",
                 (account, device, start, end),
             ).fetchall()
-            # A provider list built once, not a JOIN or EXISTS: with stale statistics
-            # those loop every known provider per credit or per window (~13 s / 30 days).
-            credits = db.execute(
-                """SELECT CAST(c.at/60 AS INT)*60 AS at,c.model,SUM(c.micro_usd)/1000000.0 AS usd,COUNT(*) AS paidJobs
-              FROM opt_credits c WHERE c.account=? AND c.at>=? AND c.at<? AND c.model!='base_reward'
-              AND c.provider IN (SELECT provider FROM opt_identity WHERE device=?)
-              GROUP BY CAST(c.at/60 AS INT),c.model""",
-                (account, start, end, device),
-            ).fetchall()
+            paid = self.paid_minutes.get(db, account, device, start, end)
             delays = db.execute(
                 """SELECT model,SUM(downtime) AS seconds FROM opt_events WHERE account=? AND device=? AND at>=? AND at<? GROUP BY model""",
                 (account, device, start, end),
@@ -259,7 +364,6 @@ class OptimizerStore:
                     (account, device, start, end),
                 )
             }
-        paid = {(r['at'], r['model']): r for r in credits}
         groups = {}
         for r in rows:
             # The nearly complete minute is the denominator. Include actual credited

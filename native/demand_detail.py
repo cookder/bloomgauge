@@ -72,15 +72,19 @@ def detail(store, account, device, model, start, end, now):
             AND seconds BETWEEN 59.999999 AND 60.000001 ORDER BY at""",
             (account, device, model, low, min(end, now - 120)),
         ).fetchall()
-        minute_money = {
-            r['minute']: r['usd']
-            for r in db.execute(
-                """SELECT CAST(c.at/60 AS INTEGER)*60 AS minute,SUM(c.micro_usd)/1e6 AS usd
-            FROM opt_credits c WHERE c.account=? AND c.model=? AND c.at>=? AND c.at<?
-            AND EXISTS(SELECT 1 FROM opt_identity i WHERE i.device=? AND i.provider=c.provider) GROUP BY minute""",
-                (account, model, low, min(end, now - 120), device),
-            )
-        }
+        if model == 'base_reward':  # PaidMinutes leaves base rewards out
+            minute_money = {
+                r['minute']: r['usd']
+                for r in db.execute(
+                    """SELECT CAST(c.at/60 AS INTEGER)*60 AS minute,SUM(c.micro_usd)/1e6 AS usd
+                FROM opt_credits c WHERE c.account=? AND c.model=? AND c.at>=? AND c.at<?
+                AND EXISTS(SELECT 1 FROM opt_identity i WHERE i.device=? AND i.provider=c.provider) GROUP BY minute""",
+                    (account, model, low, min(end, now - 120), device),
+                )
+            }
+        else:
+            paid = view.paid_minutes.get(db, account, device, low, min(end, now - 120))
+            minute_money = {minute: v['usd'] for (minute, name), v in paid.items() if name == model}
         # Local work has five-minute-or-larger buckets; a tiny 30s chart slot
         # must not imply second-by-second settled earnings attribution.
         local_step = max(300, math.ceil(step / 300) * 300)

@@ -204,21 +204,8 @@ def warm_evidence(view, account, device, models, start, end, now, deadline):
         WHERE account=? AND start<=? AND end>=? ORDER BY start""",
         (account, end, start + 60),
     ).fetchall()
-    paid = {
-        (r['at'], r['model']): r
-        for r in db.execute(
-            """
-        SELECT CAST(c.at/60 AS INT)*60 AS at,c.model,SUM(c.micro_usd)/1000000.0 AS usd,COUNT(*) AS paidJobs
-        FROM opt_credits c
-        WHERE c.account=? AND c.at>=? AND c.at<? AND c.model!='base_reward'
-          AND c.model IN ("""
-            + placeholders
-            + """)
-          AND EXISTS(SELECT 1 FROM opt_identity i WHERE i.device=? AND i.provider=c.provider)
-        GROUP BY CAST(c.at/60 AS INT),c.model""",
-            (account, start, end, *models, device),
-        )
-    }
+    # Every model's minutes; only these models' minutes are looked up.
+    paid = view.paid_minutes.get(db, account, device, start, end)
     rows = db.execute(
         """SELECT at,model,seconds,jobs,tokens,busy FROM opt_ready_minutes
         WHERE account=? AND device=? AND at>=? AND at+60<=?
