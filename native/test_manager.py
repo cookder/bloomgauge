@@ -150,7 +150,7 @@ class HomeTests(unittest.TestCase):
             'qwen': {'minutes': minutes(0.30, 20)},  # better, but on one day only
             GPT_OSS: {'minutes': minutes(0.02, 200)},
             'old': {'minutes': self.days([0.5] * 3, 4, NOW - 31 * 86400)},  # outside 30 days
-            selection_key([GEMMA, 'b']): {'minutes': minutes(0.9, 50)},  # combos never
+            selection_key([GEMMA, 'b']): {'minutes': minutes(0.9, 50)},  # Gemma pairs never
         }
         home = self.home(earned)
         self.assertEqual(home['model'], GEMMA)
@@ -158,6 +158,24 @@ class HomeTests(unittest.TestCase):
         self.assertAlmostEqual(home['usdPerHour'], 0.108)
         self.assertEqual(home['days'], 6)  # 120 h to noon cross six local calendar days
         self.assertAlmostEqual(home['hours'], 120, delta=0.1)
+
+    def test_exact_pair_history_can_beat_a_large_solo_home(self):
+        pair = selection_key(['qwen-small', 'gpt-small'])
+        earned = {
+            'mimo': {'minutes': self.days([0.13, 0.12, 0.14, 0.13])},
+            pair: {'minutes': self.days([0.20, 0.19, 0.21, 0.20])},
+            # High solo rates do not create pair evidence; only the exact pair key above does.
+            'qwen-small': {'minutes': self.days([0.18, 0.17, 0.19])},
+            'gpt-small': {'minutes': self.days([0.16, 0.15, 0.17])},
+        }
+        home = self.home(earned, current='mimo', allowed={'mimo', pair})
+        self.assertEqual((home['model'], home['source']), (pair, 'history'))
+        self.assertAlmostEqual(home['usdPerHour'], 0.20)
+        # A pair not admitted by the runtime/memory checks is not an automatic candidate.
+        self.assertEqual(
+            self.home(earned, current='mimo', allowed={'mimo', 'qwen-small', 'gpt-small'})['model'],
+            'qwen-small',
+        )
 
     def test_saved_history_home_needs_a_day_old_home_and_a_challenger_lower_bound(self):
         earned = {GEMMA: {'minutes': self.days([0.10] * 5)}}
@@ -191,6 +209,52 @@ class HomeTests(unittest.TestCase):
         self.assertEqual(self.home({}, saved, current='c', allowed={'b'})['model'], 'b')  # sticky
         # ...while it is allowed: deselected or unavailable, it is dropped.
         self.assertEqual(self.home({}, saved, current='c')['model'], 'c')
+
+
+class PairHomeEligibilityTests(unittest.TestCase):
+    pair = selection_key(['a', 'b'])
+
+    def control(self, budget, config_error=None, purge=0):
+        optimizer = Mock()
+        optimizer.lock = threading.RLock()
+        optimizer.raw = {'written_at': NOW}
+        optimizer.combo_config_error.return_value = config_error
+        optimizer.selection_budget.return_value = budget
+        optimizer.purge_credit.return_value = purge
+        control = object.__new__(manager.ManagerControl)
+        control.o = optimizer
+        return control
+
+    def test_pair_requires_exact_history_selected_members_and_memory_headroom(self):
+        settings = {'demandPolicy': {'memoryHeadroomGB': 1}, 'manager': {}}
+        earned = {self.pair: {'minutes': []}}
+        budget = {'afterUnloadGB': 50, 'requiredGB': 48, 'reserveGB': 4}
+        control = self.control(budget)
+        rows = control.pair_rows(settings, {}, earned, {'a', 'b'}, NOW)
+        self.assertEqual(rows[self.pair]['loadBudget'], budget)
+        self.assertEqual(control.pair_rows(settings, {}, earned, {'a'}, NOW), {})
+
+        control.o.selection_budget.return_value = {
+            'afterUnloadGB': 50,
+            'requiredGB': 49.5,
+            'reserveGB': 4,
+        }
+        self.assertEqual(control.pair_rows(settings, {}, earned, {'a', 'b'}, NOW), {})
+        control.o.purge_credit.return_value = 1
+        self.assertIn(self.pair, control.pair_rows(settings, {}, earned, {'a', 'b'}, NOW))
+
+    def test_pair_fails_closed_on_config_or_recent_load_block(self):
+        budget = {'afterUnloadGB': 50, 'requiredGB': 40, 'reserveGB': 4}
+        earned = {self.pair: {'minutes': []}}
+        settings = {'demandPolicy': {'memoryHeadroomGB': 1}, 'manager': {}}
+        self.assertEqual(
+            self.control(budget, config_error='slots').pair_rows(
+                settings, {}, earned, {'a', 'b'}, NOW
+            ),
+            {},
+        )
+        settings['manager']['blocked'] = {self.pair: NOW + 60}
+        self.assertEqual(self.control(budget).pair_rows(settings, {}, earned, {'a', 'b'}, NOW), {})
 
 
 class DecisionTests(unittest.TestCase):
