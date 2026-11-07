@@ -165,6 +165,40 @@ class CombinationPolicyTests(unittest.TestCase):
         self.assertFalse(pairs[0]['fitsNow'])
         self.assertTrue(any(not p['available'] for p in pairs))
 
+    def test_pair_budget_honors_darkbloom_post_unload_capacity(self):
+        hardware = {'memoryTotalGB': 64, 'memoryAvailableGB': 40}
+        capacity = {
+            'load_usable_gb': 15,
+            'free_for_load_gb': 8.5,
+            'load_headroom_gb': 7.5,
+            'gpu_memory_active_gb': 12,
+            'gpu_memory_cache_gb': 0,
+            'load_transition_active': False,
+        }
+        budget = pair_budget(
+            hardware,
+            {'memoryGB': 12},
+            ['a', 'b'],
+            [10, 12],
+            capacity=capacity,
+        )
+        self.assertEqual(budget['admissionSource'], 'darkbloom')
+        self.assertAlmostEqual(budget['providerAfterUnloadGB'], 33.4)
+        self.assertAlmostEqual(budget['afterUnloadGB'], 33.4)
+        self.assertAlmostEqual(budget['requiredGB'], 35.9)
+
+        rows = [
+            {'id': 'a', 'name': 'A', 'memoryGB': 10, 'available': True},
+            {'id': 'b', 'name': 'B', 'memoryGB': 12, 'available': True},
+        ]
+        pair = pair_candidates(
+            rows,
+            hardware,
+            {'memoryGB': 12},
+            capacity=capacity,
+        )[0]
+        self.assertFalse(pair['fitsNow'])
+
     def test_custom_slot_and_memory_limits_do_not_silently_use_defaults(self):
         with tempfile.TemporaryDirectory() as root:
             p = pathlib.Path(root) / '.config/darkbloom/provider.toml'

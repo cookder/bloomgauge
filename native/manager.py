@@ -54,6 +54,14 @@ HOME_MIN_HOURS = 4
 HOME_WINDOW = 30 * 86400
 HOME_DAY_SECONDS = 3600
 HOME_MIN_DAYS = 3
+# OptimizerStore's tested/eligible proof is deliberately stronger than elapsed
+# time alone: two dates, six ready hours, three full two-hour blocks and at
+# least 20 paid jobs.  A stable model with that proof does not need a third
+# calendar day before its own realized pay can nominate it as home.
+HOME_PROVEN_MIN_DAYS = 2
+HOME_PROVEN_MIN_HOURS = 6
+HOME_PROVEN_MIN_BLOCKS = 3
+HOME_PROVEN_MIN_JOBS = 20
 # Days are local calendar days, not 24 h counted back from now. One stint (ready minutes
 # <= 1 h apart) counts as at most one day per full 24 h it spans, so a 26-36 h regime or pin
 # is not three days.
@@ -505,8 +513,10 @@ def home_rates(earned, now, exclude=()):
     evidence is never inferred from solo rates. For each selection, use realized $/ready-hour
     on each local calendar day with >= 1 ready hour, their plain mean ('usdPerHour'), the ready
     hours and days behind it, and 'low', a one-sided 90% Student-t lower bound of that mean once
-    there are >= 3 such days that are also >= 3 separate days (stint_days) and >= 4 hours (else
-    None). `exclude`: [model, start, end] windows (excursions) whose minutes do not count.
+    there are >= 3 such days that are also >= 3 separate days (stint_days) and >= 4 hours. Strong
+    OptimizerStore proof (tested and paid-eligible across >= 2 days, 6 hours and 3 blocks) lowers
+    only the calendar-day count to 2. Otherwise 'low' is None. `exclude`: [model, start, end]
+    windows (excursions) whose minutes do not count.
     """
     out = {}
     for model, evidence in (earned or {}).items():
@@ -529,8 +539,23 @@ def home_rates(earned, now, exclude=()):
         mean = sum(rates) / len(rates)
         hours = sum(d[0] for d in full) / 3600
         low = None
-        separate = len(rates) >= HOME_MIN_DAYS and (
-            stint_days(at for d in full for at in d[2]) >= HOME_MIN_DAYS
+        proven = (
+            evidence.get('tested') is True
+            and evidence.get('eligible') is True
+            and finite(evidence.get('hours'))
+            and evidence['hours'] >= HOME_PROVEN_MIN_HOURS
+            and isinstance(evidence.get('days'), int)
+            and not isinstance(evidence.get('days'), bool)
+            and evidence['days'] >= HOME_PROVEN_MIN_DAYS
+            and isinstance(evidence.get('blocks'), int)
+            and not isinstance(evidence.get('blocks'), bool)
+            and evidence['blocks'] >= HOME_PROVEN_MIN_BLOCKS
+            and finite(evidence.get('jobs'))
+            and evidence['jobs'] >= HOME_PROVEN_MIN_JOBS
+        )
+        minimum_days = HOME_PROVEN_MIN_DAYS if proven else HOME_MIN_DAYS
+        separate = len(rates) >= minimum_days and (
+            stint_days(at for d in full for at in d[2]) >= minimum_days
         )
         if separate and hours >= HOME_MIN_HOURS:
             t = T90[len(rates) - 2] if len(rates) - 1 <= len(T90) else 1.282
@@ -754,7 +779,7 @@ def choose_home(m, earned, runs, current, allowed, now, last_switch=0, network=N
     until a day-old saved home's mean is beaten by a challenger's lower bound; else Macs like
     yours (network_home); else current.
     A saved home keeps that protection only while it is allowed and has a lower bound itself
-    (the same minimum days); one no longer allowed is dropped. While a change away from the
+    (the same evidence gate); one no longer allowed is dropped. While a change away from the
     serving model is announced, the home stays as it was and carries the notice ('notice').
     With no serving model reported (drained, dark: the watchdog's restore target too) or
     during an excursion, Macs like yours are not consulted and the saved home stands."""

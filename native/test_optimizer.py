@@ -185,6 +185,81 @@ class PolicyTests(unittest.TestCase):
         gpt = memory_budget(h, {'memoryGB': 14}, 'gpt-oss-20b', 13.5)
         self.assertEqual(a['requiredGB'] - gpt['requiredGB'], 2)
 
+    def test_darkbloom_capacity_can_only_tighten_load_admission(self):
+        hardware = {'memoryTotalGB': 256, 'memoryAvailableGB': 210}
+        capacity = {
+            'load_usable_gb': 154.76,
+            'free_for_load_gb': 148.26,
+            'load_headroom_gb': 6.5,
+            'gpu_memory_active_gb': 16.25,
+            'gpu_memory_cache_gb': 0,
+            'load_transition_active': False,
+        }
+        budget = memory_budget(
+            hardware,
+            {'memoryGB': 16.25},
+            'mimo',
+            176.4,
+            capacity=capacity,
+        )
+        self.assertEqual(budget['admissionSource'], 'darkbloom')
+        self.assertAlmostEqual(budget['estimatedAfterUnloadGB'], 226.25)
+        self.assertAlmostEqual(budget['providerAfterUnloadGB'], 196.61)
+        self.assertAlmostEqual(budget['afterUnloadGB'], 196.61)
+        self.assertGreater(budget['requiredGB'], budget['afterUnloadGB'])
+
+        # A provider snapshot with more room never makes the legacy estimate
+        # permissive; only the smaller verified figure is used.
+        roomy = {
+            **capacity,
+            'load_usable_gb': 220,
+            'gpu_memory_active_gb': 10,
+        }
+        conservative = memory_budget(
+            {'memoryTotalGB': 256, 'memoryAvailableGB': 100},
+            {'memoryGB': 10},
+            'a',
+            20,
+            capacity=roomy,
+        )
+        self.assertEqual(conservative['afterUnloadGB'], 110)
+
+    def test_darkbloom_capacity_fails_closed_during_transition_or_bad_headroom(self):
+        hardware = {'memoryTotalGB': 48, 'memoryAvailableGB': 30}
+        base = {
+            'load_usable_gb': 20,
+            'load_headroom_gb': 6.5,
+            'gpu_memory_active_gb': 10,
+        }
+        self.assertIsNone(
+            memory_budget(
+                hardware,
+                {'memoryGB': 10},
+                'a',
+                12,
+                capacity={**base, 'load_transition_active': True},
+            )
+        )
+        self.assertIsNone(
+            memory_budget(
+                hardware,
+                {'memoryGB': 10},
+                'a',
+                12,
+                capacity={**base, 'load_headroom_gb': 20},
+            )
+        )
+        # Older capacity schemas retain the established calculation.
+        legacy = memory_budget(
+            hardware,
+            {'memoryGB': 10},
+            'a',
+            12,
+            capacity={'gpu_memory_active_gb': 10},
+        )
+        self.assertEqual(legacy['afterUnloadGB'], 40)
+        self.assertNotIn('admissionSource', legacy)
+
     def test_week_rotation_covers_each_time_slot_for_six_models(self):
         models = list('abcdef')
         slots = {m: set() for m in models}

@@ -5,6 +5,7 @@ import itertools, json, math, pathlib, re, time
 PREFIX = '@combo:'
 # Darkbloom's `[provider] memory_reserve_gb` default (ProviderSettings.memoryReserveGB).
 DEFAULT_RESERVE_GB = 4
+CAPACITY_AGREE_GB = 3
 # Launch-agent variables that change Darkbloom's load admission in a way BloomGauge doesn't
 # model: the memory cap fraction and a raised activation reserve (UnifiedMemoryCap
 # resolvedCapFraction / resolvedActivationReserveBytes). The installer's other pass-throughs
@@ -65,21 +66,96 @@ def selection_label(selection):
     return ' + '.join(members(selection)) or 'Unknown selection'
 
 
+def finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def provider_capacity_budget(
+    capacity,
+    total,
+    weights,
+    resident,
+    gpu_cache,
+    reserve,
+    target_headroom,
+    estimated_after_unload,
+):
+    """(supported, budget) from Darkbloom's load-admission figures.
+
+    ``load_usable_gb`` is room beside the serving model after Darkbloom's own
+    reserve.  A switch unloads that model, so its measured MLX active and cache
+    memory can be added.  If usable space is clamped at zero, Darkbloom's
+    ``free_for_load_gb + load_headroom_gb`` is its equivalent post-eviction
+    figure.  Both are capped at physical memory less the reserve.
+
+    Provider figures only make the legacy macOS estimate stricter.  This keeps
+    old-provider behavior unchanged and prevents a stale or differently timed
+    provider snapshot from authorizing a load BloomGauge's own estimate rejects.
+    A present but malformed/transitional reading fails closed.
+    """
+    fields = ('load_usable_gb', 'free_for_load_gb', 'load_headroom_gb')
+    if not isinstance(capacity, dict) or not any(k in capacity for k in fields):
+        return False, None
+    if (
+        capacity.get('load_transition_active') is True
+        or not finite(total)
+        or total <= 0
+        or not finite(weights)
+        or weights < 0
+        or not finite(resident)
+        or resident < 0
+        or not finite(gpu_cache)
+        or gpu_cache < 0
+        or not finite(reserve)
+        or reserve < 0
+        or not finite(target_headroom)
+        or target_headroom < 0
+        or not finite(estimated_after_unload)
+        or estimated_after_unload < 0
+    ):
+        return True, None
+    usable = capacity.get('load_usable_gb')
+    free = capacity.get('free_for_load_gb')
+    headroom = capacity.get('load_headroom_gb')
+    active = capacity.get('gpu_memory_active_gb')
+    cache = capacity.get('gpu_memory_cache_gb')
+    active = active if finite(active) and active >= 0 else resident
+    cache = cache if finite(cache) and cache >= 0 else gpu_cache
+    if finite(usable) and usable > 0:
+        provider_available = usable + active + cache
+    elif finite(free) and free > 0 and finite(headroom) and headroom >= 0:
+        provider_available = free + headroom
+    else:
+        return True, None
+    if finite(headroom) and abs(headroom - target_headroom) > CAPACITY_AGREE_GB:
+        return True, None
+    provider_available = min(provider_available, total - reserve)
+    provider_after_unload = max(0, provider_available + reserve)
+    return True, {
+        'afterUnloadGB': min(estimated_after_unload, provider_after_unload),
+        'requiredGB': weights + reserve + target_headroom,
+        'reserveGB': reserve,
+        'weightsGB': weights,
+        'admissionSource': 'darkbloom',
+        'providerAfterUnloadGB': provider_after_unload,
+        'estimatedAfterUnloadGB': estimated_after_unload,
+    }
+
+
 def pair_budget(
-    hardware, provider, models, weights, gpu_cache=0, config_reserve=DEFAULT_RESERVE_GB
+    hardware,
+    provider,
+    models,
+    weights,
+    gpu_cache=0,
+    config_reserve=DEFAULT_RESERVE_GB,
+    capacity=None,
 ):
     total = hardware.get('memoryTotalGB')
     available = hardware.get('memoryAvailableGB')
     resident = provider.get('memoryGB')
     values = [total, available, resident, gpu_cache, *weights]
-    if (
-        len(models) != 2
-        or len(weights) != 2
-        or any(
-            not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0
-            for v in values
-        )
-    ):
+    if len(models) != 2 or len(weights) != 2 or any(not finite(v) or v < 0 for v in values):
         return None
     # v0.9 reserves activation space for the largest serving-model floor.
     # Add one GB KV per member, exceeding upstream's shared 1GB load minimum.
@@ -87,9 +163,23 @@ def pair_budget(
     # (with its 2 GiB floor) leaves the OS.
     reserve = max(config_reserve, total * 0.1, 2)
     activation = max(3.5 if m == 'gpt-oss-20b' else 5.5 for m in models)
+    after = min(total, available + resident + gpu_cache)
+    headroom = activation + len(models)
+    supported, authoritative = provider_capacity_budget(
+        capacity,
+        total,
+        sum(weights),
+        resident,
+        gpu_cache,
+        reserve,
+        headroom,
+        after,
+    )
+    if supported:
+        return authoritative
     return {
-        'afterUnloadGB': min(total, available + resident + gpu_cache),
-        'requiredGB': sum(weights) + reserve + activation + len(models),
+        'afterUnloadGB': after,
+        'requiredGB': sum(weights) + reserve + headroom,
         'reserveGB': reserve,
         'weightsGB': sum(weights),
     }
@@ -103,6 +193,7 @@ def pair_candidates(
     config_error=None,
     solo=(),
     config_reserve=DEFAULT_RESERVE_GB,
+    capacity=None,
 ):
     """`solo` models are only served alone (gemma advertised with another model earned ~0.46x)."""
     output = []
@@ -115,6 +206,7 @@ def pair_candidates(
             [a.get('memoryGB'), b.get('memoryGB')],
             gpu_cache,
             config_reserve,
+            capacity,
         )
         reason = config_error or next(
             (

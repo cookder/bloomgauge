@@ -188,6 +188,29 @@ class HomeTests(unittest.TestCase):
         self.assertEqual(self.home(earned, fresh)['model'], GEMMA)  # held for a day
         self.assertEqual(self.home(earned, old)['model'], 'b')
 
+    def test_two_day_home_requires_strong_optimizer_proof(self):
+        stable = self.days([0.20, 0.20], 4)
+        proof = {
+            'minutes': stable,
+            'tested': True,
+            'eligible': True,
+            'hours': 8,
+            'days': 2,
+            'blocks': 4,
+            'jobs': 200,
+        }
+        earned = {
+            GEMMA: {'minutes': self.days([0.10, 0.10, 0.10])},
+            'proven': proof,
+            'elapsed-only': {'minutes': stable},
+            'unpaid': {**proof, 'eligible': False, 'jobs': 0},
+        }
+        self.assertEqual(self.home(earned)['model'], 'proven')
+        rates = manager.home_rates(earned, NOW)
+        self.assertIsNotNone(rates['proven']['low'])
+        self.assertIsNone(rates['elapsed-only']['low'])
+        self.assertIsNone(rates['unpaid']['low'])
+
     def test_pin_wins_and_current_is_the_last_resort_but_never_a_fallback_pick(self):
         earned = {GEMMA: {'minutes': minutes(0.108, 120)}}
         pin = manager.pin('b', NOW)

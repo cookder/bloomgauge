@@ -19,6 +19,7 @@ from model_combinations import (
     pair_candidates,
     combination_config_error,
     configured_reserve_gb,
+    provider_capacity_budget,
     DEFAULT_RESERVE_GB,
 )
 from demand_targets import high_earnings, fresh_paid
@@ -217,7 +218,14 @@ def roster_identity(raw, rows):
 
 
 def memory_budget(
-    hardware, provider, model, weights, gpu_cache=0, held=0, config_reserve=DEFAULT_RESERVE_GB
+    hardware,
+    provider,
+    model,
+    weights,
+    gpu_cache=0,
+    held=0,
+    config_reserve=DEFAULT_RESERVE_GB,
+    capacity=None,
 ):
     """v0.8.16 default load reserves. Cached files overlap available pages: don't add them.
 
@@ -233,15 +241,28 @@ def memory_budget(
     # the 90% cap (with its 2 GiB floor) leaves the OS.
     reserve = max(config_reserve, total * 0.1, 2)
     activation = 3.5 if model == 'gpt-oss-20b' else 5.5
+    after = min(
+        total,
+        available
+        + (resident if resident > 0 else held / 1.2 if finite(held) and held > 0 else 0)
+        + gpu_cache,
+    )
+    supported, authoritative = provider_capacity_budget(
+        capacity,
+        total,
+        weights,
+        resident,
+        gpu_cache,
+        reserve,
+        activation + 1,
+        after,
+    )
+    if supported:
+        return authoritative
     return {
         # A switch frees what Darkbloom reports as resident. Only when it reports nothing,
         # count the loaded models' weights: `held` is the CLI estimate, weights x 1.2.
-        'afterUnloadGB': min(
-            total,
-            available
-            + (resident if resident > 0 else held / 1.2 if finite(held) and held > 0 else 0)
-            + gpu_cache,
-        ),
+        'afterUnloadGB': after,
         'requiredGB': weights + reserve + activation + 1,
         'reserveGB': reserve,
     }
@@ -849,6 +870,7 @@ class Optimizer:
                 cache,
                 held,
                 reserve,
+                raw.get('capacity'),
             )
         # Knobs BloomGauge can't model stop automatic moves (controlError), not restores.
         if self.combo_config_error(voluntary=False):
@@ -860,6 +882,7 @@ class Optimizer:
             [rows[m]['memoryGB'] for m in models],
             cache,
             reserve,
+            raw.get('capacity'),
         )
 
     def confirmation_scope(self, state, raw):
@@ -1003,6 +1026,7 @@ class Optimizer:
             self.combo_config_error(),
             manager.SOLO_MODELS if manager.enabled(settings.get('demandPolicy')) else (),
             self.config_reserve(),
+            raw.get('capacity'),
         )
         results = [
             {
@@ -1435,7 +1459,14 @@ class Optimizer:
         reserve = self.config_reserve()
         for m in candidates:
             m['loadBudget'] = memory_budget(
-                h, live.get('provider', {}), m['id'], m.get('memoryGB'), gpu_cache, 0, reserve
+                h,
+                live.get('provider', {}),
+                m['id'],
+                m.get('memoryGB'),
+                gpu_cache,
+                0,
+                reserve,
+                raw.get('capacity'),
             )
         try:
             self.read_options()
@@ -1549,6 +1580,7 @@ class Optimizer:
                 m.get('memoryGB'),
                 raw.get('capacity', {}).get('gpu_memory_cache_gb', 0),
                 config_reserve=reserve,
+                capacity=raw.get('capacity'),
             )
         pending = state.get('pending') or {}
         queued_at = state.get('requestedAt') or state.get('manualResult', {}).get('at')
