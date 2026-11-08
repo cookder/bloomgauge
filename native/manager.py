@@ -54,6 +54,14 @@ HOME_MIN_HOURS = 4
 HOME_WINDOW = 30 * 86400
 HOME_DAY_SECONDS = 3600
 HOME_MIN_DAYS = 3
+# OptimizerStore's tested/eligible proof is deliberately stronger than elapsed
+# time alone: two dates, six ready hours, three full two-hour blocks and at
+# least 20 paid jobs.  A stable model with that proof does not need a third
+# calendar day before its own realized pay can nominate it as home.
+HOME_PROVEN_MIN_DAYS = 2
+HOME_PROVEN_MIN_HOURS = 6
+HOME_PROVEN_MIN_BLOCKS = 3
+HOME_PROVEN_MIN_JOBS = 20
 # Days are local calendar days, not 24 h counted back from now. One stint (ready minutes
 # <= 1 h apart) counts as at most one day per full 24 h it spans, so a 26-36 h regime or pin
 # is not three days.
@@ -191,7 +199,8 @@ def readable(text):
 
 def hold_error(selection):
     """Why the manager can't hold this serving selection, or None: one model, or a pair
-    without a solo-only model (SOLO_MODELS). Pairs are held and restored, never scored."""
+    without a solo-only model (SOLO_MODELS). Eligible pairs need exact both-warm history before
+    the Manager can score them; a manual pair can still be held or restored without it."""
     models = members(selection)
     if len(models) == 1 or (len(models) == 2 and not set(models) & SOLO_MODELS):
         return None
@@ -446,11 +455,16 @@ def start_options(home, options):
 
 
 def history_rates(earned, now, exclude=()):
-    """Realized $/ready-hour per solo model over 14 days (>= 4 h). `exclude`: [model, start,
-    end] windows (excursions) whose minutes do not count."""
+    """Realized $/ready-hour per Manager selection over 14 days (>= 4 h).
+
+    A selection is one model, or an exact two-model pair that the Manager can hold. Pair
+    evidence is recorded only while both members are warm, and its credits are combined by
+    OptimizerStore; solo rates are never added to manufacture a pair rate. `exclude`: [model,
+    start, end] windows (excursions) whose minutes do not count.
+    """
     rates = {}
     for model, evidence in (earned or {}).items():
-        if len(members(model)) != 1:
+        if hold_error(model):
             continue
         skip = [(a, b) for m, a, b in exclude if m == model]
         minutes = [
@@ -493,14 +507,20 @@ def local_day(at, span):
 
 
 def home_rates(earned, now, exclude=()):
-    """Home-choice evidence per solo model over HOME_WINDOW: realized $/ready-hour on each local
-    calendar day with >= 1 ready hour, their plain mean ('usdPerHour'), the ready hours and days
-    behind it, and 'low', a one-sided 90% Student-t lower bound of that mean once there are
-    >= 3 such days that are also >= 3 separate days (stint_days) and >= 4 hours (else None).
-    `exclude`: [model, start, end] windows (excursions) whose minutes do not count."""
+    """Home-choice evidence per Manager selection over HOME_WINDOW.
+
+    A selection is one model, or an exact two-model pair that the Manager can hold. Pair
+    evidence is never inferred from solo rates. For each selection, use realized $/ready-hour
+    on each local calendar day with >= 1 ready hour, their plain mean ('usdPerHour'), the ready
+    hours and days behind it, and 'low', a one-sided 90% Student-t lower bound of that mean once
+    there are >= 3 such days that are also >= 3 separate days (stint_days) and >= 4 hours. Strong
+    OptimizerStore proof (tested and paid-eligible across >= 2 days, 6 hours and 3 blocks) lowers
+    only the calendar-day count to 2. Otherwise 'low' is None. `exclude`: [model, start, end]
+    windows (excursions) whose minutes do not count.
+    """
     out = {}
     for model, evidence in (earned or {}).items():
-        if len(members(model)) != 1:
+        if hold_error(model):
             continue
         skip = [(a, b) for m, a, b in exclude if m == model]
         days, span = {}, None
@@ -519,8 +539,23 @@ def home_rates(earned, now, exclude=()):
         mean = sum(rates) / len(rates)
         hours = sum(d[0] for d in full) / 3600
         low = None
-        separate = len(rates) >= HOME_MIN_DAYS and (
-            stint_days(at for d in full for at in d[2]) >= HOME_MIN_DAYS
+        proven = (
+            evidence.get('tested') is True
+            and evidence.get('eligible') is True
+            and finite(evidence.get('hours'))
+            and evidence['hours'] >= HOME_PROVEN_MIN_HOURS
+            and isinstance(evidence.get('days'), int)
+            and not isinstance(evidence.get('days'), bool)
+            and evidence['days'] >= HOME_PROVEN_MIN_DAYS
+            and isinstance(evidence.get('blocks'), int)
+            and not isinstance(evidence.get('blocks'), bool)
+            and evidence['blocks'] >= HOME_PROVEN_MIN_BLOCKS
+            and finite(evidence.get('jobs'))
+            and evidence['jobs'] >= HOME_PROVEN_MIN_JOBS
+        )
+        minimum_days = HOME_PROVEN_MIN_DAYS if proven else HOME_MIN_DAYS
+        separate = len(rates) >= minimum_days and (
+            stint_days(at for d in full for at in d[2]) >= minimum_days
         )
         if separate and hours >= HOME_MIN_HOURS:
             t = T90[len(rates) - 2] if len(rates) - 1 <= len(T90) else 1.282
@@ -744,7 +779,7 @@ def choose_home(m, earned, runs, current, allowed, now, last_switch=0, network=N
     until a day-old saved home's mean is beaten by a challenger's lower bound; else Macs like
     yours (network_home); else current.
     A saved home keeps that protection only while it is allowed and has a lower bound itself
-    (the same minimum days); one no longer allowed is dropped. While a change away from the
+    (the same evidence gate); one no longer allowed is dropped. While a change away from the
     serving model is announced, the home stays as it was and carries the notice ('notice').
     With no serving model reported (drained, dark: the watchdog's restore target too) or
     during an excursion, Macs like yours are not consulted and the saved home stands."""
@@ -1341,7 +1376,7 @@ class ManagerControl:
 
     # ---- decisions (pure; GET previews call this too) ----
 
-    def home(self, settings, live, current, now, rows=None):
+    def home(self, settings, live, current, now, rows=None, include_rows=False):
         o = self.o
         account, device = live.get('account', ''), live.get('device', '')
         rows = o.candidates({}, {}, live, settings) if rows is None else rows
@@ -1351,7 +1386,9 @@ class ManagerControl:
         allowed = {
             r['id'] for r in rows if r.get('available') and (not selected or r['id'] in selected)
         }
-        return choose_home(
+        pair_rows = self.pair_rows(settings, live, earned, allowed, now)
+        allowed.update(pair_rows)
+        result = choose_home(
             settings.get('manager') or {},
             earned,
             lambda: o.demand_auto.runs(account, device, now, 20),
@@ -1361,6 +1398,58 @@ class ManagerControl:
             settings.get('lastSwitchAt', 0),
             self.network_evidence(allowed | ({current} if current else set()), now),
         )
+        return (result, pair_rows) if include_rows else result
+
+    def pair_rows(self, settings, live, earned, solo_allowed, now):
+        """Exact-history pairs that are safe to consider as a Manager home.
+
+        The pair must already have exact both-warm earnings history, both members must be in the
+        selected and currently available solo pool, the provider configuration must support two
+        resident models, and the same conservative memory admission used at dispatch must pass.
+        This intentionally never adds two solo estimates together.
+        """
+        candidates = [
+            key
+            for key in (earned or {})
+            if len(members(key)) == 2
+            and set(members(key)) <= set(solo_allowed)
+            and not hold_error(key)
+            and not blocked(settings.get('manager') or {}, key, now)
+        ]
+        if not candidates:
+            return {}
+        o = self.o
+        try:
+            if o.combo_config_error():
+                return {}
+            with o.lock:
+                raw = copy.deepcopy(o.raw)
+        except Exception:
+            log.exception('Could not verify pair configuration for Manager home ranking')
+            return {}
+        headroom = (settings.get('demandPolicy') or {}).get('memoryHeadroomGB', 1)
+        if not finite(headroom) or headroom < 0:
+            headroom = 1
+        output = {}
+        for key in sorted(candidates):
+            try:
+                budget = o.selection_budget(key, live, raw)
+                row = {
+                    'id': key,
+                    'available': bool(budget),
+                    'reason': None if budget else 'Pair memory could not be verified.',
+                    'selected': True,
+                    'loadBudget': copy.deepcopy(budget),
+                }
+                if budget:
+                    credit = o.purge_credit(key, live, now)
+                    if credit:
+                        row['loadBudget']['reclaimableGB'] = credit
+                if admission(row, {'memoryHeadroomGB': headroom}) is None:
+                    output[key] = row
+            except Exception:
+                log.exception('Could not verify pair %s for Manager home ranking', key)
+        return output
 
     def network_evidence(self, models, now):
         """Macs like this one, for network_home: NetworkEvidence.dedicated_table over
@@ -1386,11 +1475,12 @@ class ManagerControl:
         account, device = live.get('account', ''), live.get('device', '')
         current = decision.get('currentModel')
         m = settings.get('manager') or {}
-        home = self.home(settings, live, current, now, rows)
+        home, pair_rows = self.home(settings, live, current, now, rows, include_rows=True)
+        decision_rows = [*rows, *pair_rows.values()]
         context = {
             'current': current,
             'home': home,
-            'rows': {r['id']: r for r in rows},
+            'rows': {r['id']: r for r in decision_rows},
             'rules': decision.get('policy') or {},
             'blocked': {
                 k: v for k, v in (m.get('blocked') or {}).items() if finite(v) and v > now
@@ -1402,7 +1492,7 @@ class ManagerControl:
         if home:
             try:
                 context['excursions'] = self.excursions.context(
-                    settings, live, raw, rows, home, current, now
+                    settings, live, raw, decision_rows, home, current, now
                 )
             except Exception:
                 log.exception('Excursion evidence failed; holding home')

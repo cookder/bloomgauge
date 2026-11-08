@@ -258,6 +258,7 @@ class ManualSelection:
                 row.get('memoryGB'),
                 cache,
                 config_reserve=reserve,
+                capacity=None if v.get('status') == 'stopped' else raw.get('capacity'),
             )
             recovery = self.cache_plan(
                 v, live, state, budget, now, common is None and reason is None, authorization
